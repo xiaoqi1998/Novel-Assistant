@@ -82,23 +82,42 @@ class MemoryService:
         """初始化ChromaDB和Embedding模型"""
         if self._initialized:
             return
-            
+
         try:
             # 确保数据目录存在
             chroma_dir = "data/chroma_db"
             os.makedirs(chroma_dir, exist_ok=True)
-            
+
             # 初始化ChromaDB客户端(使用新API - PersistentClient)
             self.client = chromadb.PersistentClient(path=chroma_dir)
-            
+
             # 初始化多语言embedding模型(支持中文)
             logger.info("🔄 正在加载Embedding模型...")
-            
+
+            # 优先使用本地直接下载的模型目录（避免 snapshot 软链接问题）
+            local_model_dir = os.path.join(
+                os.environ.get('SENTENCE_TRANSFORMERS_HOME', 'embedding'),
+                'paraphrase-multilingual-MiniLM-L12-v2'
+            )
+            if os.path.exists(local_model_dir) and os.path.exists(os.path.join(local_model_dir, 'config_sentence_transformers.json')):
+                logger.info(f"✅ 使用本地模型目录: {os.path.abspath(local_model_dir)}")
+                self.embedding_model = SentenceTransformer(
+                    local_model_dir,
+                    device='cpu',
+                    local_files_only=True
+                )
+                logger.info("✅ Embedding模型加载成功 (本地目录)")
+                self._initialized = True
+                logger.info("✅ MemoryService初始化成功")
+                logger.info(f"  - ChromaDB目录: {chroma_dir}")
+                logger.info(f"  - Embedding模型: paraphrase-multilingual-MiniLM-L12-v2 (本地)")
+                return
+
             # 使用环境变量中配置的模型目录
             model_cache_dir = os.environ.get('SENTENCE_TRANSFORMERS_HOME', 'embedding')
             os.makedirs(model_cache_dir, exist_ok=True)
             logger.info(f"📂 使用模型缓存目录: {os.path.abspath(model_cache_dir)}")
-            
+
             # 调试信息：打印环境变量和路径
             logger.info(f"📂 当前工作目录: {os.getcwd()}")
             logger.info(f"📂 模型缓存目录: {os.path.abspath(model_cache_dir)}")

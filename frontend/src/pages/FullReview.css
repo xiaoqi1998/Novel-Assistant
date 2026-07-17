@@ -1,0 +1,29 @@
+.full-review-page {
+  padding: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.full-review-header {
+  margin-bottom: 24px;
+}
+
+.full-review-header h3 {
+  margin-bottom: 8px;
+}
+
+.review-report-content {
+  margin-top: 8px;
+}
+
+.modified-chapters-list {
+  margin-top: 8px;
+}
+
+.full-review-page .ant-card {
+  margin-bottom: 16px;
+}
+
+.full-review-page .ant-alert {
+  margin-bottom: 16px;
+}

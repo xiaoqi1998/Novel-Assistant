@@ -3,33 +3,26 @@ import {
   Alert,
   Button,
   Card,
-  Col,
   Divider,
   Form,
+  Grid,
   Input,
   Layout,
-  Row,
   Space,
   Spin,
   Tabs,
-  Tag,
   Typography,
   message,
   theme,
 } from 'antd';
 import {
-  BookOutlined,
   LockOutlined,
   MailOutlined,
-  RobotOutlined,
   SafetyCertificateOutlined,
-  TeamOutlined,
-  ThunderboltOutlined,
   UserOutlined,
 } from '@ant-design/icons';
 import { authApi } from '../services/api';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import AnnouncementModal from '../components/AnnouncementModal';
 import ThemeSwitch from '../components/ThemeSwitch';
 
 const { Title, Paragraph, Text } = Typography;
@@ -82,10 +75,11 @@ export default function Login() {
   const [emailRegisterForm] = Form.useForm<EmailRegisterValues>();
   const [resetPasswordForm] = Form.useForm<ResetPasswordValues>();
   const { token } = theme.useToken();
+  const screens = Grid.useBreakpoint();
+  const isMobile = !screens.md;
   const alphaColor = (color: string, alpha: number) => `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
   const primaryButtonShadow = `0 8px 20px ${alphaColor(token.colorPrimary, 0.28)}`;
   const hoverButtonShadow = `0 12px 28px ${alphaColor(token.colorPrimary, 0.36)}`;
-  const [showAnnouncement, setShowAnnouncement] = useState(false);
   const [loginCodeSending, setLoginCodeSending] = useState(false);
   const [registerCodeSending, setRegisterCodeSending] = useState(false);
   const [resetCodeSending, setResetCodeSending] = useState(false);
@@ -155,17 +149,8 @@ export default function Login() {
 
   const handleLoginSuccess = () => {
     message.success('登录成功！');
-
-    const hideForever = localStorage.getItem('announcement_hide_forever');
-    const hideToday = localStorage.getItem('announcement_hide_today');
-    const today = new Date().toDateString();
-
-    if (hideForever === 'true' || hideToday === today) {
-      const redirect = searchParams.get('redirect') || '/';
-      navigate(redirect);
-    } else {
-      setShowAnnouncement(true);
-    }
+    const redirect = searchParams.get('redirect') || '/';
+    navigate(redirect);
   };
 
   const handleLocalLogin = async (values: LocalLoginValues) => {
@@ -300,21 +285,6 @@ export default function Login() {
     }
   };
 
-  const handleAnnouncementClose = () => {
-    setShowAnnouncement(false);
-    const redirect = searchParams.get('redirect') || '/';
-    navigate(redirect);
-  };
-
-  const handleDoNotShowToday = () => {
-    const today = new Date().toDateString();
-    localStorage.setItem('announcement_hide_today', today);
-  };
-
-  const handleNeverShow = () => {
-    localStorage.setItem('announcement_hide_forever', 'true');
-  };
-
   const loginTips = useMemo(() => {
     const tips = [
       '首次 LinuxDO 登录会自动创建账号。',
@@ -330,29 +300,6 @@ export default function Login() {
 
     return tips;
   }, [emailAuthEnabled, localAuthEnabled]);
-
-  const featureItems = [
-    {
-      icon: <RobotOutlined />,
-      title: '多 AI 模型协同',
-      description: '支持 OpenAI、Gemini、Claude 等主流模型，按场景灵活切换。',
-    },
-    {
-      icon: <ThunderboltOutlined />,
-      title: '智能向导驱动',
-      description: '自动生成大纲、角色与世界观，快速搭建完整故事骨架。',
-    },
-    {
-      icon: <TeamOutlined />,
-      title: '角色组织管理',
-      description: '人物关系、组织架构可视化管理，复杂设定也能清晰掌控。',
-    },
-    {
-      icon: <BookOutlined />,
-      title: '章节创作闭环',
-      description: '支持章节生成、编辑、重写与润色，持续提升内容质量。',
-    },
-  ];
 
   const renderLocalLogin = () => (
     <>
@@ -808,250 +755,194 @@ export default function Login() {
   }
 
   return (
-    <>
-      <AnnouncementModal
-        visible={showAnnouncement}
-        onClose={handleAnnouncementClose}
-        onDoNotShowToday={handleDoNotShowToday}
-        onNeverShow={handleNeverShow}
-      />
-      <Layout style={{ minHeight: '100vh', background: token.colorBgLayout }}>
-        <div
-          style={{
-            position: 'fixed',
-            top: 20,
-            right: 20,
-            zIndex: 10,
-            padding: '8px 10px',
-            borderRadius: 12,
-            background: alphaColor(token.colorBgContainer, 0.9),
-            border: `1px solid ${token.colorBorderSecondary}`,
-            backdropFilter: 'blur(6px)',
-          }}
-        >
-          <ThemeSwitch size="small" />
-        </div>
-        <Row style={{ minHeight: '100vh' }}>
-          <Col xs={0} lg={11}>
-            <section
-              style={{
-                height: '100%',
-                padding: '44px 64px 88px',
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'space-between',
-                position: 'relative',
-                overflow: 'hidden',
-                backgroundColor: alphaColor(token.colorBgContainer, 0.78),
-                backgroundImage: `linear-gradient(${alphaColor(token.colorTextSecondary, 0.06)} 1px, transparent 1px), linear-gradient(90deg, ${alphaColor(token.colorTextSecondary, 0.06)} 1px, transparent 1px)`,
-                backgroundSize: '68px 68px',
-              }}
-            >
-              <div
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  background: `radial-gradient(circle at 25% 20%, ${alphaColor(token.colorPrimary, 0.12)} 0%, transparent 50%)`,
-                  pointerEvents: 'none',
-                }}
-              />
+    <Layout style={{ minHeight: '100vh', background: '#0a0a0a', position: 'relative', overflow: 'hidden' }}>
+      {/* 右上角 ThemeSwitch 浮窗 - 保留原样 */}
+      <div
+        style={{
+          position: 'fixed',
+          top: 20,
+          right: 20,
+          zIndex: 10,
+          padding: '8px 10px',
+          borderRadius: 12,
+          background: alphaColor(token.colorBgContainer, 0.7),
+          border: `1px solid ${alphaColor(token.colorPrimary, 0.1)}`,
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+        }}
+      >
+        <ThemeSwitch size="small" />
+      </div>
 
-              <div
-                style={{
-                  position: 'relative',
-                  zIndex: 1,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'space-between',
-                  gap: 34,
-                  width: '100%',
-                }}
-              >
-                <Space align="center" size={14}>
-                  <div
-                    style={{
-                      width: 46,
-                      height: 46,
-                      borderRadius: 14,
-                      background: `linear-gradient(135deg, ${token.colorPrimary} 0%, ${alphaColor(token.colorPrimary, 0.7)} 100%)`,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      boxShadow: primaryButtonShadow,
-                    }}
-                  >
-                    <img
-                      src="/logo.svg"
-                      alt="MuMuAINovel"
-                      style={{ width: 26, height: 26, filter: 'brightness(0) invert(1)' }}
-                    />
+      {/* 极光光斑层 */}
+      <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 0, overflow: 'hidden' }}>
+        <div className="login-aurora-blob-1" style={{
+          position: 'absolute', top: '-15%', left: '-10%',
+          width: 480, height: 480, borderRadius: '50%',
+          background: 'radial-gradient(circle, rgba(124,58,237,0.55) 0%, transparent 70%)',
+          filter: 'blur(80px)',
+          willChange: 'transform',
+        }} />
+        <div className="login-aurora-blob-2" style={{
+          position: 'absolute', bottom: '-20%', right: '-10%',
+          width: 420, height: 420, borderRadius: '50%',
+          background: 'radial-gradient(circle, rgba(79,70,229,0.45) 0%, transparent 70%)',
+          filter: 'blur(80px)',
+          willChange: 'transform',
+        }} />
+        <div className="login-aurora-blob-3" style={{
+          position: 'absolute', top: '40%', left: '50%',
+          width: 360, height: 360, borderRadius: '50%',
+          background: 'radial-gradient(circle, rgba(192,38,211,0.30) 0%, transparent 70%)',
+          filter: 'blur(80px)',
+          willChange: 'transform',
+        }} />
+        {/* 网格叠加 */}
+        <div style={{
+          position: 'absolute', inset: 0,
+          backgroundImage: `linear-gradient(rgba(124,58,237,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(124,58,237,0.06) 1px, transparent 1px)`,
+          backgroundSize: '48px 48px',
+          opacity: 0.5,
+        }} />
+      </div>
+
+      {/* 主内容区 */}
+      <div style={{
+        position: 'relative', zIndex: 1,
+        minHeight: '100vh',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: isMobile ? '24px 16px' : '40px 24px',
+      }}>
+        <div style={{
+          width: '100%', maxWidth: 1100,
+          display: 'flex',
+          flexDirection: isMobile ? 'column' : 'row',
+          gap: isMobile ? 24 : 64,
+          alignItems: 'center',
+        }}>
+          {/* 左列：品牌视觉区 */}
+          <div style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: isMobile ? 'center' : 'flex-start',
+            textAlign: isMobile ? 'center' : 'left',
+            color: '#f0f0f0',
+          }}>
+            <div style={{
+              width: 64, height: 64, borderRadius: 18,
+              margin: isMobile ? '0 0 16px' : '0 0 24px',
+              background: `linear-gradient(135deg, #7C3AED 0%, #4F46E5 100%)`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 12px 32px rgba(124,58,237,0.4)',
+            }}>
+              <img src="/logo.svg" alt="墨笔" style={{ width: 36, height: 36, filter: 'brightness(0) invert(1)' }} />
+            </div>
+            <h1 style={{
+              fontSize: isMobile ? 40 : 64,
+              fontWeight: 800,
+              margin: 0,
+              background: 'linear-gradient(135deg, #f0f0f0 0%, #C4B5FD 100%)',
+              WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
+              backgroundClip: 'text',
+              letterSpacing: '-0.02em',
+            }}>
+              墨笔
+            </h1>
+            <p style={{
+              fontSize: isMobile ? 14 : 18,
+              color: 'rgba(240,240,240,0.7)',
+              margin: isMobile ? '8px 0 0' : '12px 0 0',
+              maxWidth: 420,
+            }}>
+              以墨为笔，绘万千世界。AI 驱动的小说创作助手，让灵感自由流淌。
+            </p>
+            {!isMobile && (
+              <div style={{ marginTop: 32, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {[
+                  { icon: '✦', title: '智能生成', desc: '大纲、角色、章节 AI 一键创作' },
+                  { icon: '◆', title: '多模型支持', desc: '兼容 OpenAI / DeepSeek / 通义等主流模型' },
+                  { icon: '◉', title: '一站式工作流', desc: '从世界观到成书，全流程覆盖' },
+                ].map((f) => (
+                  <div key={f.title} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <span style={{ color: '#7C3AED', fontSize: 18 }}>{f.icon}</span>
+                    <span>
+                      <strong style={{ color: '#f0f0f0', fontSize: 14 }}>{f.title}</strong>
+                      <span style={{ color: 'rgba(240,240,240,0.55)', fontSize: 13, marginLeft: 8 }}>{f.desc}</span>
+                    </span>
                   </div>
-                  <Title level={3} style={{ margin: 0, color: token.colorText }}>
-                    MuMuAINovel
-                  </Title>
-                </Space>
+                ))}
+              </div>
+            )}
+          </div>
 
-                <Space direction="vertical" size={32} style={{ width: '100%' }}>
-                  <div style={{ maxWidth: 'min(860px, 100%)' }}>
-                    <Title
-                      level={1}
-                      style={{
-                        marginBottom: 22,
-                        color: token.colorText,
-                        lineHeight: 1.12,
-                        fontWeight: 800,
-                        fontSize: 'clamp(52px, 3vw, 78px)',
-                      }}
-                    >
-                      基于 AI 的
-                      <br />
-                      <span
-                        style={{
-                          backgroundImage: `linear-gradient(90deg, ${token.colorPrimary} 0%, #d946ef 100%)`,
-                          WebkitBackgroundClip: 'text',
-                          backgroundClip: 'text',
-                          WebkitTextFillColor: 'transparent',
-                          color: token.colorPrimary,
-                        }}
-                      >
-                        智能小说创作助手
-                      </span>
-                    </Title>
-                    <Paragraph
-                      style={{
-                        fontSize: 'clamp(18px, 1vw, 22px)',
-                        lineHeight: 1.85,
-                        color: token.colorTextSecondary,
-                        marginBottom: 0,
-                        maxWidth: 800,
-                      }}
-                    >
-                      从灵感到成稿，围绕「多模型协同、创作流程自动化、角色关系管理、章节精修」构建一体化创作工作台。
-                    </Paragraph>
-                  </div>
-
-                  <Row gutter={[20, 20]} style={{ width: '100%', maxWidth: 'min(920px, 100%)' }}>
-                    {featureItems.map((item) => (
-                      <Col span={12} key={item.title}>
-                        <Card
-                          size="small"
-                          bordered={false}
-                          style={{
-                            height: '100%',
-                            minHeight: 120,
-                            borderRadius: 16,
-                            background: alphaColor(token.colorBgContainer, 0.9),
-                          }}
-                          bodyStyle={{ padding: 16 }}
-                        >
-                          <Space direction="vertical" size={8}>
-                            <Space size={10} style={{ color: token.colorPrimary, fontWeight: 700, fontSize: 15 }}>
-                              {item.icon}
-                              <span>{item.title}</span>
-                            </Space>
-                            <Paragraph style={{ marginBottom: 0, color: token.colorTextSecondary, fontSize: 14, lineHeight: 1.65 }}>
-                              {item.description}
-                            </Paragraph>
-                          </Space>
-                        </Card>
-                      </Col>
-                    ))}
-                  </Row>
-                </Space>
-
-                <Space size={[10, 14]} wrap style={{ maxWidth: 'min(860px, 100%)' }}>
-                  <Tag color="blue">OpenAI</Tag>
-                  <Tag color="geekblue">Gemini</Tag>
-                  <Tag color="purple">Claude</Tag>
-                  <Tag color="cyan">LinuxDO OAuth</Tag>
-                  <Tag color="green">Docker Compose</Tag>
-                  <Tag color="gold">PostgreSQL</Tag>
-                </Space>
+          {/* 右列：登录卡 */}
+          <div style={{
+            width: '100%',
+            maxWidth: isMobile ? 420 : 460,
+            flexShrink: 0,
+          }}>
+            <div className="glass-card" style={{
+              width: '100%',
+              padding: isMobile ? '32px 28px' : '40px 36px',
+              borderRadius: 24,
+              boxShadow: '0 24px 64px rgba(0,0,0,0.5), 0 0 0 1px rgba(124,58,237,0.15)',
+            }}>
+              <div style={{ marginBottom: 20 }}>
+                <Title level={4} style={{ margin: 0, fontWeight: 700, color: token.colorText }}>
+                  {isMobile ? '登录墨笔' : '欢迎回来'}
+                </Title>
+                <Paragraph style={{ margin: '4px 0 0', color: token.colorTextSecondary, fontSize: 12 }}>
+                  登录以继续你的小说创作
+                </Paragraph>
               </div>
 
-              <Paragraph
-                style={{
-                  marginBottom: 0,
-                  fontSize: 12,
-                  color: token.colorTextTertiary,
-                  position: 'relative',
-                  zIndex: 1,
-                  letterSpacing: 0.4,
-                }}
-              >
-                © 2026 MuMuAINovel · GPLv3 License
-              </Paragraph>
-            </section>
-          </Col>
+              <div>
+                {authTabs.length > 0 ? (
+                  <Tabs defaultActiveKey={authTabs[0].key} items={authTabs} />
+                ) : null}
 
-          <Col xs={24} lg={13}>
-            <section
-              style={{
-                minHeight: '100vh',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '48px min(7vw, 72px)',
-                background: token.colorBgLayout,
-              }}
-            >
-              <div style={{ width: '100%', maxWidth: 520 }}>
-                <Space direction="vertical" size={4}>
-                  <Title level={2} style={{ marginBottom: 0, fontWeight: 700, color: token.colorText }}>
-                    欢迎回来
-                  </Title>
-                  <Paragraph style={{ marginBottom: 0, color: token.colorTextSecondary }}>
-                    登录 MuMuAINovel，继续你的小说创作项目。
-                  </Paragraph>
-                </Space>
+                {!localAuthEnabled && !linuxdoEnabled && !emailAuthEnabled ? (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    message="当前未启用可用登录方式"
+                    description="请联系管理员在系统配置中启用本地登录、邮箱认证或 LinuxDO OAuth 登录。"
+                  />
+                ) : null}
 
-                <div style={{ marginTop: 22 }}>
-                  {authTabs.length > 0 ? (
-                    <Tabs defaultActiveKey={authTabs[0].key} items={authTabs} />
-                  ) : null}
-
-                  {!localAuthEnabled && !linuxdoEnabled && !emailAuthEnabled ? (
-                    <Alert
-                      type="warning"
-                      showIcon
-                      message="当前未启用可用登录方式"
-                      description="请联系管理员在系统配置中启用本地登录、邮箱认证或 LinuxDO OAuth 登录。"
-                    />
-                  ) : null}
-
-                  {emailAuthEnabled && !emailRegisterEnabled ? (
-                    <Alert
-                      type="info"
-                      showIcon
-                      style={{ marginTop: 12, borderRadius: 12 }}
-                      message="邮箱注册暂未开放"
-                      description="当前仅开放邮箱验证码登录与找回密码，如需注册请联系管理员。"
-                    />
-                  ) : null}
-
-                  <Divider style={{ margin: '20px 0 14px' }} />
+                {emailAuthEnabled && !emailRegisterEnabled ? (
                   <Alert
                     type="info"
                     showIcon
-                    icon={<SafetyCertificateOutlined />}
-                    style={{ background: alphaColor(token.colorPrimary, 0.06), borderRadius: 12 }}
-                    message="登录说明"
-                    description={(
-                      <ul style={{ margin: 0, paddingLeft: 18 }}>
-                        {loginTips.map((tip) => (
-                          <li key={tip} style={{ marginBottom: 4 }}>
-                            {tip}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
+                    style={{ marginTop: 12, borderRadius: 12 }}
+                    message="邮箱注册暂未开放"
+                    description="当前仅开放邮箱验证码登录与找回密码，如需注册请联系管理员。"
                   />
-                </div>
+                ) : null}
+
+                <Divider style={{ margin: '20px 0 14px' }} />
+                <Alert
+                  type="info"
+                  showIcon
+                  icon={<SafetyCertificateOutlined />}
+                  style={{ background: alphaColor(token.colorPrimary, 0.06), borderRadius: 12 }}
+                  message="登录说明"
+                  description={(
+                    <ul style={{ margin: 0, paddingLeft: 18 }}>
+                      {loginTips.map((tip) => (
+                        <li key={tip} style={{ marginBottom: 4 }}>
+                          {tip}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                />
               </div>
-            </section>
-          </Col>
-        </Row>
-      </Layout>
-    </>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Layout>
   );
 }

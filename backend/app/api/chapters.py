@@ -1022,19 +1022,33 @@ async def analyze_chapter_background(
             await db_session.commit()
         
         # 4. 保存分析结果到数据库（写操作，需要锁）
+        def _safe_truncate(value: str, max_len: int, default: str = '') -> str:
+            """安全截断字符串，避免数据库字段长度超限"""
+            if not value:
+                return default
+            if not isinstance(value, str):
+                value = str(value)
+            return value[:max_len] if len(value) > max_len else value
+        
         async with write_lock:
             existing_analysis_result = await db_session.execute(
                 select(PlotAnalysis).where(PlotAnalysis.chapter_id == chapter_id)
             )
             existing_analysis = existing_analysis_result.scalar_one_or_none()
             
+            safe_plot_stage = _safe_truncate(analysis_result.get('plot_stage', '发展'), 50, '发展')
+            safe_pacing = _safe_truncate(analysis_result.get('pacing', 'moderate'), 50, 'moderate')
+            safe_emotional_tone = _safe_truncate(
+                analysis_result.get('emotional_arc', {}).get('primary_emotion', ''), 100, ''
+            )
+            
             if existing_analysis:
                 # 更新现有记录
                 logger.info(f"  更新现有分析记录: {existing_analysis.id}")
-                existing_analysis.plot_stage = analysis_result.get('plot_stage', '发展')
+                existing_analysis.plot_stage = safe_plot_stage
                 existing_analysis.conflict_level = analysis_result.get('conflict', {}).get('level', 0)
                 existing_analysis.conflict_types = analysis_result.get('conflict', {}).get('types', [])
-                existing_analysis.emotional_tone = analysis_result.get('emotional_arc', {}).get('primary_emotion', '')
+                existing_analysis.emotional_tone = safe_emotional_tone
                 existing_analysis.emotional_intensity = analysis_result.get('emotional_arc', {}).get('intensity', 0) / 10.0
                 existing_analysis.hooks = analysis_result.get('hooks', [])
                 existing_analysis.hooks_count = len(analysis_result.get('hooks', []))
@@ -1045,7 +1059,7 @@ async def analyze_chapter_background(
                 existing_analysis.plot_points_count = len(analysis_result.get('plot_points', []))
                 existing_analysis.character_states = analysis_result.get('character_states', [])
                 existing_analysis.scenes = analysis_result.get('scenes', [])
-                existing_analysis.pacing = analysis_result.get('pacing', 'moderate')
+                existing_analysis.pacing = safe_pacing
                 existing_analysis.overall_quality_score = analysis_result.get('scores', {}).get('overall', 0)
                 existing_analysis.pacing_score = analysis_result.get('scores', {}).get('pacing', 0)
                 existing_analysis.engagement_score = analysis_result.get('scores', {}).get('engagement', 0)
@@ -1060,10 +1074,10 @@ async def analyze_chapter_background(
                 plot_analysis = PlotAnalysis(
                     chapter_id=chapter_id,
                     project_id=project_id,
-                    plot_stage=analysis_result.get('plot_stage', '发展'),
+                    plot_stage=safe_plot_stage,
                     conflict_level=analysis_result.get('conflict', {}).get('level', 0),
                     conflict_types=analysis_result.get('conflict', {}).get('types', []),
-                    emotional_tone=analysis_result.get('emotional_arc', {}).get('primary_emotion', ''),
+                    emotional_tone=safe_emotional_tone,
                     emotional_intensity=analysis_result.get('emotional_arc', {}).get('intensity', 0) / 10.0,
                     hooks=analysis_result.get('hooks', []),
                     hooks_count=len(analysis_result.get('hooks', [])),
@@ -1074,7 +1088,7 @@ async def analyze_chapter_background(
                     plot_points_count=len(analysis_result.get('plot_points', [])),
                     character_states=analysis_result.get('character_states', []),
                     scenes=analysis_result.get('scenes', []),
-                    pacing=analysis_result.get('pacing', 'moderate'),
+                    pacing=safe_pacing,
                     overall_quality_score=analysis_result.get('scores', {}).get('overall', 0),
                     pacing_score=analysis_result.get('scores', {}).get('pacing', 0),
                     engagement_score=analysis_result.get('scores', {}).get('engagement', 0),
@@ -1085,7 +1099,24 @@ async def analyze_chapter_background(
                     description_ratio=analysis_result.get('description_ratio', 0)
                 )
                 db_session.add(plot_analysis)
-            
+
+            # === 质量门控：低分章节自动标记 ===
+            QUALITY_THRESHOLD = 5.0
+            coherence = analysis_result.get('scores', {}).get('coherence', 0)
+            if coherence < QUALITY_THRESHOLD:
+                warning = f"[⚠️ 质量警告] 第{chapter.chapter_number}章连贯性评分偏低({coherence:.1f}/10),建议检查或重写"
+                logger.warning(warning)
+
+                # 在 suggestions 中追加质量警告
+                existing_suggestions = list(analysis_result.get('suggestions', []))
+                existing_suggestions.append(warning)
+                if existing_analysis:
+                    existing_analysis.suggestions = existing_suggestions
+                    existing_analysis.analysis_report = (existing_analysis.analysis_report or "") + f"\n\n{warning}"
+                else:
+                    plot_analysis.suggestions = existing_suggestions
+                    plot_analysis.analysis_report = (plot_analysis.analysis_report or "") + f"\n\n{warning}"
+
             await db_session.commit()
             
             task.progress = 80
@@ -1327,6 +1358,13 @@ async def analyze_chapter_background(
         logger.error(f"❌ 后台分析异常: {str(e)}", exc_info=True)
         # 确保任务状态被更新为failed（写操作，需要锁）
         if db_session:
+            # 先回滚可能已经失败的事务，否则后续操作都会失败
+            try:
+                await db_session.rollback()
+                logger.info(f"🔄 已回滚失败的数据库事务")
+            except Exception as rollback_error:
+                logger.warning(f"⚠️ 回滚事务失败: {str(rollback_error)}")
+            
             # 多次重试更新任务状态
             for retry in range(3):
                 try:
@@ -1349,6 +1387,11 @@ async def analyze_chapter_background(
                             break
                 except Exception as update_error:
                     logger.error(f"❌ 更新任务状态失败(重试{retry+1}/3): {str(update_error)}")
+                    # 再次尝试回滚
+                    try:
+                        await db_session.rollback()
+                    except Exception:
+                        pass
                     if retry < 2:
                         await asyncio.sleep(0.1)  # 短暂等待后重试
                     else:
@@ -1585,7 +1628,8 @@ async def generate_chapter_content_stream(
                             characters_info=chapter_context.chapter_characters or '暂无角色信息',
                             chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
                             foreshadow_reminders=chapter_context.foreshadow_reminders or '暂无需要关注的伏笔',
-                            relevant_memories=chapter_context.relevant_memories or '暂无相关记忆'
+                            relevant_memories=chapter_context.relevant_memories or '暂无相关记忆',
+                            quality_feedback=chapter_context.quality_feedback or ''
                         )
                         logger.debug(f"创建第{current_chapter.chapter_number}章提示词完成: prompt_length={len(base_prompt)}")
                     else:
@@ -1633,7 +1677,8 @@ async def generate_chapter_content_stream(
                             foreshadow_reminders=chapter_context.foreshadow_reminders or '暂无需要关注的伏笔',
                             previous_chapter_summary=previous_summary,
                             recent_chapters_context=chapter_context.recent_chapters_context or '',
-                            relevant_memories=chapter_context.relevant_memories or ''
+                            relevant_memories=chapter_context.relevant_memories or '',
+                            quality_feedback=chapter_context.quality_feedback or ''
                         )
                         logger.debug(f"创建第{current_chapter.chapter_number}章提示词完成: prompt_length={len(base_prompt)}")
                     else:
@@ -1669,7 +1714,19 @@ async def generate_chapter_content_stream(
                 
                 # 🎨 方案一：将写作风格注入到系统提示词（最高优先级）
                 system_prompt_with_style = None
-                
+
+                # 🎯 默认 Skill：用户未指定时自动启用长篇写作教练
+                if not skill_key:
+                    try:
+                        from app.services.skill_loader import get_all_skills_cached
+                        _skills = get_all_skills_cached()
+                        _default_skill = next((s for s in _skills if s["template_key"] == "story-long-write"), None)
+                        if _default_skill:
+                            skill_key = "story-long-write"
+                            logger.info(f"🎯 未指定 Skill,自动启用默认写作教练: story-long-write")
+                    except Exception as e:
+                        logger.warning(f"⚠️ 加载默认 Skill 失败: {e}")
+
                 # ⚡ Skill 支持：当指定 skill_key 时，将 Skill 工作流注入系统提示词
                 if skill_key:
                     try:
@@ -2131,7 +2188,8 @@ async def _run_chapter_generation_bg(
                 characters_info=chapter_context.chapter_characters or '暂无角色信息',
                 chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
                 foreshadow_reminders=chapter_context.foreshadow_reminders or '暂无需要关注的伏笔',
-                relevant_memories=chapter_context.relevant_memories or '暂无相关记忆'
+                relevant_memories=chapter_context.relevant_memories or '暂无相关记忆',
+                quality_feedback=chapter_context.quality_feedback or ''
             )
         else:
             template = await PromptService.get_template("CHAPTER_GENERATION_ONE_TO_ONE", user_id, db)
@@ -2168,7 +2226,8 @@ async def _run_chapter_generation_bg(
                 foreshadow_reminders=chapter_context.foreshadow_reminders or '暂无需要关注的伏笔',
                 previous_chapter_summary=previous_summary,
                 recent_chapters_context=chapter_context.recent_chapters_context or '',
-                relevant_memories=chapter_context.relevant_memories or ''
+                relevant_memories=chapter_context.relevant_memories or '',
+                quality_feedback=chapter_context.quality_feedback or ''
             )
         else:
             template = await PromptService.get_template("CHAPTER_GENERATION_ONE_TO_MANY", user_id, db)
@@ -2617,7 +2676,8 @@ async def _run_chapter_generation_bg(
                 characters_info=chapter_context.chapter_characters or '暂无角色信息',
                 chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
                 foreshadow_reminders=chapter_context.foreshadow_reminders or '暂无需要关注的伏笔',
-                relevant_memories=chapter_context.relevant_memories or '暂无相关记忆'
+                relevant_memories=chapter_context.relevant_memories or '暂无相关记忆',
+                quality_feedback=chapter_context.quality_feedback or ''
             )
         else:
             template = await PromptService.get_template("CHAPTER_GENERATION_ONE_TO_ONE", user_id, db)
@@ -2654,7 +2714,8 @@ async def _run_chapter_generation_bg(
                 foreshadow_reminders=chapter_context.foreshadow_reminders or '暂无需要关注的伏笔',
                 previous_chapter_summary=previous_summary,
                 recent_chapters_context=chapter_context.recent_chapters_context or '',
-                relevant_memories=chapter_context.relevant_memories or ''
+                relevant_memories=chapter_context.relevant_memories or '',
+                quality_feedback=chapter_context.quality_feedback or ''
             )
         else:
             template = await PromptService.get_template("CHAPTER_GENERATION_ONE_TO_MANY", user_id, db)
@@ -2683,6 +2744,19 @@ async def _run_chapter_generation_bg(
     await tracker.preparing("准备AI提示词...")
 
     system_prompt_with_style = None
+
+    # 🎯 默认 Skill：用户未指定时自动启用长篇写作教练
+    if not skill_key:
+        try:
+            from app.services.skill_loader import get_all_skills_cached
+            _skills = get_all_skills_cached()
+            _default_skill = next((s for s in _skills if s["template_key"] == "story-long-write"), None)
+            if _default_skill:
+                skill_key = "story-long-write"
+                logger.info(f"🎯 未指定 Skill,自动启用默认写作教练: story-long-write")
+        except Exception as e:
+            logger.warning(f"⚠️ 加载默认 Skill 失败: {e}")
+
     if skill_key:
         try:
             from app.services.skill_loader import get_all_skills_cached
@@ -4183,7 +4257,8 @@ async def generate_single_chapter_for_batch(
                 foreshadow_reminders=chapter_context.foreshadow_reminders or '暂无需要关注的伏笔',
                 relevant_memories=chapter_context.relevant_memories or '暂无相关记忆',
                 previous_chapter_summary=chapter_context.previous_chapter_summary or '',
-                recent_chapters_context=chapter_context.recent_chapters_context or '暂无最近章节摘要'
+                recent_chapters_context=chapter_context.recent_chapters_context or '暂无最近章节摘要',
+                quality_feedback=chapter_context.quality_feedback or ''
             )
         else:
             # 第一章
@@ -4230,7 +4305,8 @@ async def generate_single_chapter_for_batch(
                 foreshadow_reminders=chapter_context.foreshadow_reminders or '暂无需要关注的伏笔',
                 previous_chapter_summary=final_prev_summary,
                 recent_chapters_context=chapter_context.recent_chapters_context or '',
-                relevant_memories=chapter_context.relevant_memories or ''
+                relevant_memories=chapter_context.relevant_memories or '',
+                quality_feedback=chapter_context.quality_feedback or ''
             )
         else:
             # 第一章，使用无前置内容模板
@@ -4258,6 +4334,18 @@ async def generate_single_chapter_for_batch(
     
     # 🎨 将 Skill / 写作风格注入到系统提示词（批量生成）
     system_prompt_with_style = None
+
+    # 🎯 默认 Skill：用户未指定时自动启用长篇写作教练
+    if not skill_key:
+        try:
+            from app.services.skill_loader import get_all_skills_cached
+            _skills = get_all_skills_cached()
+            _default_skill = next((s for s in _skills if s["template_key"] == "story-long-write"), None)
+            if _default_skill:
+                skill_key = "story-long-write"
+                logger.info(f"🎯 未指定 Skill,自动启用默认写作教练: story-long-write")
+        except Exception as e:
+            logger.warning(f"⚠️ 加载默认 Skill 失败: {e}")
 
     # ⚡ Skill 支持
     if skill_key:

@@ -1102,12 +1102,11 @@ const Inspiration: React.FC = () => {
       </style>
 
       {/* 顶部标题栏 - 固定不滚动 */}
-      <div style={{
+      <div className="glass-header" style={{
         position: 'sticky',
         top: 0,
         zIndex: 100,
-        background: token.colorPrimary,
-        boxShadow: `0 6px 20px color-mix(in srgb, ${token.colorPrimary} 30%, transparent)`,
+        boxShadow: `0 2px 12px color-mix(in srgb, ${token.colorText} 6%, transparent)`,
       }}>
         <div style={{
           maxWidth: 1200,
@@ -1121,11 +1120,6 @@ const Inspiration: React.FC = () => {
             icon={<ArrowLeftOutlined />}
             onClick={handleBack}
             size={isMobile ? 'middle' : 'large'}
-            style={{
-              background: `color-mix(in srgb, ${token.colorWhite} 20%, transparent)`,
-              borderColor: `color-mix(in srgb, ${token.colorWhite} 30%, transparent)`,
-              color: token.colorWhite,
-            }}
           >
             {isMobile ? '返回' : '返回首页'}
           </Button>
@@ -1135,8 +1129,7 @@ const Inspiration: React.FC = () => {
               level={isMobile ? 4 : 2}
               style={{
                 margin: 0,
-                color: token.colorWhite,
-                textShadow: '0 2px 4px color-mix(in srgb, var(--ant-color-black) 18%, transparent)',
+                color: token.colorText,
                 lineHeight: 1.2
               }}
             >

@@ -75,6 +75,7 @@ export default function Chapters() {
   const [analysisTasksMap, setAnalysisTasksMap] = useState<Record<string, AnalysisTask>>({});
   const analysisPollingIntervalRef = useRef<number | null>(null);
   const activeAnalysisPollingIdsRef = useRef<Set<string>>(new Set());
+  const generateAbortControllerRef = useRef<AbortController | null>(null);
 
   // 列表查询与分页状态
   const [chapterSearchKeyword, setChapterSearchKeyword] = useState('');
@@ -835,6 +836,9 @@ export default function Chapters() {
   const handleGenerate = async () => {
     if (!editingId) return;
 
+    const abortController = new AbortController();
+    generateAbortControllerRef.current = abortController;
+
     try {
       setIsContinuing(true);
       setIsGenerating(true);
@@ -862,7 +866,8 @@ export default function Chapters() {
         },
         selectedModel,  // 传递选中的模型
         temporaryNarrativePerspective,  // 传递临时人称参数
-        selectedSkillKey  // 传递选中的Skill
+        selectedSkillKey,  // 传递选中的Skill
+        abortController.signal  // 支持取消
       );
 
       message.success('AI创作成功，正在分析章节内容...');
@@ -885,13 +890,26 @@ export default function Chapters() {
         startPollingTask(editingId);
       }
     } catch (error) {
-      const apiError = error as ApiError;
-      message.error('AI创作失败：' + (apiError.response?.data?.detail || apiError.message || '未知错误'));
+      const err = error as Error;
+      // 用户主动取消时不显示错误
+      if (err.name === 'AbortError' || abortController.signal.aborted) {
+        message.warning('已取消生成');
+      } else {
+        const apiError = error as ApiError;
+        message.error('AI创作失败：' + (apiError.response?.data?.detail || apiError.message || '未知错误'));
+      }
     } finally {
+      generateAbortControllerRef.current = null;
       setIsContinuing(false);
       setIsGenerating(false);
       setSingleChapterProgress(0);
       setSingleChapterProgressMessage('');
+    }
+  };
+
+  const handleCancelGenerate = () => {
+    if (generateAbortControllerRef.current) {
+      generateAbortControllerRef.current.abort();
     }
   };
 
@@ -3083,6 +3101,7 @@ export default function Chapters() {
         loading={isGenerating}
         progress={singleChapterProgress}
         message={singleChapterProgressMessage}
+        onCancel={handleCancelGenerate}
       />
 
       {/* 章节阅读器 */}

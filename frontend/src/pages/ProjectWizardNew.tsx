@@ -324,12 +324,11 @@ export default function ProjectWizardNew() {
       background: token.colorBgBase,
     }}>
       {/* 顶部标题栏 - 固定不滚动 */}
-      <div style={{
+      <div className="glass-header" style={{
         position: 'sticky',
         top: 0,
         zIndex: 100,
-        background: token.colorPrimary,
-        boxShadow: `0 6px 20px color-mix(in srgb, ${token.colorPrimary} 30%, transparent)`,
+        boxShadow: `0 2px 12px color-mix(in srgb, ${token.colorText} 6%, transparent)`,
       }}>
         <div style={{
           maxWidth: 1200,
@@ -344,21 +343,15 @@ export default function ProjectWizardNew() {
             onClick={() => navigate('/')}
             size={isMobile ? 'middle' : 'large'}
             disabled={currentStep === 'generating'}
-            style={{
-              background: `color-mix(in srgb, ${token.colorWhite} 20%, transparent)`,
-              borderColor: `color-mix(in srgb, ${token.colorWhite} 30%, transparent)`,
-              color: token.colorWhite,
-            }}
           >
             {isMobile ? '返回' : '返回首页'}
           </Button>
 
           <Title level={isMobile ? 4 : 2} style={{
             margin: 0,
-            color: token.colorWhite,
-            textShadow: '0 2px 4px color-mix(in srgb, var(--ant-color-black) 18%, transparent)',
+            color: token.colorText,
           }}>
-            <RocketOutlined style={{ marginRight: 8 }} />
+            <RocketOutlined style={{ marginRight: 8, color: token.colorPrimary }} />
             项目创建向导
           </Title>
 

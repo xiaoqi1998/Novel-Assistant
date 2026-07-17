@@ -95,9 +95,7 @@ export default function SystemSettingsPage() {
 
   const announcementContent = Form.useWatch('content', announcementForm) || '';
 
-  const pageBackground = `linear-gradient(180deg, ${token.colorBgLayout} 0%, ${token.colorFillSecondary} 100%)`;
   const headerBackground = `linear-gradient(135deg, ${token.colorPrimary} 0%, ${token.colorPrimaryHover} 100%)`;
-  const footerSafeOffset = 88;
   const announcementAdminAvailable = announcementStatus?.mode === 'server';
 
   const loadAnnouncementStatus = useCallback(async () => {
@@ -498,16 +496,8 @@ export default function SystemSettingsPage() {
   }
 
   return (
-    <div
-      style={{
-        minHeight: `calc(100vh - ${footerSafeOffset}px)`,
-        boxSizing: 'border-box',
-        background: pageBackground,
-        padding: 24,
-        paddingBottom: footerSafeOffset,
-      }}
-    >
-      <div style={{ maxWidth: 1400, margin: '0 auto', width: '100%' }}>
+    <div>
+      <div>
       <Card
         bordered={false}
         style={{
@@ -591,7 +581,7 @@ export default function SystemSettingsPage() {
                         </Col>
                         <Col xs={24} md={12}>
                           <Form.Item name="smtp_from_name" label="发件人名称" rules={[{ required: true, message: '请输入发件人名称' }]}>
-                            <Input placeholder="MuMuAINovel" />
+                            <Input placeholder="墨笔" />
                           </Form.Item>
                         </Col>
                       </Row>

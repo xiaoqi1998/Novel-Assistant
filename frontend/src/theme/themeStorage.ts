@@ -16,7 +16,7 @@ export const getStoredThemeMode = (): ThemeMode => {
     console.warn('读取主题模式失败:', error);
   }
 
-  return 'system';
+  return 'dark';
 };
 
 export const setStoredThemeMode = (mode: ThemeMode): void => {

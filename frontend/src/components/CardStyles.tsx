@@ -1,29 +1,17 @@
 import type { CSSProperties } from 'react';
 
-const bookshelfBaseShadow = `
-  0 10px 22px -12px color-mix(in srgb, var(--ant-color-text) 28%, transparent),
-  inset 0 1px 0 color-mix(in srgb, var(--ant-color-bg-container) 82%, transparent)
-`;
+// 玻璃态卡片通用常量（暗黑风格 + 紫色 #7C3AED 强调）
+const glassCardBackground = 'color-mix(in srgb, var(--ant-color-bg-container) 85%, transparent)';
+const glassCardBackdropFilter = 'blur(16px) saturate(160%)';
+const glassCardBaseBorder = '1px solid rgba(124, 58, 237, 0.2)';
+const glassCardBaseShadow = '0 8px 32px rgba(0, 0, 0, 0.4)';
 
-const bookshelfHoverShadow = `
-  0 16px 30px -12px color-mix(in srgb, var(--ant-color-text) 34%, transparent),
-  inset 0 1px 0 color-mix(in srgb, var(--ant-color-bg-container) 88%, transparent)
-`;
+const glassCardHoverBorderColor = 'rgba(124, 58, 237, 0.45)';
+const glassCardHoverShadow = '0 12px 40px rgba(124, 58, 237, 0.2)';
 
-const bookshelfNewBaseShadow = `
-  0 10px 24px -14px color-mix(in srgb, var(--ant-color-text) 30%, transparent),
-  inset 0 1px 0 color-mix(in srgb, var(--ant-color-bg-container) 84%, transparent)
-`;
-
-const bookshelfNewHoverShadow = `
-  0 16px 30px -12px color-mix(in srgb, var(--ant-color-text) 36%, transparent),
-  inset 0 1px 0 color-mix(in srgb, var(--ant-color-bg-container) 90%, transparent)
-`;
-
-const promptTemplateBaseShadow = `
-  0 6px 16px color-mix(in srgb, var(--ant-color-text) 11%, transparent),
-  0 1px 0 color-mix(in srgb, var(--ant-color-white) 42%, transparent) inset
-`;
+// 新建项目卡片：紫色虚线边框
+const newProjectCardBaseBorder = '2px dashed rgba(124, 58, 237, 0.4)';
+const newProjectCardHoverBorderColor = 'rgba(124, 58, 237, 0.6)';
 
 // BookshelfPage 样式（书架/书本卡片）
 export const bookshelfCardStyles = {
@@ -37,26 +25,28 @@ export const bookshelfCardStyles = {
 
   projectCard: {
     height: '100%',
-    borderRadius: '4px 12px 12px 4px',
+    borderRadius: 16,
     overflow: 'hidden',
-    background: 'linear-gradient(180deg, color-mix(in srgb, var(--ant-color-bg-container) 96%, var(--ant-color-text) 4%) 0%, color-mix(in srgb, var(--ant-color-bg-container) 88%, var(--ant-color-text) 12%) 100%)',
-    boxShadow: bookshelfBaseShadow,
+    background: glassCardBackground,
+    backdropFilter: glassCardBackdropFilter,
+    WebkitBackdropFilter: glassCardBackdropFilter,
+    boxShadow: glassCardBaseShadow,
     transition: 'transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), border-color 0.3s ease',
-    border: '1px solid color-mix(in srgb, var(--ant-color-text) 18%, transparent)',
+    border: glassCardBaseBorder,
     display: 'flex',
     flexDirection: 'column',
     position: 'relative',
-    transformOrigin: 'center bottom',
-    transformStyle: 'preserve-3d',
   } as CSSProperties,
 
   newProjectCard: {
     height: '100%',
-    borderRadius: 12,
+    borderRadius: 16,
     overflow: 'hidden',
-    background: 'linear-gradient(180deg, color-mix(in srgb, var(--ant-color-bg-container) 94%, var(--ant-color-warning) 6%) 0%, color-mix(in srgb, var(--ant-color-bg-container) 86%, var(--ant-color-warning) 14%) 100%)',
-    boxShadow: bookshelfNewBaseShadow,
-    border: '2px dashed color-mix(in srgb, var(--ant-color-warning) 40%, var(--ant-color-border) 60%)',
+    background: glassCardBackground,
+    backdropFilter: glassCardBackdropFilter,
+    WebkitBackdropFilter: glassCardBackdropFilter,
+    boxShadow: glassCardBaseShadow,
+    border: newProjectCardBaseBorder,
     display: 'flex',
     flexDirection: 'column',
     justifyContent: 'center',
@@ -74,16 +64,15 @@ export const bookshelfCardHoverHandlers = {
     }
 
     if (target.dataset.bookKind === 'new') {
-      target.style.transform = 'translateY(-6px)';
-      target.style.boxShadow = bookshelfNewHoverShadow;
-      target.style.borderColor = 'color-mix(in srgb, var(--ant-color-warning) 48%, var(--ant-color-border) 52%)';
-      target.style.background = 'linear-gradient(180deg, color-mix(in srgb, var(--ant-color-bg-container) 92%, var(--ant-color-warning) 8%) 0%, color-mix(in srgb, var(--ant-color-bg-container) 82%, var(--ant-color-warning) 18%) 100%)';
+      target.style.transform = 'translateY(-4px)';
+      target.style.boxShadow = glassCardHoverShadow;
+      target.style.borderColor = newProjectCardHoverBorderColor;
       return;
     }
 
-    target.style.transform = 'translateY(-8px) rotateX(2deg)';
-    target.style.boxShadow = bookshelfHoverShadow;
-    target.style.borderColor = 'color-mix(in srgb, var(--ant-color-primary) 28%, var(--ant-color-border) 72%)';
+    target.style.transform = 'translateY(-4px)';
+    target.style.boxShadow = glassCardHoverShadow;
+    target.style.borderColor = glassCardHoverBorderColor;
   },
   onMouseLeave: (e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.currentTarget;
@@ -92,14 +81,9 @@ export const bookshelfCardHoverHandlers = {
     }
 
     const isNewBook = target.dataset.bookKind === 'new';
-    target.style.transform = 'translateY(0) rotateX(0)';
-    target.style.boxShadow = isNewBook ? bookshelfNewBaseShadow : bookshelfBaseShadow;
-    target.style.borderColor = isNewBook
-      ? 'color-mix(in srgb, var(--ant-color-warning) 40%, var(--ant-color-border) 60%)'
-      : 'color-mix(in srgb, var(--ant-color-text) 18%, transparent)';
-    if (isNewBook) {
-      target.style.background = 'linear-gradient(180deg, color-mix(in srgb, var(--ant-color-bg-container) 94%, var(--ant-color-warning) 6%) 0%, color-mix(in srgb, var(--ant-color-bg-container) 86%, var(--ant-color-warning) 14%) 100%)';
-    }
+    target.style.transform = 'translateY(0)';
+    target.style.boxShadow = glassCardBaseShadow;
+    target.style.borderColor = isNewBook ? newProjectCardBaseBorder : glassCardBaseBorder;
   },
 };
 
@@ -107,11 +91,13 @@ export const bookshelfCardHoverHandlers = {
 export const promptTemplateCardStyles = {
   templateCard: {
     height: '100%',
-    borderRadius: 14,
+    borderRadius: 16,
     overflow: 'hidden',
-    border: '1px solid color-mix(in srgb, var(--ant-color-text) 8%, transparent)',
-    background: 'linear-gradient(180deg, color-mix(in srgb, var(--ant-color-bg-container) 97%, var(--ant-color-primary) 3%) 0%, var(--ant-color-bg-container) 100%)',
-    boxShadow: promptTemplateBaseShadow,
+    border: glassCardBaseBorder,
+    background: glassCardBackground,
+    backdropFilter: glassCardBackdropFilter,
+    WebkitBackdropFilter: glassCardBackdropFilter,
+    boxShadow: glassCardBaseShadow,
     transition: 'transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.28s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.28s ease',
   } as CSSProperties,
 };
@@ -119,18 +105,15 @@ export const promptTemplateCardStyles = {
 export const promptTemplateCardHoverHandlers = {
   onMouseEnter: (e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.currentTarget;
-    target.style.transform = 'translateY(-6px)';
-    target.style.boxShadow = `
-      0 14px 24px color-mix(in srgb, var(--ant-color-text) 16%, transparent),
-      0 1px 0 color-mix(in srgb, var(--ant-color-white) 48%, transparent) inset
-    `;
-    target.style.borderColor = 'color-mix(in srgb, var(--ant-color-primary) 24%, transparent)';
+    target.style.transform = 'translateY(-4px)';
+    target.style.boxShadow = glassCardHoverShadow;
+    target.style.borderColor = glassCardHoverBorderColor;
   },
   onMouseLeave: (e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.currentTarget;
     target.style.transform = 'translateY(0)';
-    target.style.boxShadow = promptTemplateBaseShadow;
-    target.style.borderColor = 'color-mix(in srgb, var(--ant-color-text) 8%, transparent)';
+    target.style.boxShadow = glassCardBaseShadow;
+    target.style.borderColor = glassCardBaseBorder;
   },
 };
 
@@ -144,10 +127,12 @@ export const promptTemplateGridConfig = {
 // WorldSetting 页面卡片样式
 export const worldSettingCardStyles = {
   sectionCard: {
-    borderRadius: 14,
-    border: '1px solid color-mix(in srgb, var(--ant-color-text) 7%, transparent)',
-    boxShadow: '0 4px 12px color-mix(in srgb, var(--ant-color-text) 8%, transparent)',
-    background: 'linear-gradient(180deg, color-mix(in srgb, var(--ant-color-bg-container) 98%, var(--ant-color-primary) 2%) 0%, var(--ant-color-bg-container) 100%)',
+    borderRadius: 16,
+    border: glassCardBaseBorder,
+    backdropFilter: glassCardBackdropFilter,
+    WebkitBackdropFilter: glassCardBackdropFilter,
+    boxShadow: glassCardBaseShadow,
+    background: glassCardBackground,
     transition: 'box-shadow 0.24s ease, border-color 0.24s ease',
   } as CSSProperties,
 };
@@ -157,14 +142,23 @@ export const characterCardStyles = {
   characterCard: {
     display: 'flex',
     flexDirection: 'column',
-    borderRadius: 12,
+    borderRadius: 16,
+    border: glassCardBaseBorder,
+    backdropFilter: glassCardBackdropFilter,
+    WebkitBackdropFilter: glassCardBackdropFilter,
+    background: glassCardBackground,
+    boxShadow: glassCardBaseShadow,
   } as CSSProperties,
 
   organizationCard: {
     display: 'flex',
     flexDirection: 'column',
-    backgroundColor: 'var(--ant-color-bg-layout)',
-    borderRadius: 12,
+    borderRadius: 16,
+    border: glassCardBaseBorder,
+    backdropFilter: glassCardBackdropFilter,
+    WebkitBackdropFilter: glassCardBackdropFilter,
+    background: glassCardBackground,
+    boxShadow: glassCardBaseShadow,
   } as CSSProperties,
 
   nameEllipsis: {

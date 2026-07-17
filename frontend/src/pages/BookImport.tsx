@@ -588,15 +588,8 @@ export default function BookImport() {
   };
 
   return (
-    <div
-      style={{
-        minHeight: '90vh',
-        overflow: 'auto',
-        background: `linear-gradient(180deg, ${token.colorBgLayout} 0%, ${token.colorFillSecondary} 100%)`,
-        padding: isMobile ? '20px 16px 70px' : '24px 24px 70px',
-      }}
-    >
-      <div style={{ maxWidth: 1400, margin: '0 auto', width: '100%' }}>
+    <div>
+      <div>
         <Card
           variant="borderless"
           style={{

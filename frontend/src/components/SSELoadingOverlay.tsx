@@ -1,17 +1,21 @@
 import React from 'react';
-import { Spin, theme } from 'antd';
+import { Spin, Button, theme } from 'antd';
 import { LoadingOutlined } from '@ant-design/icons';
 
 interface SSELoadingOverlayProps {
   loading: boolean;
   progress: number;
   message: string;
+  onCancel?: () => void;
+  cancelText?: string;
 }
 
 export const SSELoadingOverlay: React.FC<SSELoadingOverlayProps> = ({
   loading,
   progress,
-  message
+  message,
+  onCancel,
+  cancelText = '取消生成'
 }) => {
   const { token } = theme.useToken();
 
@@ -111,6 +115,15 @@ export const SSELoadingOverlay: React.FC<SSELoadingOverlayProps> = ({
         }}>
           请勿关闭页面,生成过程需要一定时间
         </div>
+
+        {/* 取消按钮 */}
+        {onCancel && (
+          <div style={{ textAlign: 'center', marginTop: 20 }}>
+            <Button danger onClick={onCancel}>
+              {cancelText}
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

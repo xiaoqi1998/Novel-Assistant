@@ -623,21 +623,8 @@ export default function MCPPluginsPage() {
   return (
     <>
       {contextHolder}
-      <div style={{
-        minHeight: '90vh',
-        background: `linear-gradient(180deg, ${token.colorBgLayout} 0%, ${alphaColor(token.colorPrimary, 0.08)} 100%)`,
-        padding: isMobile ? '20px 16px 70px' : '24px 24px 70px',
-        display: 'flex',
-        flexDirection: 'column',
-      }}>
-        <div style={{
-          maxWidth: 1400,
-          margin: '0 auto',
-          width: '100%',
-          flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-        }}>
+      <div>
+        <div>
           {/* 顶部导航卡片 */}
           <Card
             variant="borderless"

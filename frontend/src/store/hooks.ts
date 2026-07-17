@@ -289,8 +289,16 @@ export function useChapterSync() {
     onProgressUpdate?: (message: string, progress: number) => void,
     model?: string,
     narrativePerspective?: string,
-    skillKey?: string
+    skillKey?: string,
+    signal?: AbortSignal
   ) => {
+    const abortController = new AbortController();
+    // 支持外部传入 signal 取消请求
+    if (signal) {
+      if (signal.aborted) { abortController.abort(); }
+      else { signal.addEventListener('abort', () => abortController.abort()); }
+    }
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     try {
       // 使用fetch处理流式响应
       const response = await fetch(`/api/chapters/${chapterId}/generate-stream`, {
@@ -305,13 +313,14 @@ export function useChapterSync() {
           narrative_perspective: narrativePerspective,
           skill_key: skillKey
         }),
+        signal: abortController.signal,
       });
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      const reader = response.body?.getReader();
+      reader = response.body?.getReader();
       const decoder = new TextDecoder();
 
       if (!reader) {
@@ -321,6 +330,7 @@ export function useChapterSync() {
       let buffer = '';
       let fullContent = '';
       let analysisTaskId: string | undefined;
+      let sseError: Error | null = null;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -330,7 +340,7 @@ export function useChapterSync() {
         }
 
         buffer += decoder.decode(value, { stream: true });
-        
+
         // 处理缓冲区中的完整消息
         const lines = buffer.split('\n\n');
         buffer = lines.pop() || '';
@@ -344,7 +354,7 @@ export function useChapterSync() {
             const dataMatch = line.match(/^data: (.+)$/m);
             if (dataMatch) {
               const message = JSON.parse(dataMatch[1]);
-              
+
               if (message.type === 'start') {
                 // 开始生成
                 if (onProgressUpdate) {
@@ -364,7 +374,9 @@ export function useChapterSync() {
                   onProgress(fullContent);
                 }
               } else if (message.type === 'error') {
-                throw new Error(message.error || '生成失败');
+                // 使用标志位而非 throw，避免被内部 catch 误吞
+                sseError = new Error(message.error || '生成失败');
+                break;
               } else if (message.type === 'result') {
                 // 结果消息，包含分析任务ID
                 if (message.data?.analysis_task_id) {
@@ -391,6 +403,14 @@ export function useChapterSync() {
             console.error('解析SSE消息失败:', error);
           }
         }
+
+        if (sseError) {
+          break;
+        }
+      }
+
+      if (sseError) {
+        throw sseError;
       }
 
       return {
@@ -400,6 +420,11 @@ export function useChapterSync() {
     } catch (error) {
       console.error('AI流式生成章节内容失败:', error);
       throw error;
+    } finally {
+      abortController.abort();
+      if (reader) {
+        reader.cancel().catch(() => {});
+      }
     }
   }, [refreshChapters]);
 

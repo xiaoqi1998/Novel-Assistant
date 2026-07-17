@@ -140,17 +140,18 @@ class OneToManyContext:
     # === P2-参考信息 ===
     relevant_memories: Optional[str] = None  # 始终启用（相关度>0.6）
     foreshadow_reminders: Optional[str] = None
-    
+    quality_feedback: Optional[str] = None  # 上一章质量反馈（suggestions + 低分维度）
+
     # === 元信息 ===
     context_stats: Dict[str, Any] = field(default_factory=dict)
-    
+
     def get_total_context_length(self) -> int:
         """计算总上下文长度"""
         total = 0
         for field_name in ['chapter_outline', 'recent_chapters_context', 'continuation_point',
                           'chapter_characters', 'chapter_careers',
                           'relevant_memories', 'foreshadow_reminders',
-                          'previous_chapter_summary']:
+                          'previous_chapter_summary', 'quality_feedback']:
             value = getattr(self, field_name, None)
             if value:
                 total += len(value)
@@ -194,16 +195,17 @@ class OneToOneContext:
     # === P2-参考信息 ===
     foreshadow_reminders: Optional[str] = None
     relevant_memories: Optional[str] = None  # 相关度>0.6
-    
+    quality_feedback: Optional[str] = None  # 上一章质量反馈（suggestions + 低分维度）
+
     # === 元信息 ===
     context_stats: Dict[str, Any] = field(default_factory=dict)
-    
+
     def get_total_context_length(self) -> int:
         """计算总上下文长度"""
         total = 0
         for field_name in ['chapter_outline', 'recent_chapters_context', 'continuation_point', 'previous_chapter_summary',
                           'chapter_characters', 'chapter_careers', 'foreshadow_reminders',
-                          'relevant_memories']:
+                          'relevant_memories', 'quality_feedback']:
             value = getattr(self, field_name, None)
             if value:
                 total += len(value)
@@ -319,6 +321,14 @@ class OneToManyContextBuilder:
             context.previous_chapter_summary = ending_info.get('summary')
             context.previous_chapter_events = ending_info.get('key_events')
             logger.info(f"  ✅ 衔接锚点: {len(context.continuation_point or '')}字符")
+
+        # === P1-质量反馈（上一章分析结果）===
+        if chapter_number > 1:
+            context.quality_feedback = await self._build_quality_feedback(
+                chapter, db
+            )
+            if context.quality_feedback:
+                logger.info(f"  ✅ 质量反馈: {len(context.quality_feedback)}字符")
         
         # === P1-重要信息 ===
         # 角色信息（完整版：含年龄、外貌、背景、关系、组织、职业）+ 独立职业详情
@@ -821,7 +831,81 @@ class OneToManyContextBuilder:
             return "\n".join(sections)[:800]
 
         return chapter_outline[:500].replace('\n', ' ')
-    
+
+    async def _build_quality_feedback(
+        self,
+        chapter: Chapter,
+        db: AsyncSession
+    ) -> Optional[str]:
+        """构建上一章质量反馈（suggestions + 低分维度），用于软反馈闭环。"""
+        try:
+            # 查询上一章
+            prev_result = await db.execute(
+                select(Chapter)
+                .where(Chapter.project_id == chapter.project_id)
+                .where(Chapter.chapter_number < chapter.chapter_number)
+                .order_by(Chapter.chapter_number.desc())
+                .limit(1)
+            )
+            prev_chapter = prev_result.scalar_one_or_none()
+            if not prev_chapter:
+                return None
+
+            # 查询上一章的剧情分析记录
+            analysis_result = await db.execute(
+                select(PlotAnalysis).where(PlotAnalysis.chapter_id == prev_chapter.id)
+            )
+            analysis = analysis_result.scalar_one_or_none()
+            if not analysis:
+                return None
+
+            # 提取评分
+            coherence = analysis.coherence_score or 0.0
+            engagement = analysis.engagement_score or 0.0
+            pacing = analysis.pacing_score or 0.0
+
+            # 识别低分维度（< 6.0）
+            low_dims = []
+            dim_labels = {
+                'coherence': ('连贯性', '注意情节衔接和逻辑一致性'),
+                'engagement': ('吸引力', '建议加强悬念和冲突'),
+                'pacing': ('节奏', '注意叙事节奏的快慢交替'),
+            }
+            scores = {'coherence': coherence, 'engagement': engagement, 'pacing': pacing}
+            for dim, score in scores.items():
+                if score < 6.0:
+                    label, advice = dim_labels[dim]
+                    low_dims.append(f"{label}({score:.1f}) — {advice}")
+
+            # 提取改进建议（取前3条）
+            suggestions = analysis.suggestions or []
+            if isinstance(suggestions, list):
+                suggestions = [s for s in suggestions if isinstance(s, str) and s.strip()][:3]
+            else:
+                suggestions = []
+
+            # 如果评分均 >= 6.0 且无 suggestions，返回 None
+            if not low_dims and not suggestions:
+                return None
+
+            # 格式化反馈文本
+            lines = ["【上一章质量反馈 - 请避免同类问题】"]
+            lines.append(f"上一章评分: 连贯性 {coherence:.1f} | 吸引力 {engagement:.1f} | 节奏 {pacing:.1f}")
+
+            if low_dims:
+                lines.append(f"⚠️ 低分维度: {'; '.join(low_dims)}")
+
+            if suggestions:
+                lines.append("改进建议:")
+                for s in suggestions:
+                    lines.append(f"- {s}")
+
+            return "\n".join(lines)
+
+        except Exception as e:
+            logger.error(f"❌ 构建质量反馈失败: {str(e)}")
+            return None
+
     async def _get_last_ending_enhanced(
         self,
         chapter: Chapter,
@@ -1240,7 +1324,15 @@ class OneToOneContextBuilder:
             context.continuation_point = None
             context.previous_chapter_summary = None
             logger.info(f"  ✅ P1-第1章无需上一章内容")
-        
+
+        # 1.5 质量反馈（上一章分析结果）
+        if chapter_number > 1:
+            context.quality_feedback = await self._build_quality_feedback(
+                chapter, db
+            )
+            if context.quality_feedback:
+                logger.info(f"  ✅ P1-质量反馈: {len(context.quality_feedback)}字符")
+
         # 2. 根据structure中的characters获取角色信息（含职业）
         character_names = []
         if outline and outline.structure:
@@ -1356,9 +1448,76 @@ class OneToOneContextBuilder:
         }
         
         logger.info(f"📊 [1-1模式] 上下文构建完成: 总长度 {context.context_stats['total_length']} 字符")
-        
+
         return context
-    
+
+    async def _build_quality_feedback(
+        self,
+        chapter: Chapter,
+        db: AsyncSession
+    ) -> Optional[str]:
+        """构建上一章质量反馈（suggestions + 低分维度），用于软反馈闭环。"""
+        try:
+            prev_result = await db.execute(
+                select(Chapter)
+                .where(Chapter.project_id == chapter.project_id)
+                .where(Chapter.chapter_number < chapter.chapter_number)
+                .order_by(Chapter.chapter_number.desc())
+                .limit(1)
+            )
+            prev_chapter = prev_result.scalar_one_or_none()
+            if not prev_chapter:
+                return None
+
+            analysis_result = await db.execute(
+                select(PlotAnalysis).where(PlotAnalysis.chapter_id == prev_chapter.id)
+            )
+            analysis = analysis_result.scalar_one_or_none()
+            if not analysis:
+                return None
+
+            coherence = analysis.coherence_score or 0.0
+            engagement = analysis.engagement_score or 0.0
+            pacing = analysis.pacing_score or 0.0
+
+            low_dims = []
+            dim_labels = {
+                'coherence': ('连贯性', '注意情节衔接和逻辑一致性'),
+                'engagement': ('吸引力', '建议加强悬念和冲突'),
+                'pacing': ('节奏', '注意叙事节奏的快慢交替'),
+            }
+            scores = {'coherence': coherence, 'engagement': engagement, 'pacing': pacing}
+            for dim, score in scores.items():
+                if score < 6.0:
+                    label, advice = dim_labels[dim]
+                    low_dims.append(f"{label}({score:.1f}) — {advice}")
+
+            suggestions = analysis.suggestions or []
+            if isinstance(suggestions, list):
+                suggestions = [s for s in suggestions if isinstance(s, str) and s.strip()][:3]
+            else:
+                suggestions = []
+
+            if not low_dims and not suggestions:
+                return None
+
+            lines = ["【上一章质量反馈 - 请避免同类问题】"]
+            lines.append(f"上一章评分: 连贯性 {coherence:.1f} | 吸引力 {engagement:.1f} | 节奏 {pacing:.1f}")
+
+            if low_dims:
+                lines.append(f"⚠️ 低分维度: {'; '.join(low_dims)}")
+
+            if suggestions:
+                lines.append("改进建议:")
+                for s in suggestions:
+                    lines.append(f"- {s}")
+
+            return "\n".join(lines)
+
+        except Exception as e:
+            logger.error(f"❌ 构建质量反馈失败: {str(e)}")
+            return None
+
     async def _build_recent_chapters_context(
         self,
         chapter: Chapter,

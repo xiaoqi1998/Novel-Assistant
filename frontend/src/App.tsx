@@ -17,25 +17,24 @@ import Foreshadows from './pages/Foreshadows';
 import WritingStyles from './pages/WritingStyles';
 import PromptWorkshop from './pages/PromptWorkshop';
 import Settings from './pages/Settings';
+import SystemSettings from './pages/SystemSettings';
 import MCPPlugins from './pages/MCPPlugins';
 import UserManagement from './pages/UserManagement';
 import PromptTemplates from './pages/PromptTemplates';
+import BookImport from './pages/BookImport';
 import SkillChat from './pages/SkillChat';
 import SkillManage from './pages/SkillManage';
-import Sponsor from './pages/Sponsor';
+import FullReview from './pages/FullReview';
 // import Polish from './pages/Polish';
 import Login from './pages/Login';
 import AuthCallback from './pages/AuthCallback';
 import ProtectedRoute from './components/ProtectedRoute';
-import AppFooter from './components/AppFooter';
-import SpringFestival from './components/SpringFestival';
+import RootLayout from './components/RootLayout';
 import './App.css';
 
 function App() {
   return (
     <>
-      {/* 🧧 春节喜庆装饰 */}
-      <SpringFestival />
       <BrowserRouter
         future={{
           v7_startTransition: true,
@@ -43,20 +42,26 @@ function App() {
         }}
       >
         <Routes>
-          <Route path="/login" element={<><Login /><AppFooter /></>} />
+          <Route path="/login" element={<Login />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
 
-          <Route path="/" element={<ProtectedRoute><><ProjectList /><AppFooter sidebarWidth={220} /></></ProtectedRoute>} />
-          <Route path="/projects" element={<ProtectedRoute><><ProjectList /><AppFooter sidebarWidth={220} /></></ProtectedRoute>} />
+          {/* 顶级页面统一通过 RootLayout 提供侧边栏 + 顶栏 + 底部版本条 */}
+          <Route element={<ProtectedRoute><RootLayout /></ProtectedRoute>}>
+            <Route path="/" element={<ProjectList />} />
+            <Route path="/projects" element={<ProjectList />} />
+            <Route path="/settings" element={<Settings />} />
+            <Route path="/system-settings" element={<SystemSettings />} />
+            <Route path="/mcp-plugins" element={<MCPPlugins />} />
+            <Route path="/prompt-templates" element={<PromptTemplates />} />
+            <Route path="/book-import" element={<BookImport />} />
+          </Route>
+
           <Route path="/wizard" element={<ProtectedRoute><ProjectWizardNew /></ProtectedRoute>} />
           <Route path="/inspiration" element={<ProtectedRoute><Inspiration /></ProtectedRoute>} />
-          <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
-          <Route path="/prompt-templates" element={<ProtectedRoute><><PromptTemplates /><AppFooter /></></ProtectedRoute>} />
-          <Route path="/mcp-plugins" element={<ProtectedRoute><MCPPlugins /></ProtectedRoute>} />
           <Route path="/user-management" element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />
           <Route path="/chapters/:chapterId/reader" element={<ProtectedRoute><ChapterReader /></ProtectedRoute>} />
           <Route path="/project/:projectId" element={<ProtectedRoute><ProjectDetail /></ProtectedRoute>}>
-            <Route index element={<Navigate to="sponsor" replace />} />
+            <Route index element={<Navigate to="world-setting" replace />} />
             <Route path="world-setting" element={<WorldSetting />} />
             <Route path="careers" element={<Careers />} />
             <Route path="outline" element={<Outline />} />
@@ -71,8 +76,7 @@ function App() {
             <Route path="prompt-workshop" element={<PromptWorkshop />} />
             <Route path="skill-chat" element={<SkillChat />} />
             <Route path="skill-manage" element={<SkillManage />} />
-            <Route path="sponsor" element={<Sponsor />} />
-            {/* <Route path="polish" element={<Polish />} /> */}
+            <Route path="full-review" element={<FullReview />} />
           </Route>
         </Routes>
       </BrowserRouter>

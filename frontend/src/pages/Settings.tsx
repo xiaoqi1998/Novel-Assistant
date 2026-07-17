@@ -3,7 +3,7 @@ import { Card, Form, Input, Button, Select, Slider, InputNumber, message, Space,
 import { SaveOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, ThunderboltOutlined, PlusOutlined, EditOutlined, CopyOutlined, WarningOutlined, PictureOutlined } from '@ant-design/icons';
 import { settingsApi, mcpPluginApi } from '../services/api';
 import type { SettingsUpdate, APIKeyPreset, PresetCreateRequest, APIKeyPresetConfig } from '../types';
-import { eventBus, EventNames } from '../store/eventBus';
+import { useNavigate } from 'react-router-dom';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -14,6 +14,7 @@ export default function SettingsPage() {
   const { token } = theme.useToken();
   const screens = useBreakpoint();
   const isMobile = !screens.md; // md断点是768px
+  const navigate = useNavigate();
   const [form] = Form.useForm();
   const [modal, contextHolder] = Modal.useModal();
   const [loading, setLoading] = useState(false);
@@ -61,7 +62,6 @@ export default function SettingsPage() {
   const [presetModelsFetched, setPresetModelsFetched] = useState(false);
   const [presetModelSearchText, setPresetModelSearchText] = useState('');
 
-  const pageBackground = `linear-gradient(180deg, ${token.colorBgLayout} 0%, ${token.colorFillSecondary} 100%)`;
   const headerBackground = `linear-gradient(135deg, ${token.colorPrimary} 0%, ${token.colorPrimaryHover} 100%)`;
 
   useEffect(() => {
@@ -227,7 +227,7 @@ export default function SettingsPage() {
               okText: '前往 MCP 页面',
               cancelText: '稍后处理',
               onOk: () => {
-                eventBus.emit(EventNames.SWITCH_TO_MCP_VIEW);
+                navigate('/mcp-plugins');
               },
             });
           }
@@ -809,7 +809,7 @@ export default function SettingsPage() {
                 okText: '前往 MCP 页面',
                 cancelText: '稍后处理',
                 onOk: () => {
-                  eventBus.emit(EventNames.SWITCH_TO_MCP_VIEW);
+                  navigate('/mcp-plugins');
                 },
               });
             }
@@ -1124,21 +1124,8 @@ export default function SettingsPage() {
   return (
     <>
       {contextHolder}
-      <div style={{
-        minHeight: '90vh',
-        background: pageBackground,
-        padding: isMobile ? '20px 16px 70px' : '24px 24px 70px',
-        display: 'flex',
-        flexDirection: 'column',
-      }}>
-        <div style={{
-          maxWidth: 1400,
-          margin: '0 auto',
-          width: '100%',
-          flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-        }}>
+      <div>
+        <div>
           {/* 顶部导航卡片 */}
           <Card
             variant="borderless"

@@ -248,27 +248,13 @@ export default function PromptTemplates() {
   };
 
   const currentTemplates = getCurrentTemplates();
-  const pageBackground = `linear-gradient(180deg, ${token.colorBgLayout} 0%, ${token.colorFillSecondary} 100%)`;
   const headerBackground = `linear-gradient(135deg, ${token.colorPrimary} 0%, ${token.colorPrimaryHover} 100%)`;
 
   return (
     <>
       {contextHolder}
-      <div style={{
-      minHeight: '90vh',
-      background: pageBackground,
-      padding: isMobile ? '20px 16px 70px' : '24px 24px 70px',
-      display: 'flex',
-      flexDirection: 'column',
-    }}>
-      <div style={{
-        maxWidth: 1400,
-        margin: '0 auto',
-        width: '100%',
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-      }}>
+      <div>
+        <div>
         {/* 顶部导航卡片 */}
         <Card
           variant="borderless"
