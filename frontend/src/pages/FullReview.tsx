@@ -2,14 +2,24 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import {
   Card, Button, Select, Radio, Space, Typography, message, Progress,
-  Alert, Tag, Spin, Modal, Empty
+  Alert, Tag, Spin, Modal, Empty, theme, List, Tooltip
 } from 'antd';
 import {
   AuditOutlined, PlayCircleOutlined, CopyOutlined, DownloadOutlined,
   EditOutlined, CheckOutlined, ReloadOutlined,
-  StopOutlined, ExclamationCircleOutlined, FileTextOutlined
+  StopOutlined, ExclamationCircleOutlined, FileTextOutlined,
+  HistoryOutlined, EyeOutlined
 } from '@ant-design/icons';
 import axios from 'axios';
+import {
+  startFullReviewBackground,
+  getReviewReport,
+  listReviewReports,
+  getProjectTasks,
+  cancelTask,
+  pollTaskUntilComplete
+} from '../services/backgroundTaskService';
+import { eventBus } from '../store/eventBus';
 import './FullReview.css';
 
 const { Title, Text } = Typography;
@@ -34,6 +44,7 @@ interface ModifiedChapter {
 
 const FullReview: React.FC = () => {
   const { projectId } = useParams<{ projectId: string }>();
+  const { token } = theme.useToken();
 
   const [step, setStep] = useState<ReviewStep>('select');
   const [scope, setScope] = useState<ReviewScope>('single');
@@ -46,17 +57,126 @@ const FullReview: React.FC = () => {
   const [progress, setProgress] = useState({ message: '', percent: 0 });
   const [error, setError] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
+  const [historyReports, setHistoryReports] = useState<Array<{
+    id: string;
+    prompt: string;
+    total_chars: number;
+    preview: string;
+    created_at: string | null;
+  }>>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [loadingReportId, setLoadingReportId] = useState<string | null>(null);
 
+  // apply（AI修改）阶段仍是 SSE，保留 abortController
   const abortControllerRef = useRef<AbortController | null>(null);
-  const reviewReportRef = useRef('');
   const modifiedContentRef = useRef('');
   const modifiedChaptersRef = useRef<ModifiedChapter[]>([]);
+  // 取消后台任务轮询的函数
+  const cancelPollingRef = useRef<(() => void) | null>(null);
 
   // 加载章节列表
   useEffect(() => {
     if (!projectId) return;
     loadChapters();
+    loadHistoryReports();
+    // 检查是否有进行中的全文审查任务，恢复轮询
+    checkAndResumeRunningTask();
+    return () => {
+      // 离开页面时停止轮询（后台任务继续在服务端运行）
+      cancelPollingRef.current?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
+
+  // 加载历史报告列表
+  const loadHistoryReports = async () => {
+    if (!projectId) return;
+    setHistoryLoading(true);
+    try {
+      const data = await listReviewReports(projectId, 20);
+      setHistoryReports(data.items || []);
+    } catch {
+      // 静默失败，不打扰用户
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  // 检查并恢复进行中的全文审查任务
+  const checkAndResumeRunningTask = async () => {
+    if (!projectId) return;
+    try {
+      const data = await getProjectTasks(projectId, 'full_review', 5);
+      const active = (data.items || []).find(
+        (t) => t.status === 'running' || t.status === 'pending'
+      );
+      if (active) {
+        setStep('reviewing');
+        setIsStreaming(true);
+        setCurrentTaskId(active.id);
+        setProgress({
+          message: active.status_message || '任务进行中...',
+          percent: active.progress || 0,
+        });
+        startPolling(active.id);
+      }
+    } catch {
+      // 静默失败
+    }
+  };
+
+  // 开始轮询指定任务
+  const startPolling = (taskId: string) => {
+    cancelPollingRef.current?.();
+    cancelPollingRef.current = pollTaskUntilComplete(
+      taskId,
+      (status) => {
+        setProgress({
+          message: status.status_message || '审查中...',
+          percent: status.progress || 0,
+        });
+      },
+      async (result) => {
+        setIsStreaming(false);
+        setCurrentTaskId(null);
+        // 从 task_result 拿 report_id，加载完整报告
+        const reportId = (result.task_result as Record<string, unknown> | null)?.report_id as string | undefined;
+        if (reportId) {
+          await loadReport(reportId);
+        } else {
+          // 没有报告 ID，回退到选择步骤
+          setStep('select');
+        }
+        // 刷新历史列表
+        loadHistoryReports();
+      },
+      (errMsg) => {
+        setIsStreaming(false);
+        setCurrentTaskId(null);
+        if (errMsg && errMsg !== '任务已取消') {
+          setError(errMsg);
+        }
+        setStep('select');
+      }
+    );
+  };
+
+  // 加载完整报告内容
+  const loadReport = async (reportId: string) => {
+    setLoadingReportId(reportId);
+    try {
+      const data = await getReviewReport(reportId);
+      setReviewReport(data.content || '');
+      setStep('reviewed');
+      message.success('审查报告已加载');
+    } catch (err: any) {
+      message.error(`加载报告失败: ${err.message || err}`);
+      setStep('select');
+    } finally {
+      setLoadingReportId(null);
+    }
+  };
 
   const loadChapters = async () => {
     setChaptersLoading(true);
@@ -76,104 +196,76 @@ const FullReview: React.FC = () => {
     }
   };
 
-  // 开始审查
+  // 开始审查（后台任务版本：可关闭页面，完成后报告自动保存）
   const startReview = async () => {
     if (scope !== 'all' && selectedChapterIds.length === 0) {
       message.warning('请选择要审查的章节');
       return;
     }
+    if (!projectId) return;
 
     setStep('reviewing');
     setError(null);
     setReviewReport('');
-    reviewReportRef.current = '';
-    setProgress({ message: '正在启动审查...', percent: 0 });
+    setProgress({ message: '正在创建审查任务...', percent: 0 });
     setIsStreaming(true);
 
-    const abortController = new AbortController();
-    abortControllerRef.current = abortController;
-
-    try {
-      const response = await fetch('/api/full-review/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_id: projectId,
-          chapter_ids: scope === 'all' ? [] : selectedChapterIds,
-          review_scope: scope,
-        }),
-        signal: abortController.signal,
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `HTTP ${response.status}`);
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('无法读取响应流');
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (data.type === 'chunk') {
-                reviewReportRef.current += data.content;
-                setReviewReport(reviewReportRef.current);
-              } else if (data.type === 'progress') {
-                setProgress({ message: data.message, percent: data.progress });
-              } else if (data.type === 'error') {
-                setError(data.error);
-                if (reviewReportRef.current) {
-                  setStep('reviewed');
-                } else {
-                  setStep('select');
-                }
-              } else if (data.type === 'done') {
-                setStep('reviewed');
-              }
-            } catch {
-              // 忽略非JSON行
-            }
-          }
+    const cancelFn = await startFullReviewBackground(
+      {
+        project_id: projectId,
+        chapter_ids: scope === 'all' ? [] : selectedChapterIds,
+        review_scope: scope,
+      },
+      (status) => {
+        setProgress({
+          message: status.status_message || '审查中...',
+          percent: status.progress || 0,
+        });
+        if (status.id !== currentTaskId) {
+          setCurrentTaskId(status.id);
         }
-      }
-    } catch (err: any) {
-      if (err.name !== 'AbortError') {
-        setError(err.message || '审查请求失败');
-        if (reviewReportRef.current) {
-          setStep('reviewed');
+      },
+      async (result) => {
+        setIsStreaming(false);
+        setCurrentTaskId(null);
+        const reportId = (result.task_result as Record<string, unknown> | null)?.report_id as string | undefined;
+        if (reportId) {
+          await loadReport(reportId);
         } else {
           setStep('select');
         }
+        loadHistoryReports();
+        message.success('审查完成，报告已保存');
+      },
+      (errMsg) => {
+        setIsStreaming(false);
+        setCurrentTaskId(null);
+        if (errMsg && errMsg !== '任务已取消') {
+          setError(errMsg);
+        }
+        setStep('select');
       }
-    } finally {
-      setIsStreaming(false);
-      abortControllerRef.current = null;
-    }
+    );
+    cancelPollingRef.current = cancelFn;
+    // 通知浮窗刷新任务列表
+    eventBus.emit('background-task-created');
   };
 
-  // 中断审查
-  const stopReview = () => {
-    abortControllerRef.current?.abort();
-    setIsStreaming(false);
-    if (reviewReportRef.current) {
-      setStep('reviewed');
-      message.info('审查已中断，已保留已获取的部分结果');
-    } else {
-      setStep('select');
+  // 中断审查（取消后台任务 + 停止轮询）
+  const stopReview = async () => {
+    if (currentTaskId) {
+      try {
+        await cancelTask(currentTaskId);
+        message.info('已请求取消审查任务');
+      } catch {
+        message.error('取消任务失败');
+      }
     }
+    cancelPollingRef.current?.();
+    cancelPollingRef.current = null;
+    setIsStreaming(false);
+    setCurrentTaskId(null);
+    setStep('select');
   };
 
   // 复制报告
@@ -371,7 +463,6 @@ const FullReview: React.FC = () => {
     setModifiedChapters([]);
     setError(null);
     setProgress({ message: '', percent: 0 });
-    reviewReportRef.current = '';
     modifiedContentRef.current = '';
     modifiedChaptersRef.current = [];
   };
@@ -564,15 +655,21 @@ const FullReview: React.FC = () => {
                 maxHeight: '60vh',
                 overflow: 'auto',
                 padding: 16,
-                background: '#fafafa',
+                background: token.colorFillQuaternary,
                 borderRadius: 8,
+                color: token.colorText,
               }}>
                 {reviewReport}
               </pre>
             </div>
           ) : (
             <div style={{ textAlign: 'center', padding: 40 }}>
-              <Spin tip="正在生成审查报告..." />
+              <Spin tip="正在后台生成审查报告..." />
+              <div style={{ marginTop: 16 }}>
+                <Text type="secondary">
+                  任务在后台运行中，可关闭本页面，完成后报告会自动保存
+                </Text>
+              </div>
             </div>
           )}
         </Card>
@@ -678,7 +775,7 @@ const FullReview: React.FC = () => {
                     maxHeight: 300,
                     overflow: 'auto',
                     padding: 12,
-                    background: '#fafafa',
+                    background: token.colorFillQuaternary,
                     borderRadius: 6,
                   }}>
                     <pre style={{
@@ -688,6 +785,7 @@ const FullReview: React.FC = () => {
                       fontSize: 13,
                       lineHeight: 1.6,
                       margin: 0,
+                      color: token.colorText,
                     }}>
                       {ch.modifiedContent}
                     </pre>
@@ -701,6 +799,78 @@ const FullReview: React.FC = () => {
             </div>
           ) : (
             <Empty description="暂无修改结果" />
+          )}
+        </Card>
+      )}
+
+      {/* 历史审查报告 */}
+      {step === 'select' && (
+        <Card
+          title={
+            <Space>
+              <HistoryOutlined />
+              <span>历史审查报告</span>
+            </Space>
+          }
+          bordered
+          extra={
+            <Button
+              size="small"
+              icon={<ReloadOutlined />}
+              onClick={loadHistoryReports}
+              loading={historyLoading}
+            >
+              刷新
+            </Button>
+          }
+        >
+          {historyLoading ? (
+            <div style={{ textAlign: 'center', padding: 24 }}>
+              <Spin />
+            </div>
+          ) : historyReports.length === 0 ? (
+            <Empty description="暂无历史审查报告" />
+          ) : (
+            <List
+              dataSource={historyReports}
+              renderItem={(item) => (
+                <List.Item
+                  actions={[
+                    <Tooltip title="查看完整报告" key="view">
+                      <Button
+                        type="link"
+                        size="small"
+                        icon={<EyeOutlined />}
+                        loading={loadingReportId === item.id}
+                        onClick={() => loadReport(item.id)}
+                      >
+                        查看
+                      </Button>
+                    </Tooltip>,
+                  ]}
+                >
+                  <List.Item.Meta
+                    avatar={<FileTextOutlined style={{ fontSize: 20, color: token.colorPrimary }} />}
+                    title={
+                      <Space>
+                        <span>{item.prompt || '全文审查报告'}</span>
+                        <Tag>{item.total_chars} 字</Tag>
+                      </Space>
+                    }
+                    description={
+                      <Space direction="vertical" size={0}>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          {item.created_at ? new Date(item.created_at).toLocaleString('zh-CN') : ''}
+                        </Text>
+                        <Text type="secondary" ellipsis style={{ maxWidth: 600 }}>
+                          {item.preview}
+                        </Text>
+                      </Space>
+                    }
+                  />
+                </List.Item>
+              )}
+            />
           )}
         </Card>
       )}

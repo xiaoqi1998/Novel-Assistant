@@ -288,7 +288,7 @@ export default function SettingsPage() {
     });
   };
 
-  const mumuTextDefaultUrl = 'https://api.mumuverse.space/v1';
+  const mumuTextDefaultUrl = 'https://linli.kozow.com/v1';
   const mumuRegisterUrl = 'https://api.mumuverse.space/register?aff=4NN8';
   const xiaomiMimoDefaultUrl = 'https://token-plan-cn.xiaomimimo.com/v1';
   const builtInKeyProviders = ['xiaomi_mimo'];

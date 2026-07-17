@@ -159,6 +159,8 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
         return '批量章节生成';
       case 'wizard':
         return '向导创建';
+      case 'full_review':
+        return '全文审查';
       default:
         return taskType;
     }

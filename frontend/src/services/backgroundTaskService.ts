@@ -279,3 +279,81 @@ export async function generateChapterBackground(
     cancelTask(task_id).catch(() => {});
   };
 }
+
+/**
+ * 请求后台全文审查并轮询进度
+ * 关闭浏览器不影响审查，报告完成后自动保存到数据库
+ */
+export async function startFullReviewBackground(
+  data: {
+    project_id: string;
+    chapter_ids: string[];
+    review_scope: string;
+  },
+  onProgress: TaskProgressCallback,
+  onComplete: TaskCompleteCallback,
+  onError: TaskErrorCallback
+): Promise<() => void> {
+  const response = await fetch('/api/full-review/start-background', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: response.statusText }));
+    onError(err.detail || '创建全文审查任务失败', {} as TaskStatus);
+    return () => {};
+  }
+
+  const { task_id } = await response.json();
+  const cancelPolling = pollTaskUntilComplete(task_id, onProgress, onComplete, onError);
+
+  return () => {
+    cancelPolling();
+    cancelTask(task_id).catch(() => {});
+  };
+}
+
+/**
+ * 获取已保存的审查报告全文
+ */
+export async function getReviewReport(reportId: string): Promise<{
+  id: string;
+  project_id: string;
+  content: string;
+  prompt: string;
+  total_chars: number;
+  created_at: string | null;
+}> {
+  const response = await fetch(`/api/full-review/report/${reportId}`);
+  if (!response.ok) {
+    throw new Error(`获取审查报告失败: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * 列出项目的审查报告记录（摘要）
+ */
+export async function listReviewReports(
+  projectId: string,
+  limit: number = 20
+): Promise<{
+  items: Array<{
+    id: string;
+    project_id: string;
+    prompt: string;
+    total_chars: number;
+    preview: string;
+    created_at: string | null;
+  }>;
+  total: number;
+}> {
+  const params = new URLSearchParams({ project_id: projectId, limit: String(limit) });
+  const response = await fetch(`/api/full-review/reports?${params}`);
+  if (!response.ok) {
+    throw new Error(`获取审查报告列表失败: ${response.statusText}`);
+  }
+  return response.json();
+}

@@ -5,7 +5,7 @@
 1. 审查阶段：AI输出详细修改建议报告（SSE流式）
 2. 修改阶段：用户确认后，AI根据报告执行修改并覆盖原文
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
@@ -445,3 +445,365 @@ async def confirm_overwrite(
         logger.error(f"覆盖章节失败: {e}")
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"覆盖失败: {str(e)}")
+
+
+# ==================== 后台任务版本（支持关闭页面后继续运行 + 报告持久化）====================
+
+REVIEW_TASK_TYPE = "full_review"
+# GenerationHistory.model 字段标记，用于区分审查报告
+REVIEW_REPORT_MODEL = "full-review-report"
+
+
+@router.post("/start-background", summary="启动全文审查（后台任务）")
+async def start_review_background(
+    request: Request,
+    body: ReviewStartRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    启动全文审查为后台任务。
+
+    - 任务创建后立即返回 task_id，前端通过 GET /api/tasks/{task_id} 轮询进度
+    - 关闭浏览器不影响审查，审查报告自动保存到 generation_history 表
+    - 完成后 task_result 返回 {report_id, scope, chapter_count, total_chars, message}
+    - 通过 GET /api/full-review/report/{report_id} 获取完整报告内容
+    """
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    # 校验 Skill 存在（提前失败，避免排队后才发现）
+    skill_content = _get_skill_content()
+    if not skill_content:
+        raise HTTPException(status_code=500, detail="未找到全文审查 Skill，请检查 Skill 配置")
+
+    # 预加载章节，用于校验和记录元信息
+    if body.review_scope == "all" or not body.chapter_ids:
+        result = await db.execute(
+            select(Chapter)
+            .where(Chapter.project_id == body.project_id)
+            .order_by(Chapter.chapter_number)
+        )
+        chapters = list(result.scalars().all())
+    else:
+        result = await db.execute(
+            select(Chapter)
+            .where(Chapter.project_id == body.project_id)
+            .where(Chapter.id.in_(body.chapter_ids))
+            .order_by(Chapter.chapter_number)
+        )
+        chapters = list(result.scalars().all())
+
+    if not chapters:
+        raise HTTPException(status_code=400, detail="未找到可审查的章节")
+
+    from app.services.background_task_service import background_task_service
+    task = await background_task_service.create_task(
+        user_id=user_id,
+        project_id=body.project_id,
+        task_type=REVIEW_TASK_TYPE,
+        task_input={
+            "project_id": body.project_id,
+            "chapter_ids": body.chapter_ids,
+            "review_scope": body.review_scope,
+            "chapter_count": len(chapters),
+        },
+        db=db,
+    )
+
+    # 捕获请求参数（闭包不能直接依赖原 body，因为后台函数运行时 API 的 db/session 已关闭）
+    project_id = body.project_id
+    chapter_ids = list(body.chapter_ids)
+    review_scope = body.review_scope
+
+    async def _run_full_review(task_id: str, bg_user_id: str):
+        from app.database import get_engine
+        from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession as BgAsyncSession
+        from app.services.background_task_service import TaskProgressTracker
+        from app.api.settings import get_user_ai_service_from_db
+        from app.models.background_task import BackgroundTask
+        from sqlalchemy import update as sql_update
+        import asyncio
+
+        engine = await get_engine(bg_user_id)
+        AsyncSessionLocal = async_sessionmaker(engine, class_=BgAsyncSession, expire_on_commit=False)
+
+        async with AsyncSessionLocal() as bg_db:
+            tracker = TaskProgressTracker(task_id, bg_user_id, "全文审查")
+            try:
+                await tracker.start()
+
+                # 重新加载章节（后台 session）
+                if review_scope == "all" or not chapter_ids:
+                    res = await bg_db.execute(
+                        select(Chapter)
+                        .where(Chapter.project_id == project_id)
+                        .order_by(Chapter.chapter_number)
+                    )
+                    bg_chapters = list(res.scalars().all())
+                else:
+                    res = await bg_db.execute(
+                        select(Chapter)
+                        .where(Chapter.project_id == project_id)
+                        .where(Chapter.id.in_(chapter_ids))
+                        .order_by(Chapter.chapter_number)
+                    )
+                    bg_chapters = list(res.scalars().all())
+
+                if not bg_chapters:
+                    await tracker.error("未找到可审查的章节")
+                    return
+
+                # 重新获取 Skill 内容（避免使用闭包里可能过期的引用）
+                bg_skill_content = _get_skill_content()
+                if not bg_skill_content:
+                    await tracker.error("未找到全文审查 Skill")
+                    return
+
+                bg_ai_service = await get_user_ai_service_from_db(bg_user_id, bg_db)
+                bg_ai_service.default_system_prompt = bg_skill_content
+
+                total_text = _build_review_prompt(bg_chapters)
+                total_size = len(total_text.encode("utf-8"))
+                logger.info(f"开始后台全文审查: {len(bg_chapters)}章, {total_size}字节, task={task_id[:8]}")
+
+                await tracker.preparing(f"正在准备审查 {len(bg_chapters)} 个章节...")
+
+                accumulated_report = ""
+                chunk_count = 0
+
+                async def _drain_stream(stream, label: str = ""):
+                    """消费一个流式生成器，累积到 accumulated_report，并处理取消/进度。"""
+                    nonlocal accumulated_report, chunk_count
+                    async for item in stream:
+                        if chunk_count % 10 == 0 and await tracker.check_cancelled():
+                            logger.info(f"🚫 后台全文审查被取消: {task_id[:8]}")
+                            return False
+                        accumulated_report += item
+                        chunk_count += 1
+                        if chunk_count % 10 == 0:
+                            await tracker.generating(
+                                current_chars=len(accumulated_report),
+                                estimated_total=max(total_size * 3, 5000),  # 报告通常比原文短，估算放宽
+                                message=f"正在审查中... 已生成 {len(accumulated_report)} 字"
+                            )
+                        await asyncio.sleep(0)
+                    return True
+
+                if total_size > BLOCK_THRESHOLD:
+                    blocks = _split_into_blocks(bg_chapters)
+                    logger.info(f"文本超过 {BLOCK_THRESHOLD} 字节，分 {len(blocks)} 块审查")
+                    for i, block in enumerate(blocks):
+                        if await tracker.check_cancelled():
+                            return
+                        block_text = _build_review_prompt(block)
+                        block_title = f"第{block[0].chapter_number}-{block[-1].chapter_number}章"
+                        await tracker.generating(
+                            current_chars=len(accumulated_report),
+                            estimated_total=max(total_size * 3, 5000),
+                            message=f"正在审查第 {i+1}/{len(blocks)} 块（{block_title}）..."
+                        )
+                        chunk_prompt = f"""请审查以下章节内容（第{i+1}块/共{len(blocks)}块）：
+
+{block_text}
+
+请按照审查流程执行：
+1. 全局扫描
+2. 专项审查（Gate A-G）
+3. 输出问题清单和修改建议
+
+请输出详细的审查报告。"""
+                        try:
+                            stream = bg_ai_service.generate_text_stream(
+                                prompt=chunk_prompt,
+                                system_prompt=bg_skill_content,
+                                auto_mcp=False,
+                            )
+                            ok = await _drain_stream(stream, f"第{i+1}块")
+                            if not ok:
+                                return
+                        except Exception as e:
+                            logger.error(f"第{i+1}块审查失败: {e}")
+                            accumulated_report += f"\n\n---\n\n⚠️ 第{i+1}块审查失败: {str(e)}\n\n"
+
+                    if await tracker.check_cancelled():
+                        return
+                    await tracker.generating(
+                        current_chars=len(accumulated_report),
+                        estimated_total=max(total_size * 3, 5000),
+                        message="正在执行跨块一致性审查..."
+                    )
+                    cross_prompt = """基于以上分块审查结果，请执行跨块一致性审查：
+
+1. 检查人物设定是否一致（跨块）
+2. 检查情节逻辑是否连贯（跨块）
+3. 检查伏笔追踪是否完整（跨块）
+4. 检查世界观设定是否统一（跨块）
+
+请输出跨块一致性审查报告。"""
+                    try:
+                        stream = bg_ai_service.generate_text_stream(
+                            prompt=cross_prompt,
+                            system_prompt=bg_skill_content,
+                            auto_mcp=False,
+                        )
+                        ok = await _drain_stream(stream, "跨块一致性")
+                        if not ok:
+                            return
+                    except Exception as e:
+                        logger.error(f"跨块审查失败: {e}")
+                        accumulated_report += f"\n\n---\n\n⚠️ 跨块一致性审查失败: {str(e)}\n\n"
+                else:
+                    if await tracker.check_cancelled():
+                        return
+                    await tracker.generating(
+                        current_chars=0,
+                        estimated_total=max(total_size * 3, 5000),
+                        message="正在执行全文审查..."
+                    )
+                    review_prompt = f"""请审查以下章节内容：
+
+{total_text}
+
+请按照审查流程执行：
+1. Phase 1：全局扫描
+2. Phase 2：专项审查（Gate A-G：情节逻辑、人物一致性、叙事视角、伏笔回收、节奏把控、文风统一、语病用词）
+3. Phase 3：修改方案
+
+请输出详细的审查报告，包含问题清单和修改建议。"""
+                    try:
+                        stream = bg_ai_service.generate_text_stream(
+                            prompt=review_prompt,
+                            system_prompt=bg_skill_content,
+                            auto_mcp=False,
+                        )
+                        ok = await _drain_stream(stream)
+                        if not ok:
+                            return
+                    except Exception as e:
+                        logger.error(f"全文审查流式生成失败: {e}")
+                        await tracker.error(f"审查失败: {str(e)}")
+                        return
+
+                # === 保存阶段 ===
+                if await tracker.check_cancelled():
+                    return
+                await tracker.saving("正在保存审查报告...", 0.3)
+
+                report_record = GenerationHistory(
+                    project_id=project_id,
+                    chapter_id=None,
+                    prompt=f"全文审查报告 - 范围:{review_scope} - {len(bg_chapters)}章",
+                    generated_content=accumulated_report,
+                    model=REVIEW_REPORT_MODEL,
+                )
+                bg_db.add(report_record)
+                await bg_db.commit()
+                await bg_db.refresh(report_record)
+
+                # task_result 只存摘要
+                try:
+                    async with AsyncSessionLocal() as result_db:
+                        await result_db.execute(
+                            sql_update(BackgroundTask)
+                            .where(BackgroundTask.id == task_id)
+                            .values(task_result={
+                                "report_id": report_record.id,
+                                "scope": review_scope,
+                                "chapter_count": len(bg_chapters),
+                                "total_chars": len(accumulated_report),
+                                "message": f"审查完成，共 {len(bg_chapters)} 章",
+                            })
+                        )
+                        await result_db.commit()
+                except Exception as e:
+                    logger.warning(f"⚠️ 更新任务结果摘要失败: {e}")
+
+                await tracker.complete(f"审查完成，共 {len(bg_chapters)} 章，报告已保存")
+                logger.info(f"✅ 后台全文审查完成: task={task_id[:8]} report={report_record.id[:8]}")
+
+            except Exception as e:
+                logger.error(f"❌ 后台全文审查失败: {e}", exc_info=True)
+                await tracker.error(str(e))
+
+    await background_task_service.spawn_background_task(
+        task.id, user_id, _run_full_review
+    )
+
+    return {
+        "task_id": task.id,
+        "task_type": REVIEW_TASK_TYPE,
+        "status": "pending",
+        "message": "任务已创建，请通过 GET /api/tasks/{task_id} 查询进度",
+    }
+
+
+@router.get("/report/{report_id}", summary="获取审查报告内容")
+async def get_review_report(
+    report_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """根据 report_id 获取已保存的审查报告全文。"""
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    result = await db.execute(
+        select(GenerationHistory).where(
+            GenerationHistory.id == report_id,
+            GenerationHistory.model == REVIEW_REPORT_MODEL,
+        )
+    )
+    report = result.scalar_one_or_none()
+    if not report:
+        raise HTTPException(status_code=404, detail="审查报告不存在")
+
+    return {
+        "id": report.id,
+        "project_id": report.project_id,
+        "content": report.generated_content,
+        "prompt": report.prompt,
+        "total_chars": len(report.generated_content or ""),
+        "created_at": report.created_at.isoformat() if report.created_at else None,
+    }
+
+
+@router.get("/reports", summary="获取项目的审查报告列表")
+async def list_review_reports(
+    request: Request,
+    project_id: str = Query(..., description="项目ID"),
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """列出项目下的审查报告记录（按时间倒序，只返回摘要，不含全文）。"""
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    result = await db.execute(
+        select(GenerationHistory)
+        .where(
+            GenerationHistory.project_id == project_id,
+            GenerationHistory.model == REVIEW_REPORT_MODEL,
+        )
+        .order_by(GenerationHistory.created_at.desc())
+        .limit(limit)
+    )
+    items = result.scalars().all()
+
+    return {
+        "items": [
+            {
+                "id": r.id,
+                "project_id": r.project_id,
+                "prompt": r.prompt,
+                "total_chars": len(r.generated_content or ""),
+                "preview": (r.generated_content or "")[:200],
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in items
+        ],
+        "total": len(items),
+    }
+
