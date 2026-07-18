@@ -8,7 +8,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional, List
 
 from app.database import get_db
@@ -38,12 +38,31 @@ class ReviewStartRequest(BaseModel):
     chapter_ids: List[str] = []  # 空列表表示全书
     review_scope: str = "single"  # single | multi | all
 
+    @field_validator("chapter_ids", mode="before")
+    @classmethod
+    def _coerce_chapter_ids(cls, v):
+        # 兼容客户端误传单个字符串的情况：自动包装为单元素列表
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [v]
+        return v
+
 
 class ReviewApplyRequest(BaseModel):
     """执行修改请求"""
     project_id: str
     chapter_ids: List[str] = []
     review_report: str  # 审查报告内容
+
+    @field_validator("chapter_ids", mode="before")
+    @classmethod
+    def _coerce_chapter_ids(cls, v):
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [v]
+        return v
 
 
 class ReviewConfirmRequest(BaseModel):
