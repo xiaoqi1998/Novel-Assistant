@@ -47,6 +47,16 @@ class ReviewStartRequest(BaseModel):
             return [v]
         return v
 
+    @field_validator("chapter_ids", mode="before")
+    @classmethod
+    def _coerce_chapter_ids(cls, v):
+        # 兼容客户端误传单个字符串的情况：自动包装为单元素列表
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [v]
+        return v
+
 
 class ReviewApplyRequest(BaseModel):
     """执行修改请求"""
@@ -57,6 +67,15 @@ class ReviewApplyRequest(BaseModel):
     @field_validator('chapter_ids', mode='before')
     @classmethod
     def normalize_chapter_ids(cls, v: Union[str, List[str], None]) -> List[str]:
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [v]
+        return v
+
+    @field_validator("chapter_ids", mode="before")
+    @classmethod
+    def _coerce_chapter_ids(cls, v):
         if v is None:
             return []
         if isinstance(v, str):
