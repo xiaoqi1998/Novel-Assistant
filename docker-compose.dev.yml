@@ -1,59 +1,69 @@
+# 开发模式 Docker Compose
+# 用法: docker-compose -f docker-compose.dev.yml up -d
+#
+# 优势:
+#   - 后端代码变更 → uvicorn 自动重载（秒级）
+#   - 前端代码变更 → Vite HMR 热更新（毫秒级）
+#   - 无需重新构建镜像
+#
+# 首次使用需要先构建基础镜像（仅一次）:
+#   docker-compose build
+
 services:
-  novel-assistant:
+  novel-assistant-dev:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
       args:
         USE_CN_MIRROR: "true"
-    image: novel-assistant:latest
-    container_name: novel-assistant
+    image: novel-assistant-dev:latest
+    container_name: novel-assistant-dev
     ports:
-      - "8000:8000"
+      - "8000:8000"    # 后端 API
+      - "5173:5173"    # 前端 Vite HMR
     volumes:
-      - ./logs:/app/logs
-      - ./storage/generated_covers:/app/storage/generated_covers
-      - ./.env:/app/.env:ro
-      # 后端源码挂载：修改后用 hot-deploy.sh backend 秒级更新，无需重构建
+      # 挂载后端源码 → uvicorn --reload 自动检测变更
       - ./backend/app:/app/app:ro
       - ./backend/alembic:/app/alembic:ro
       - ./backend/alembic-postgres.ini:/app/alembic.ini:ro
-      # 前端构建产物挂载：修改后用 hot-deploy.sh frontend 更新，无需重构建
-      - ./backend/static:/app/static:ro
+      # 挂载前端源码 → Vite HMR 热更新
+      - ./frontend/src:/frontend/src:ro
+      - ./frontend/public:/frontend/public:ro
+      - ./frontend/index.html:/frontend/index.html:ro
+      - ./frontend/vite.config.ts:/frontend/vite.config.ts:ro
+      - ./frontend/tsconfig.json:/frontend/tsconfig.json:ro
+      - ./frontend/tsconfig.app.json:/frontend/tsconfig.app.json:ro
+      # 持久化数据
+      - ./logs:/app/logs
+      - ./storage/generated_covers:/app/storage/generated_covers
+      - ./.env:/app/.env:ro
     environment:
-      # 时区配置
       - TZ=Asia/Shanghai
-
-      # 应用配置
       - APP_NAME=${APP_NAME:-墨笔}
       - APP_VERSION=${APP_VERSION:-1.5.2}
       - APP_HOST=0.0.0.0
       - APP_PORT=8000
-      - DEBUG=${DEBUG:-false}
-
-      # 数据库配置（复用 1Panel PostgreSQL）
+      - DEBUG=true
+      - DEV_MODE=true
+      # 数据库配置
       - DATABASE_URL=postgresql+asyncpg://user_HWMSKX:Xiaoqi1234.@1Panel-postgresql-QDKg:5432/mumuai_novel
-
-      # 数据库连接信息（用于 entrypoint.sh）
       - DB_HOST=1Panel-postgresql-QDKg
       - DB_PORT=5432
       - POSTGRES_USER=user_HWMSKX
       - POSTGRES_PASSWORD=Xiaoqi1234.
       - POSTGRES_DB=mumuai_novel
-
-      # PostgreSQL 连接池配置
+      # 连接池
       - DATABASE_POOL_SIZE=30
       - DATABASE_MAX_OVERFLOW=20
       - DATABASE_POOL_TIMEOUT=60
       - DATABASE_POOL_RECYCLE=1800
       - DATABASE_POOL_PRE_PING=True
       - DATABASE_POOL_USE_LIFO=True
-
-      # 全局代理配置（可选）
+      # 代理
       - HTTP_PROXY=${HTTP_PROXY:-}
       - HTTPS_PROXY=${HTTPS_PROXY:-}
       - NO_PROXY=localhost,127.0.0.1
-
-      # AI 服务配置
+      # AI 服务
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
@@ -64,25 +74,21 @@ services:
       - DEFAULT_MODEL=${DEFAULT_MODEL:-gpt-4o-mini}
       - DEFAULT_TEMPERATURE=${DEFAULT_TEMPERATURE:-0.7}
       - DEFAULT_MAX_TOKENS=${DEFAULT_MAX_TOKENS:-32000}
-
-      # LinuxDO OAuth 配置
+      # OAuth
       - LINUXDO_CLIENT_ID=${LINUXDO_CLIENT_ID:-11111}
       - LINUXDO_CLIENT_SECRET=${LINUXDO_CLIENT_SECRET:-11111}
       - LINUXDO_REDIRECT_URI=${LINUXDO_REDIRECT_URI:-http://localhost:8000/api/auth/linuxdo/callback}
       - LINUXDO_PROXY_URL=${LINUXDO_PROXY_URL:-}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:8000}
-
-      # 本地账户登录配置
+      # 本地账户
       - LOCAL_AUTH_ENABLED=${LOCAL_AUTH_ENABLED:-true}
       - LOCAL_AUTH_USERNAME=${LOCAL_AUTH_USERNAME:-admin}
       - LOCAL_AUTH_PASSWORD=${LOCAL_AUTH_PASSWORD:-admin123}
       - LOCAL_AUTH_DISPLAY_NAME=${LOCAL_AUTH_DISPLAY_NAME:-本地管理员}
-
-      # 会话配置
+      # 会话
       - SESSION_EXPIRE_MINUTES=${SESSION_EXPIRE_MINUTES:-120}
       - SESSION_REFRESH_THRESHOLD_MINUTES=${SESSION_REFRESH_THRESHOLD_MINUTES:-30}
       - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-false}
-
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]

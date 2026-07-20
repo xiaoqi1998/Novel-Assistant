@@ -127,26 +127,29 @@ class UvicornFormatter(logging.Formatter):
     
     def format(self, record):
         """格式化日志记录为 Uvicorn 风格"""
-        # 获取日志级别名称
         levelname = record.levelname
         
-        # 添加颜色（如果启用且终端支持）
         if self.use_colors and sys.stderr.isatty():
             colored_level = f"{self.COLORS.get(levelname, '')}{levelname}{self.RESET}"
         else:
             colored_level = levelname
         
-        # 添加请求追踪ID（如果存在）
         request_id = getattr(record, 'request_id', None)
         request_id_str = f" [{request_id}]" if request_id else ""
         
-        # 格式化时间戳 (YYYY-MM-DD HH:MM:SS)
         timestamp = self.formatTime(record, self.datefmt)
         
         message = _truncate_text(record.getMessage(), self.max_message_chars)
-        # Uvicorn风格格式: INFO:     [2024-01-01 12:00:00] module_name - message [request_id]
-        # 注意：INFO后面有5个空格，保持对齐
-        return f"{colored_level}:     [{timestamp}] {record.name}{request_id_str} - {message}"
+        
+        log_parts = [f"{colored_level}:     [{timestamp}] {record.name}{request_id_str} - {message}"]
+        
+        if record.exc_text:
+            log_parts.append(f"\n{record.exc_text}")
+        
+        if record.stack_info:
+            log_parts.append(f"\nStack info:\n{record.stack_info}")
+        
+        return "\n".join(log_parts)
 
 
 # 全局标志，防止重复初始化

@@ -526,7 +526,7 @@ const FullReview: React.FC = () => {
                     style={{ width: '100%', marginTop: 8 }}
                     placeholder={scope === 'single' ? '请选择一个章节' : '请选择多个章节'}
                     value={selectedChapterIds}
-                    onChange={setSelectedChapterIds}
+                    onChange={(val) => setSelectedChapterIds(Array.isArray(val) ? val : [val].filter(Boolean))}
                     showSearch
                     optionFilterProp="label"
                     maxTagCount="responsive"

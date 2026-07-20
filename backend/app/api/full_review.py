@@ -8,8 +8,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel
-from typing import Optional, List
+from pydantic import BaseModel, field_validator
+from typing import Optional, List, Union
 
 from app.database import get_db
 from app.user_manager import User
@@ -35,15 +35,33 @@ MAX_BLOCK_SIZE = 80_000
 class ReviewStartRequest(BaseModel):
     """审查启动请求"""
     project_id: str
-    chapter_ids: List[str] = []  # 空列表表示全书
-    review_scope: str = "single"  # single | multi | all
+    chapter_ids: List[str] = []
+    review_scope: str = "single"
+
+    @field_validator('chapter_ids', mode='before')
+    @classmethod
+    def normalize_chapter_ids(cls, v: Union[str, List[str], None]) -> List[str]:
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [v]
+        return v
 
 
 class ReviewApplyRequest(BaseModel):
     """执行修改请求"""
     project_id: str
     chapter_ids: List[str] = []
-    review_report: str  # 审查报告内容
+    review_report: str
+
+    @field_validator('chapter_ids', mode='before')
+    @classmethod
+    def normalize_chapter_ids(cls, v: Union[str, List[str], None]) -> List[str]:
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [v]
+        return v
 
 
 class ReviewConfirmRequest(BaseModel):
@@ -96,6 +114,109 @@ def _split_into_blocks(chapters: List[Chapter], max_size: int = MAX_BLOCK_SIZE) 
         blocks.append(current_block)
 
     return blocks
+
+
+def _extract_chapter_suggestions(report: str, chapter_number: int) -> str:
+    """从审查报告中提取与指定章节相关的修改建议。
+    
+    通过匹配"第X章"、"章节X"等模式，提取相关段落。
+    这样可以大幅减少每次修改的输入token。
+    """
+    if not report:
+        return ""
+    
+    import re
+    
+    lines = report.split('\n')
+    relevant_lines = []
+    
+    patterns = [
+        rf'第{chapter_number}章',
+        rf'章节{chapter_number}',
+        rf'第{chapter_number}\s*节',
+        rf'Chapter\s*{chapter_number}',
+        rf'\b{chapter_number}\b',
+    ]
+    
+    in_relevant_section = False
+    section_counter = 0
+    
+    for line in lines:
+        line_lower = line.lower()
+        
+        matched = any(re.search(pattern, line) for pattern in patterns)
+        
+        if matched:
+            in_relevant_section = True
+            section_counter = 0
+        
+        if in_relevant_section:
+            relevant_lines.append(line)
+            section_counter += 1
+            
+            if section_counter >= 100:
+                break
+            
+            if line.strip() == '' and section_counter > 20:
+                break
+        elif '修改建议' in line or '问题清单' in line:
+            for pattern in patterns:
+                if re.search(pattern, line):
+                    relevant_lines.append(line)
+                    in_relevant_section = True
+                    section_counter = 0
+                    break
+    
+    result = '\n'.join(relevant_lines)
+    
+    if result:
+        return result[:5000]
+    return ""
+
+
+def _apply_diff_to_content(original_content: str, diff_output: str) -> str:
+    """将AI输出的差异格式应用到原文。
+    
+    AI输出格式：
+    - 删除行以 '-' 开头
+    - 添加行以 '+' 开头
+    - 其他行保持不变
+    
+    如果AI输出的是完整章节（没有diff标记），则直接返回AI输出。
+    """
+    if not diff_output:
+        return original_content
+    
+    lines = diff_output.strip().split('\n')
+    has_diff_markers = any(line.startswith(('- ', '+ ', '@@')) for line in lines)
+    
+    if not has_diff_markers:
+        return diff_output
+    
+    result_lines = []
+    original_lines = original_content.split('\n')
+    original_idx = 0
+    
+    for line in lines:
+        line = line.rstrip()
+        
+        if line.startswith('- '):
+            if original_idx < len(original_lines):
+                original_idx += 1
+        elif line.startswith('+ '):
+            result_lines.append(line[2:])
+        elif line.startswith('@@'):
+            continue
+        else:
+            if original_idx < len(original_lines):
+                result_lines.append(original_lines[original_idx])
+                original_idx += 1
+    
+    while original_idx < len(original_lines):
+        result_lines.append(original_lines[original_idx])
+        original_idx += 1
+    
+    return '\n'.join(result_lines)
 
 
 def _build_review_prompt(chapters: List[Chapter]) -> str:
@@ -339,22 +460,35 @@ async def apply_modifications(
                     progress
                 )
 
-                modify_prompt = f"""基于以下审查报告，对章节内容进行修改。
+                chapter_suggestions = _extract_chapter_suggestions(request.review_report, ch.chapter_number)
 
-## 审查报告
-{request.review_report}
+                if not chapter_suggestions:
+                    chapter_suggestions = "本章节未发现需要修改的问题。"
+
+                modify_prompt = f"""基于以下审查建议，对章节内容进行修改。
+
+## 修改建议（仅与当前章节相关）
+{chapter_suggestions}
 
 ## 待修改章节：第{ch.chapter_number}章《{ch.title}》
 
 {ch.content or ''}
 
 ## 修改要求
-1. 严格按照审查报告中的修改建议执行
+1. 严格按照修改建议执行
 2. 遵循最小修改原则：能改一个词就不改一句
 3. 保留作者意图，只改"怎么写"，不改"写什么"
-4. 输出完整的修改后章节内容（包含标题）
+4. 只输出改动部分，使用diff格式：
+   - 删除的行以 '-' 开头（空格后接内容）
+   - 添加的行以 '+' 开头（空格后接内容）
+   - 未改动的内容不需要输出
+5. 如果没有需要修改的内容，请输出："NO_CHANGES"
 
-请直接输出修改后的完整章节内容，不要添加额外说明。"""
+示例：
+- 原来的句子
++ 修改后的句子
+
+请只输出diff格式的改动内容，不要添加额外说明。"""
 
                 try:
                     stream = ai_service.generate_text_stream(
@@ -363,23 +497,32 @@ async def apply_modifications(
                         auto_mcp=False,
                     )
 
-                    # 添加章节分隔标记（用于前端区分不同章节）
-                    yield await SSEResponse.send_chunk(
-                        f"\n\n===CHAPTER_START:{ch.id}===\n"
-                    )
-
+                    diff_parts = []
                     async for item in wrap_stream_with_heartbeat(stream, heartbeat_interval=15.0):
                         if item is HEARTBEAT:
                             yield await SSEResponse.send_heartbeat()
                             continue
-                        yield await SSEResponse.send_chunk(item)
+                        diff_parts.append(item)
 
+                    diff_output = ''.join(diff_parts).strip()
+
+                    if diff_output == "NO_CHANGES":
+                        modified_content = ch.content or ''
+                        logger.info(f"第{ch.chapter_number}章无需修改，跳过")
+                    else:
+                        modified_content = _apply_diff_to_content(ch.content or '', diff_output)
+                        logger.info(f"第{ch.chapter_number}章修改完成: 原文字数={len(ch.content or '')}, 修改后字数={len(modified_content)}")
+
+                    yield await SSEResponse.send_chunk(
+                        f"\n\n===CHAPTER_START:{ch.id}===\n"
+                    )
+                    yield await SSEResponse.send_chunk(modified_content)
                     yield await SSEResponse.send_chunk(
                         f"\n===CHAPTER_END:{ch.id}===\n"
                     )
 
                 except Exception as e:
-                    logger.error(f"第{ch.chapter_number}章修改失败: {e}")
+                    logger.error(f"第{ch.chapter_number}章修改失败: {e}", exc_info=True)
                     yield await SSEResponse.send_chunk(
                         f"\n\n⚠️ 第{ch.chapter_number}章修改失败: {str(e)}\n\n"
                     )
@@ -595,9 +738,11 @@ async def start_review_background(
                     logger.info(f"文本超过 {BLOCK_THRESHOLD} 字节，分 {len(blocks)} 块审查")
                     for i, block in enumerate(blocks):
                         if await tracker.check_cancelled():
+                            logger.info(f"🚫 后台全文审查被取消(第{i+1}块): {task_id[:8]}")
                             return
                         block_text = _build_review_prompt(block)
                         block_title = f"第{block[0].chapter_number}-{block[-1].chapter_number}章"
+                        logger.info(f"🔍 开始审查第 {i+1}/{len(blocks)} 块: {block_title}, 字数={len(block_text.encode('utf-8'))}")
                         await tracker.generating(
                             current_chars=len(accumulated_report),
                             estimated_total=max(total_size * 3, 5000),
@@ -613,21 +758,33 @@ async def start_review_background(
 3. 输出问题清单和修改建议
 
 请输出详细的审查报告。"""
-                        try:
-                            stream = bg_ai_service.generate_text_stream(
-                                prompt=chunk_prompt,
-                                system_prompt=bg_skill_content,
-                                auto_mcp=False,
-                            )
-                            ok = await _drain_stream(stream, f"第{i+1}块")
-                            if not ok:
-                                return
-                        except Exception as e:
-                            logger.error(f"第{i+1}块审查失败: {e}")
-                            accumulated_report += f"\n\n---\n\n⚠️ 第{i+1}块审查失败: {str(e)}\n\n"
+                        block_success = False
+                        for retry_attempt in range(3):
+                            try:
+                                stream = bg_ai_service.generate_text_stream(
+                                    prompt=chunk_prompt,
+                                    system_prompt=bg_skill_content,
+                                    auto_mcp=False,
+                                )
+                                ok = await _drain_stream(stream, f"第{i+1}块")
+                                if not ok:
+                                    return
+                                logger.info(f"✅ 第 {i+1}/{len(blocks)} 块审查完成: 累计生成 {len(accumulated_report)} 字")
+                                block_success = True
+                                break
+                            except Exception as e:
+                                if retry_attempt < 2:
+                                    delay = 5 * (2 ** retry_attempt)
+                                    logger.warning(f"⚠️ 第{i+1}块审查失败(第{retry_attempt+1}/3次)，{delay}秒后重试: {e}")
+                                    await asyncio.sleep(delay)
+                                else:
+                                    logger.error(f"❌ 第{i+1}块审查失败(已重试3次): {e}", exc_info=True)
+                                    accumulated_report += f"\n\n---\n\n⚠️ 第{i+1}块审查失败: {str(e)}\n\n"
+                                    break
 
                     if await tracker.check_cancelled():
                         return
+                    logger.info(f"🔍 开始跨块一致性审查")
                     await tracker.generating(
                         current_chars=len(accumulated_report),
                         estimated_total=max(total_size * 3, 5000),
@@ -641,18 +798,29 @@ async def start_review_background(
 4. 检查世界观设定是否统一（跨块）
 
 请输出跨块一致性审查报告。"""
-                    try:
-                        stream = bg_ai_service.generate_text_stream(
-                            prompt=cross_prompt,
-                            system_prompt=bg_skill_content,
-                            auto_mcp=False,
-                        )
-                        ok = await _drain_stream(stream, "跨块一致性")
-                        if not ok:
-                            return
-                    except Exception as e:
-                        logger.error(f"跨块审查失败: {e}")
-                        accumulated_report += f"\n\n---\n\n⚠️ 跨块一致性审查失败: {str(e)}\n\n"
+                    cross_success = False
+                    for retry_attempt in range(3):
+                        try:
+                            stream = bg_ai_service.generate_text_stream(
+                                prompt=cross_prompt,
+                                system_prompt=bg_skill_content,
+                                auto_mcp=False,
+                            )
+                            ok = await _drain_stream(stream, "跨块一致性")
+                            if not ok:
+                                return
+                            logger.info(f"✅ 跨块一致性审查完成: 累计生成 {len(accumulated_report)} 字")
+                            cross_success = True
+                            break
+                        except Exception as e:
+                            if retry_attempt < 2:
+                                delay = 5 * (2 ** retry_attempt)
+                                logger.warning(f"⚠️ 跨块一致性审查失败(第{retry_attempt+1}/3次)，{delay}秒后重试: {e}")
+                                await asyncio.sleep(delay)
+                            else:
+                                logger.error(f"❌ 跨块一致性审查失败(已重试3次): {e}", exc_info=True)
+                                accumulated_report += f"\n\n---\n\n⚠️ 跨块一致性审查失败: {str(e)}\n\n"
+                                break
                 else:
                     if await tracker.check_cancelled():
                         return

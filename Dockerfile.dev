@@ -1,0 +1,41 @@
+# 开发模式 Dockerfile
+# 基于已有的生产镜像，只添加 Node.js 和前端开发依赖
+# 后端代码通过 volume 挂载，由 uvicorn --reload 热重载
+# 前端代码通过 volume 挂载，由 Vite dev server HMR 热更新
+
+# 基于已有的生产镜像（包含 Python 依赖 + embedding 模型）
+FROM novel-assistant:latest
+
+ARG USE_CN_MIRROR=false
+
+# 安装 Node.js（用于前端 Vite 开发服务器）
+RUN if [ "$USE_CN_MIRROR" = "true" ]; then \
+        curl -fsSL https://mirrors.huaweicloud.com/nodejs/v22.x/node-v22.16.0-linux-x64.tar.xz \
+        | tar -xJ -C /usr/local --strip-components=1; \
+    else \
+        curl -fsSL https://nodejs.org/dist/v22.16.0/node-v22.16.0-linux-x64.tar.xz \
+        | tar -xJ -C /usr/local --strip-components=1; \
+    fi
+
+# 安装前端依赖
+WORKDIR /frontend
+COPY frontend/package*.json ./
+
+RUN if [ "$USE_CN_MIRROR" = "true" ]; then \
+        npm config set registry https://registry.npmmirror.com; \
+    fi && \
+    rm -f package-lock.json && \
+    npm install
+
+# 复制前端源码（volume 会覆盖，但构建时需要完整文件）
+COPY frontend/ ./
+
+# 复制开发模式启动脚本
+COPY backend/scripts/entrypoint.dev.sh /app/entrypoint.dev.sh
+RUN chmod +x /app/entrypoint.dev.sh
+
+# 前端 HMR 端口
+EXPOSE 5173
+
+# 使用开发模式启动脚本
+ENTRYPOINT ["/app/entrypoint.dev.sh"]

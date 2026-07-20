@@ -343,7 +343,8 @@ export default function ProjectDetail() {
               padding: mobile ? 12 : 24,
               paddingBottom: mobile ? 56 : 64,
               height: mobile ? `calc(100vh - ${headerHeight}px)` : `calc(100vh - ${headerHeight}px)`,
-              overflow: 'hidden',
+              overflowY: 'auto',
+              overflowX: 'hidden',
               display: 'flex',
               flexDirection: 'column',
             }}

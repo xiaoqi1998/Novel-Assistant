@@ -208,6 +208,20 @@ def _get_semaphore(max_concurrent: int) -> asyncio.Semaphore:
     return _global_semaphore
 
 
+
+
+class _StreamResponseWrapper:
+    """包装已验证的流式响应，使调用方可使用 async with 语法"""
+
+    def __init__(self, response: httpx.Response):
+        self._response = response
+
+    async def __aenter__(self):
+        return self._response
+
+    async def __aexit__(self, exc_type, exc, tb):
+        await self._response.aclose()
+
 class BaseAIClient(ABC):
     """AI HTTP 客户端基类"""
 
@@ -289,7 +303,24 @@ class BaseAIClient(ABC):
                         await asyncio.sleep(delay)
 
                     if stream:
-                        return self.http_client.stream(method, url, headers=headers, json=payload)
+                        async with self.http_client.stream(method, url, headers=headers, json=payload) as response:
+                            try:
+                                response.raise_for_status()
+                                return _StreamResponseWrapper(response)
+                            except httpx.HTTPStatusError:
+                                status_code = response.status_code
+                                logger.error(
+                                    "AI HTTP 状态错误: method=%s endpoint=%s status=%s headers=%s",
+                                    method,
+                                    endpoint,
+                                    status_code,
+                                    _debug_response_headers(response),
+                                )
+                                if status_code in retry_cfg.non_retryable_status_codes:
+                                    raise
+                                if attempt == retry_cfg.max_retries - 1:
+                                    raise
+                                continue
 
                     response = await self.http_client.request(method, url, headers=headers, json=payload)
                     logger.debug(
