@@ -316,24 +316,36 @@ class BaseAIClient(ABC):
                         await asyncio.sleep(delay)
 
                     if stream:
-                        async with self.http_client.stream(method, url, headers=headers, json=payload) as response:
+                        # 注意：不能用 `async with client.stream(...)` 后再 return 响应——
+                        # 退出 async with 会触发 aclose()，导致调用方拿到已关闭的流式响应，
+                        # 后续 aiter_lines() 会抛 StreamClosed。
+                        # 因此用 send(stream=True) 手动管理生命周期，把关闭职责交给 _StreamResponseWrapper。
+                        stream_request = self.http_client.build_request(method, url, headers=headers, json=payload)
+                        response = await self.http_client.send(stream_request, stream=True)
+                        try:
+                            response.raise_for_status()
+                            return _StreamResponseWrapper(response)
+                        except httpx.HTTPStatusError:
+                            # 错误路径：先读取响应体，便于外层 except 记录真实错误信息，
+                            # 否则后续访问 e.response.text 会抛 ResponseNotRead，掩盖原始错误。
                             try:
-                                response.raise_for_status()
-                                return _StreamResponseWrapper(response)
-                            except httpx.HTTPStatusError:
-                                status_code = response.status_code
-                                logger.error(
-                                    "AI HTTP 状态错误: method=%s endpoint=%s status=%s headers=%s",
-                                    method,
-                                    endpoint,
-                                    status_code,
-                                    _debug_response_headers(response),
-                                )
-                                if status_code in retry_cfg.non_retryable_status_codes:
-                                    raise
-                                if attempt == retry_cfg.max_retries - 1:
-                                    raise
-                                continue
+                                await response.aread()
+                            except Exception:
+                                pass
+                            await response.aclose()
+                            status_code = response.status_code
+                            logger.error(
+                                "AI HTTP 状态错误: method=%s endpoint=%s status=%s headers=%s",
+                                method,
+                                endpoint,
+                                status_code,
+                                _debug_response_headers(response),
+                            )
+                            if status_code in retry_cfg.non_retryable_status_codes:
+                                raise
+                            if attempt == retry_cfg.max_retries - 1:
+                                raise
+                            continue
 
                     response = await self.http_client.request(method, url, headers=headers, json=payload)
                     logger.debug(
@@ -375,7 +387,9 @@ class BaseAIClient(ABC):
                         endpoint,
                         status_code,
                         _debug_response_headers(e.response) if e.response is not None else {},
-                        safe_preview(e.response.text, 1000) if e.response is not None else None,
+                        # 流式响应在错误路径下可能未读取，用 _safe_response_text 兜底，
+                        # 避免 .text 抛 ResponseNotRead/StreamClosed 掩盖原始错误。
+                        safe_preview(_safe_response_text(e.response), 1000) if e.response is not None else None,
                     )
                     if e.response is not None:
                         _log_raw_response_body(e.response, "http_status_error")
