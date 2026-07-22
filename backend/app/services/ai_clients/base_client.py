@@ -54,11 +54,24 @@ def _classify_json_decode_failure(response: httpx.Response) -> str:
     return "响应体不是合法 JSON"
 
 
+def _safe_response_text(response: httpx.Response) -> str:
+    """安全获取响应文本，兼容未读取或已关闭的流式响应。
+
+    流式响应在未调用 aread()/aiter_*() 前访问 .text 会抛 ResponseNotRead，
+    在已 aclose() 后访问 .text 会抛 StreamClosed。此处统一兜底返回空串，
+    避免错误日志逻辑本身抛出二次异常，从而掩盖真实的上游错误。
+    """
+    try:
+        return response.text or ""
+    except Exception:
+        return ""
+
+
 def _log_raw_response_body(response: httpx.Response, reason: str) -> None:
     """失败时分片输出上游原始响应，避免单条日志被截断。"""
-    body = response.text or ""
+    body = _safe_response_text(response)
     total_chars = len(body)
-    total_bytes = len(response.content or b"")
+    total_bytes = len(body.encode("utf-8") or b"")
 
     logger.error(
         "AI HTTP 原始响应体开始: reason=%s status=%s total_bytes=%s total_chars=%s log_max_chars=%s",
