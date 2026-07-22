@@ -17,6 +17,7 @@ from app.models.writing_style import WritingStyle
 from app.models.project_default_style import ProjectDefaultStyle
 from app.services.ai_service import AIService
 from app.services.json_helper import loads_json
+from app.services.newapi_errors import QuotaExhaustedError
 from app.services.prompt_service import prompt_service, PromptService
 from app.services.plot_expansion_service import PlotExpansionService
 from app.logger import get_logger, safe_preview
@@ -287,6 +288,11 @@ async def world_building_generator(
         if not db_committed and db.in_transaction():
             await db.rollback()
             logger.info("世界构建事务已回滚（GeneratorExit）")
+    except QuotaExhaustedError as e:
+        logger.warning(f"世界构建额度不足: {e}")
+        if not db_committed and db.in_transaction():
+            await db.rollback()
+        yield await tracker.quota_exhausted()
     except Exception as e:
         logger.error(f"世界构建流式生成失败: {str(e)}")
         # 异常时回滚事务
@@ -557,6 +563,11 @@ async def career_system_generator(
         if not db_committed and db.in_transaction():
             await db.rollback()
             logger.info("职业体系事务已回滚（GeneratorExit）")
+    except QuotaExhaustedError as e:
+        logger.warning(f"职业体系额度不足: {e}")
+        if not db_committed and db.in_transaction():
+            await db.rollback()
+        yield await tracker.quota_exhausted()
     except Exception as e:
         logger.error(f"职业体系流式生成失败: {str(e)}")
         if not db_committed and db.in_transaction():
@@ -1225,6 +1236,11 @@ async def characters_generator(
         if not db_committed and db.in_transaction():
             await db.rollback()
             logger.info("角色生成事务已回滚（GeneratorExit）")
+    except QuotaExhaustedError as e:
+        logger.warning(f"角色生成额度不足: {e}")
+        if not db_committed and db.in_transaction():
+            await db.rollback()
+        yield await tracker.quota_exhausted()
     except Exception as e:
         logger.error(f"角色生成失败: {str(e)}")
         if not db_committed and db.in_transaction():
@@ -1525,6 +1541,11 @@ async def outline_generator(
         if not db_committed and db.in_transaction():
             await db.rollback()
             logger.info("大纲生成事务已回滚（GeneratorExit）")
+    except QuotaExhaustedError as e:
+        logger.warning(f"大纲生成额度不足: {e}")
+        if not db_committed and db.in_transaction():
+            await db.rollback()
+        yield await tracker.quota_exhausted()
     except Exception as e:
         logger.error(f"大纲生成失败: {str(e)}")
         if not db_committed and db.in_transaction():
@@ -1722,6 +1743,11 @@ async def world_building_regenerate_generator(
         if not db_committed and db.in_transaction():
             await db.rollback()
             logger.info("世界观重新生成事务已回滚（GeneratorExit）")
+    except QuotaExhaustedError as e:
+        logger.warning(f"世界观重新生成额度不足: {e}")
+        if not db_committed and db.in_transaction():
+            await db.rollback()
+        yield await tracker.quota_exhausted()
     except Exception as e:
         logger.error(f"世界观重新生成失败: {str(e)}")
         if not db_committed and db.in_transaction():

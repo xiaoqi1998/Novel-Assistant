@@ -16,16 +16,16 @@ export const VERSION_INFO = {
   projectName: '墨笔',
   projectFullName: '墨笔 AI 小说创作助手',
   
-  // 链接信息
-  githubUrl: 'https://github.com/xiamuceer-j/MuMuAINovel',
-  linuxDoUrl: 'https://linux.do/t/topic/1106333',
-  
+  // 链接信息（留空则不展示外部链接）
+  githubUrl: '',
+  linuxDoUrl: '',
+
   // 许可证
-  license: 'GPL v3.0',
-  licenseUrl: 'https://www.gnu.org/licenses/gpl-3.0.html',
-  
+  license: '',
+  licenseUrl: '',
+
   // 作者信息
-  author: 'xiamuceer-j',
+  author: '墨笔',
 };
 
 /**

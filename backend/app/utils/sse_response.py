@@ -208,7 +208,11 @@ class WizardProgressTracker:
     async def error(self, error_message: str, code: int = 500) -> str:
         """发送错误消息"""
         return await SSEResponse.send_error(error_message, code)
-    
+
+    async def quota_exhausted(self) -> str:
+        """发送额度不足错误（标准 event: error，前端弹充值 Modal）"""
+        return await SSEResponse.send_quota_exhausted()
+
     async def result(self, data: Dict[str, Any]) -> str:
         """发送结果数据"""
         return await SSEResponse.send_result(data)
@@ -320,7 +324,7 @@ class SSEResponse:
     async def send_error(error: str, code: int = 500) -> str:
         """
         发送错误消息
-        
+
         Args:
             error: 错误描述
             code: 错误码
@@ -330,6 +334,23 @@ class SSEResponse:
             "error": error,
             "code": code
         })
+
+    @staticmethod
+    async def send_quota_exhausted(
+        message: str = "您的 AI 写作额度已用完，请前往个人中心充值。"
+    ) -> str:
+        """发送额度不足错误（SSE 标准 event: error）
+
+        前端契约：收到 event: error 且 data.code === "quota_exhausted" 时弹充值 Modal。
+        使用标准 event: error 事件名，兼容主流 SSE 客户端的统一错误处理。
+        """
+        return SSEResponse.format_sse(
+            {
+                "code": "quota_exhausted",
+                "message": message,
+            },
+            event="error",
+        )
     
     @staticmethod
     async def send_done() -> str:

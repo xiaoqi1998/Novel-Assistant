@@ -56,6 +56,7 @@ from app.services.plot_analyzer import PlotAnalyzer
 from app.services.memory_service import memory_service
 from app.services.foreshadow_service import foreshadow_service
 from app.services.chapter_regenerator import ChapterRegenerator
+from app.services.newapi_errors import QuotaExhaustedError
 from app.logger import get_logger
 from app.api.settings import get_user_ai_service, get_user_ai_service_from_db_by_usage
 from app.utils.sse_response import SSEResponse, create_sse_response
@@ -1927,6 +1928,15 @@ async def generate_chapter_content_stream(
                         logger.info("章节生成事务已回滚（GeneratorExit）")
                 except Exception as e:
                     logger.error(f"GeneratorExit回滚失败: {str(e)}")
+        except QuotaExhaustedError as e:
+            logger.warning(f"章节生成额度不足: {e}")
+            if db_session and not db_committed:
+                try:
+                    if db_session.in_transaction():
+                        await db_session.rollback()
+                except Exception as rollback_error:
+                    logger.error(f"回滚失败: {str(rollback_error)}")
+            yield await tracker.quota_exhausted()
         except Exception as e:
             logger.error(f"流式创作章节失败: {str(e)}")
             if db_session and not db_committed:
@@ -2046,6 +2056,9 @@ async def generate_chapter_content_background(
                     task_id=task_id,
                 )
 
+            except QuotaExhaustedError as e:
+                logger.warning(f"后台章节生成额度不足: {e}")
+                await tracker.quota_exhausted()
             except Exception as e:
                 logger.error(f"❌ 后台章节生成失败: {e}", exc_info=True)
                 await tracker.error(str(e))
@@ -2533,6 +2546,9 @@ async def generate_chapter_content_background_legacy(
                     task_id=task_id,
                 )
 
+            except QuotaExhaustedError as e:
+                logger.warning(f"后台章节生成额度不足: {e}")
+                await tracker.quota_exhausted()
             except Exception as e:
                 logger.error(f"❌ 后台章节生成失败: {e}", exc_info=True)
                 await tracker.error(str(e))
@@ -4796,6 +4812,9 @@ async def regenerate_chapter_stream(
                 
                 break
         
+        except QuotaExhaustedError as e:
+            logger.warning(f"章节重新生成额度不足: {e}")
+            yield await tracker.quota_exhausted()
         except Exception as e:
             logger.error(f"❌ 重新生成失败: {str(e)}", exc_info=True)
             
@@ -5199,6 +5218,9 @@ async def partial_regenerate_stream(
             
             yield await tracker.done()
             
+        except QuotaExhaustedError as e:
+            logger.warning(f"局部重写额度不足: {e}")
+            yield await tracker.quota_exhausted()
         except Exception as e:
             logger.error(f"❌ 局部重写失败: {str(e)}", exc_info=True)
             yield await tracker.error(str(e))

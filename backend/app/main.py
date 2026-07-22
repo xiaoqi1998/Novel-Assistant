@@ -172,7 +172,7 @@ from app.api import (
     auth, users, settings, writing_styles, memories,
     mcp_plugins, admin, inspiration, prompt_templates,
     changelog, careers, foreshadows, prompt_workshop, book_import,
-    project_covers, tasks, skills, announcements, full_review
+    project_covers, tasks, skills, announcements, full_review, newapi
 )
 
 app.include_router(auth.router, prefix="/api")
@@ -201,6 +201,7 @@ app.include_router(prompt_workshop.router, prefix="/api")  # 提示词工坊API
 app.include_router(book_import.router, prefix="/api")  # 拆书导入API
 app.include_router(tasks.router, prefix="/api")  # 后台任务API
 app.include_router(announcements.router, prefix="/api")  # 公告API
+app.include_router(newapi.router, prefix="/api")  # New API 额度中心
 app.include_router(full_review.router)  # 全文审查API（已包含/api前缀）
 
 static_dir = Path(__file__).parent.parent / "static"

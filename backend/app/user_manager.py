@@ -98,6 +98,7 @@ class UserManager:
                 # 更新管理员状态
                 if is_admin and not user.is_admin:
                     user.is_admin = True
+                is_new_user = False
             else:
                 # 创建新用户
                 user = UserModel(
@@ -112,11 +113,29 @@ class UserManager:
                     last_login=datetime.now()
                 )
                 session.add(user)
+                is_new_user = True
             
             await session.commit()
             await session.refresh(user)
             
-            return User(**user.to_dict())
+            user_dict = user.to_dict()
+        
+        # New API 签发（仅新用户；在主库 commit 之后用独立 session 调用，异常自吞不阻断注册）
+        if is_new_user:
+            try:
+                from app.services.newapi_provisioning import provision_newapi_for_user
+                async with await self._get_session() as prov_session:
+                    await provision_newapi_for_user(
+                        user_id=user_id,
+                        username=username,
+                        display_name=display_name,
+                        db_session=prov_session,
+                    )
+            except Exception:
+                # provision 内部已自吞异常；此处兜底以防 import 失败等极端情况
+                pass
+        
+        return User(**user_dict)
     
     async def get_user(self, user_id: str) -> Optional[User]:
         """获取用户"""

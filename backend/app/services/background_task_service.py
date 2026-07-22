@@ -121,6 +121,16 @@ class TaskProgressTracker:
             progress_details={"stage": "error", "message": error_message}
         )
 
+    async def quota_exhausted(self):
+        """额度不足：标记任务失败，error_message 含特定标识便于前端识别"""
+        msg = "您的 AI 写作额度已用完，请前往个人中心充值。"
+        await self._update_task(
+            status="failed", error_message="quota_exhausted",
+            status_message=msg,
+            completed_at=datetime.now(),
+            progress_details={"stage": "error", "code": "quota_exhausted", "message": msg}
+        )
+
     async def warning(self, message: str):
         await self._update_task(
             status_message=f"⚠️ {message}",
@@ -210,8 +220,15 @@ class BackgroundTaskService:
                                 task = result.scalar_one_or_none()
                                 if task and task.status == "running" and not task.cancel_requested:
                                     task.status = "failed"
-                                    task.error_message = str(e)
-                                    task.status_message = f"任务失败: {str(e)}"
+                                    # 识别额度不足异常，写入特定标识便于前端识别
+                                    from app.services.newapi_errors import QuotaExhaustedError
+                                    if isinstance(e, QuotaExhaustedError):
+                                        task.error_message = "quota_exhausted"
+                                        task.status_message = "您的 AI 写作额度已用完，请前往个人中心充值。"
+                                        task.progress_details = {"stage": "error", "code": "quota_exhausted"}
+                                    else:
+                                        task.error_message = str(e)
+                                        task.status_message = f"任务失败: {str(e)}"
                                     task.completed_at = datetime.now()
                                     await session.commit()
                         except Exception as update_err:

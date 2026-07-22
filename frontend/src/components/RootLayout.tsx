@@ -8,6 +8,7 @@ import {
   FileSearchOutlined,
   SettingOutlined,
   MailOutlined,
+  WalletOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { authApi } from '../services/api';
@@ -16,6 +17,7 @@ import type { User } from '../types';
 import AppSidebar, { SidebarContent, EXPANDED_SIDER_WIDTH, COLLAPSED_SIDER_WIDTH, HEADER_HEIGHT } from './AppSidebar';
 import AppTopBar from './AppTopBar';
 import AppFooter from './AppFooter';
+import GlobalQuotaModal from './GlobalQuotaModal';
 import { getStoredSidebarCollapsed, setStoredSidebarCollapsed } from '../utils/sidebarState';
 
 /** 格式化字数（与原 ProjectList 一致） */
@@ -35,6 +37,7 @@ const PATH_TO_KEY: Record<string, string> = {
   '/prompt-templates': 'prompts',
   '/settings': 'settings',
   '/system-settings': 'system-settings',
+  '/account': 'account',
 };
 
 /** 路由 → 标题映射 */
@@ -46,6 +49,7 @@ const PATH_TO_TITLE: Record<string, string> = {
   '/prompt-templates': '提示词管理',
   '/settings': 'API 设置',
   '/system-settings': '系统设置',
+  '/account': '个人中心',
 };
 
 /** 菜单 key → 路由路径映射 */
@@ -56,6 +60,7 @@ const KEY_TO_PATH: Record<string, string> = {
   prompts: '/prompt-templates',
   settings: '/settings',
   'system-settings': '/system-settings',
+  account: '/account',
 };
 
 /** 旧 ?view= → 新路由 映射（兼容旧链接） */
@@ -66,6 +71,7 @@ const VIEW_TO_PATH: Record<string, string> = {
   prompts: '/prompt-templates',
   settings: '/settings',
   'system-settings': '/system-settings',
+  account: '/account',
 };
 
 const isMobileViewport = () => typeof window !== 'undefined' && window.innerWidth <= 768;
@@ -154,6 +160,7 @@ export default function RootLayout() {
         label: '系统设置',
         children: [
           { key: 'settings', icon: <SettingOutlined />, label: 'API 设置' },
+          { key: 'account', icon: <WalletOutlined />, label: '个人中心' },
           ...(isAdmin ? [{ key: 'system-settings', icon: <MailOutlined />, label: '系统设置' }] : []),
         ],
       },
@@ -169,6 +176,7 @@ export default function RootLayout() {
       { key: 'mcp', icon: <ApiOutlined />, label: 'MCP 插件' },
       { key: 'prompts', icon: <FileSearchOutlined />, label: '提示词管理' },
       { key: 'settings', icon: <SettingOutlined />, label: 'API 设置' },
+      { key: 'account', icon: <WalletOutlined />, label: '个人中心' },
       ...(isAdmin ? [{ key: 'system-settings', icon: <MailOutlined />, label: '系统设置' }] : []),
     ],
     [isAdmin]
@@ -349,6 +357,9 @@ export default function RootLayout() {
 
       {/* 底部版本条 */}
       <AppFooter sidebarWidth={mobile ? 0 : desktopSiderWidth} />
+
+      {/* 全局额度不足 / 需要订阅 Modal */}
+      <GlobalQuotaModal />
     </div>
   );
 }

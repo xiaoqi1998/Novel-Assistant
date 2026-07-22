@@ -20,11 +20,40 @@ from app.services.ai_providers.anthropic_provider import AnthropicProvider
 from app.services.ai_providers.gemini_provider import GeminiProvider
 from app.services.ai_providers.base_provider import BaseAIProvider
 from app.services.json_helper import clean_json_response, parse_json
+from app.services.newapi_errors import QuotaExhaustedError
 
 # 导出清理函数
 cleanup_http_clients = cleanup_all_clients
 
 logger = get_logger(__name__)
+
+
+# New API 额度不足的关键词（小写匹配）
+_QUOTA_KEYWORDS = ("quota is not enough", "user quota is not enough", "no enough quota", "额度不足", "余额不足")
+_QUOTA_STATUS_CODES = ("402", "429")
+
+
+def _raise_if_quota_exhausted(exc: Exception) -> None:
+    """检查异常是否为 New API 额度不足，是则抛出 QuotaExhaustedError
+
+    New API 在额度耗尽时通常返回：
+    - HTTP 402 Payment Required
+    - 或 HTTP 429 Too Many Requests（某些版本）
+    - 错误体含 "quota is not enough" 等关键词
+    """
+    msg = str(exc).lower()
+    if any(kw in msg for kw in _QUOTA_KEYWORDS):
+        raise QuotaExhaustedError() from exc
+    # 检查异常对象上的 status_code 属性（httpx.HTTPStatusError 等）
+    status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+    if status is not None and str(status) in _QUOTA_STATUS_CODES:
+        raise QuotaExhaustedError() from exc
+    # 检查 response 属性中的状态码
+    response = getattr(exc, "response", None)
+    if response is not None:
+        resp_status = getattr(response, "status_code", None)
+        if resp_status is not None and str(resp_status) in _QUOTA_STATUS_CODES:
+            raise QuotaExhaustedError() from exc
 
 
 def normalize_provider(provider: Optional[str]) -> Optional[str]:
@@ -481,7 +510,12 @@ class AIService:
             )
             self._log_call_metrics(metrics)
             return response
+        except QuotaExhaustedError:
+            # 额度不足异常直接向上抛，由调用方处理（不重试）
+            raise
         except Exception as e:
+            # New API 额度不足异常转换（402/quota is not enough）
+            _raise_if_quota_exhausted(e)
             metrics.finish(success=False, error=e)
             self._log_call_metrics(metrics)
             raise
@@ -574,7 +608,12 @@ class AIService:
                 usage=latest_usage,
             )
             self._log_call_metrics(metrics)
+        except QuotaExhaustedError:
+            # 额度不足异常直接向上抛，由调用方处理（SSE 流输出 event: error）
+            raise
         except Exception as e:
+            # New API 额度不足异常转换（402/quota is not enough）
+            _raise_if_quota_exhausted(e)
             metrics.finish(
                 success=False,
                 response_length=len("".join(response_parts)),

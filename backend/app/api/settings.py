@@ -14,6 +14,7 @@ import time
 
 from app.database import get_db
 from app.models.settings import Settings
+from app.models.user_subscription import UserSubscription
 from app.services.cover_generation_service import cover_generation_service
 from app.schemas.settings import (
     SettingsCreate, SettingsUpdate, SettingsResponse,
@@ -278,6 +279,20 @@ async def get_user_ai_service_from_db(user_id: str, db: AsyncSession) -> AIServi
     return await get_user_ai_service_from_db_by_usage(user_id, db, usage="default")
 
 
+async def _is_user_subscribed(db: AsyncSession, user_id: str) -> bool:
+    """判断用户是否为有效订阅用户"""
+    now = datetime.now()
+    result = await db.execute(
+        select(UserSubscription).where(
+            UserSubscription.user_id == user_id,
+            UserSubscription.plan_type == "subscription",
+            UserSubscription.status == "paid",
+            UserSubscription.expired_at > now,
+        ).limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
 async def get_user_ai_service_from_db_by_usage(
     user_id: str,
     db: AsyncSession,
@@ -304,6 +319,13 @@ async def get_user_ai_service_from_db_by_usage(
     mcp_plugins = mcp_result.scalars().all()
     enable_mcp = any(plugin.enabled for plugin in mcp_plugins) if mcp_plugins else False
 
+    # New API 启用时，模型访问受订阅状态控制
+    is_subscribed = await _is_user_subscribed(db, user_id)
+    if app_settings.NEW_API_ENABLED and not is_subscribed:
+        effective_model = app_settings.NEW_API_DEFAULT_MODEL
+    else:
+        effective_model = settings.llm_model
+
     if usage == "chapter_analysis":
         prefs = _safe_load_preferences(settings.preferences)
         api_presets = _get_api_presets_payload(prefs)
@@ -313,8 +335,11 @@ async def get_user_ai_service_from_db_by_usage(
             target_preset = next((p for p in presets if p.get('id') == preset_id), None)
             if target_preset and isinstance(target_preset.get('config'), dict):
                 logger.info(f"用户 {user_id} 使用章节内容分析专用API预设: {target_preset.get('name')}")
+                config = target_preset['config']
+                if app_settings.NEW_API_ENABLED and not is_subscribed:
+                    config = {**config, 'llm_model': effective_model}
                 return _build_ai_service_from_config(
-                    config=target_preset['config'],
+                    config=config,
                     user_id=user_id,
                     db=db,
                     enable_mcp=enable_mcp,
@@ -326,7 +351,7 @@ async def get_user_ai_service_from_db_by_usage(
         api_provider=resolved_settings["api_provider"],
         api_key=resolved_settings["api_key"],
         api_base_url=resolved_settings["api_base_url"],
-        model_name=settings.llm_model,
+        model_name=effective_model,
         temperature=settings.temperature,
         max_tokens=settings.max_tokens,
         user_id=user_id,

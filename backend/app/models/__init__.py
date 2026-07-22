@@ -13,6 +13,7 @@ from app.models.writing_style import WritingStyle
 from app.models.project_default_style import ProjectDefaultStyle
 from app.models.mcp_plugin import MCPPlugin
 from app.models.user import User, UserPassword
+from app.models.user_subscription import UserSubscription
 from app.models.regeneration_task import RegenerationTask
 from app.models.career import Career, CharacterCareer
 from app.models.prompt_template import PromptTemplate
@@ -41,6 +42,7 @@ __all__ = [
     "MCPPlugin",
     "User",
     "UserPassword",
+    "UserSubscription",
     "RegenerationTask",
     "Career",
     "CharacterCareer",

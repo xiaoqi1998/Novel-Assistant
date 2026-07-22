@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Card, Form, Input, Button, Select, Slider, InputNumber, message, Space, Typography, Spin, Modal, Alert, Grid, Tabs, List, Tag, Popconfirm, Empty, Row, Col, theme } from 'antd';
 import { SaveOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, ThunderboltOutlined, PlusOutlined, EditOutlined, CopyOutlined, WarningOutlined, PictureOutlined } from '@ant-design/icons';
-import { settingsApi, mcpPluginApi } from '../services/api';
+import { settingsApi, mcpPluginApi, newApi } from '../services/api';
 import type { SettingsUpdate, APIKeyPreset, PresetCreateRequest, APIKeyPresetConfig } from '../types';
 import { useNavigate } from 'react-router-dom';
 
@@ -46,6 +46,12 @@ export default function SettingsPage() {
 
   // 预设相关状态
   const [activeTab, setActiveTab] = useState('current');
+  // New API 集成状态
+  const [newApiEnabled, setNewApiEnabled] = useState(false);
+  const [newApiBound, setNewApiBound] = useState(false);
+  const [newApiSubscribed, setNewApiSubscribed] = useState(false);
+  const [newApiModels, setNewApiModels] = useState<Array<{ id: string; name: string; pricing: { input: number; output: number } }>>([]);
+  const [fetchingNewApiModels, setFetchingNewApiModels] = useState(false);
   const [presets, setPresets] = useState<APIKeyPreset[]>([]);
   const [presetsLoading, setPresetsLoading] = useState(false);
   const [activePresetId, setActivePresetId] = useState<string | undefined>();
@@ -66,11 +72,53 @@ export default function SettingsPage() {
 
   useEffect(() => {
     loadSettings();
+    loadNewApiStatus();
     if (activeTab === 'presets') {
       loadPresets();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 加载 New API 状态与模型列表
+  const loadNewApiStatus = async () => {
+    try {
+      const status: any = await newApi.getStatus();
+      setNewApiEnabled(!!status.enabled);
+      setNewApiBound(!!status.bound);
+      setNewApiSubscribed(!!status.is_subscribed);
+      if (status.enabled && status.bound) {
+        loadNewApiModels();
+      }
+    } catch (e) {
+      // 未启用或未登录，忽略
+    }
+  };
+
+  const loadNewApiModels = async () => {
+    setFetchingNewApiModels(true);
+    try {
+      const res: any = await newApi.getModels();
+      setNewApiModels(res?.models || []);
+      setNewApiSubscribed(!!res?.is_subscribed);
+    } catch (e) {
+      // 错误已处理
+    } finally {
+      setFetchingNewApiModels(false);
+    }
+  };
+
+  const handleSwitchNewApiModel = async (modelId: string) => {
+    try {
+      await newApi.switchModel(modelId);
+      message.success(`模型已切换为 ${modelId}`);
+      form.setFieldValue('llm_model', modelId);
+    } catch (e) {
+      // 错误已处理（403 会弹订阅 Modal）
+    }
+  };
+
+  // New API 启用且已绑定时，隐藏 API 密钥/地址/提供商字段
+  const hideNewApiFields = newApiEnabled && newApiBound;
 
   useEffect(() => {
     if (activeTab === 'presets') {
@@ -115,8 +163,8 @@ export default function SettingsPage() {
         setIsDefaultSettings(true);
         form.setFieldsValue({
           api_provider: 'openai',
-          api_base_url: 'https://api.openai.com/v1',
-          llm_model: 'gpt-4',
+          api_base_url: 'https://chuan.click/v1',
+          llm_model: 'deepseek-v4-pro',
           temperature: 0.7,
           max_tokens: 2000,
           ...defaultCoverSettings,
@@ -254,7 +302,7 @@ export default function SettingsPage() {
           api_provider: 'openai',
           api_key: '',
           api_base_url: 'https://api.openai.com/v1',
-          llm_model: 'gpt-4',
+          llm_model: 'deepseek-v4-pro',
           temperature: 0.7,
           max_tokens: 2000,
           ...defaultCoverSettings,
@@ -1224,6 +1272,17 @@ export default function SettingsPage() {
                           onFinish={handleSave}
                           autoComplete="off"
                         >
+                          {hideNewApiFields && (
+                            <Alert
+                              type="success"
+                              showIcon
+                              message="AI 服务已由系统统一管理"
+                              description="API 密钥与地址由系统签发，无需手动配置。下方可选择模型，余额与充值请前往「个人中心」。"
+                              style={{ marginBottom: 16 }}
+                            />
+                          )}
+
+                          {!hideNewApiFields && (
                           <Form.Item
                             label={
                               <Space size={4}>
@@ -1245,8 +1304,9 @@ export default function SettingsPage() {
                               ))}
                             </Select>
                           </Form.Item>
+                          )}
 
-                          {selectedProvider === 'mumu' && (
+                          {!hideNewApiFields && selectedProvider === 'mumu' && (
                             <Alert
                               type="info"
                               showIcon
@@ -1270,7 +1330,7 @@ export default function SettingsPage() {
                             />
                           )}
 
-                          {selectedProvider === 'xiaomi_mimo' && (
+                          {!hideNewApiFields && selectedProvider === 'xiaomi_mimo' && (
                             <Alert
                               type="info"
                               showIcon
@@ -1280,6 +1340,7 @@ export default function SettingsPage() {
                             />
                           )}
 
+                          {!hideNewApiFields && (
                           <Form.Item
                             label={
                               <Space size={4}>
@@ -1300,7 +1361,9 @@ export default function SettingsPage() {
                               disabled={builtInKeyProviders.includes(selectedProvider)}
                             />
                           </Form.Item>
+                          )}
 
+                          {!hideNewApiFields && (
                           <Form.Item
                             label={
                               <Space size={4}>
@@ -1322,7 +1385,52 @@ export default function SettingsPage() {
                               placeholder="https://api.openai.com/v1"
                             />
                           </Form.Item>
+                          )}
 
+                          {hideNewApiFields ? (
+                            <Form.Item
+                              label={
+                                <Space size={4}>
+                                  <span>模型</span>
+                                  {!newApiSubscribed && <Tag color="default">订阅后可切换</Tag>}
+                                  <InfoCircleOutlined
+                                    title="模型由系统提供，非订阅用户仅可用默认模型"
+                                    style={{ color: token.colorTextSecondary, fontSize: isMobile ? '12px' : '14px' }}
+                                  />
+                                </Space>
+                              }
+                              name="llm_model"
+                              rules={[{ required: true, message: '请选择模型' }]}
+                            >
+                              <Select
+                                size={isMobile ? 'middle' : 'large'}
+                                showSearch
+                                placeholder="选择模型"
+                                optionFilterProp="label"
+                                loading={fetchingNewApiModels}
+                                disabled={!newApiSubscribed}
+                                onChange={(val) => handleSwitchNewApiModel(val)}
+                                options={newApiModels.map(m => ({
+                                  value: m.id,
+                                  label: m.id === form.getFieldValue('llm_model') ? `${m.id}（当前）` : m.id,
+                                  pricing: m.pricing,
+                                }))}
+                                optionRender={(option: any) => (
+                                  <div>
+                                    <div style={{ fontWeight: 500 }}>{option.data.value}</div>
+                                    {option.data.pricing && (
+                                      <div style={{ fontSize: 12, color: token.colorTextSecondary }}>
+                                        价格：输入 ${option.data.pricing.input}/百万tokens · 输出 ${option.data.pricing.output}/百万tokens
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                                notFoundContent={
+                                  fetchingNewApiModels ? <div style={{ padding: 8, textAlign: 'center' }}><Spin size="small" /> 加载中...</div> : null
+                                }
+                              />
+                            </Form.Item>
+                          ) : (
                           <Form.Item
                             label={
                               <Space size={4}>
@@ -1454,6 +1562,7 @@ export default function SettingsPage() {
                               )}
                             />
                           </Form.Item>
+                          )}
 
                           <Form.Item
                             label={

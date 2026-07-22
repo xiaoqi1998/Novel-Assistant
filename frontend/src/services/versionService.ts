@@ -30,36 +30,45 @@ function compareVersion(v1: string, v2: string): number {
  * 优点：无 CORS 问题，自动从 GitHub 获取，无需维护
  */
 export async function checkLatestVersion(): Promise<VersionCheckResult> {
+  // 未配置 GitHub 仓库时，不检查外部更新
+  if (!VERSION_INFO.githubUrl) {
+    return {
+      hasUpdate: false,
+      latestVersion: VERSION_INFO.version,
+      releaseUrl: '',
+    };
+  }
+
   try {
     // 使用 shields.io 的 GitHub release badge API
     const badgeUrl = 'https://img.shields.io/github/v/release/xiamuceer-j/MuMuAINovel';
-    
+
     const response = await fetch(badgeUrl, {
       method: 'GET',
       cache: 'no-cache',
     });
-    
+
     if (!response.ok) {
       throw new Error(`HTTP ${response.status} ${response.statusText}`);
     }
-    
+
     // shields.io 返回的是 SVG 格式
     const svgText = await response.text();
-    
+
     // 从 SVG 中提取版本号
     // SVG 中版本号通常在 <text> 标签内，格式如: v1.0.0 或 1.0.0
     const versionRegex = /v?([\d.]+)/g;
     const matches = svgText.match(versionRegex);
-    
+
     if (matches && matches.length > 0) {
       // 通常最后一个匹配是版本号（前面的可能是标签文本）
       const versionMatch = matches[matches.length - 1];
       const latestVersion = versionMatch.replace('v', '');
-      
+
       // 验证版本号格式 (x.x.x)
       if (/^\d+\.\d+(\.\d+)?$/.test(latestVersion)) {
         const hasUpdate = compareVersion(VERSION_INFO.version, latestVersion) < 0;
-        
+
         return {
           hasUpdate,
           latestVersion,
@@ -67,7 +76,7 @@ export async function checkLatestVersion(): Promise<VersionCheckResult> {
         };
       }
     }
-    
+
     throw new Error('无法从 Badge API 解析版本信息');
   } catch {
     // 失败时返回无更新

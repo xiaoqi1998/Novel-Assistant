@@ -4,7 +4,6 @@ import { ssePost } from '../utils/sseClient';
 import type { SSEClientOptions } from '../utils/sseClient';
 import type {
   User,
-  AuthUrlResponse,
   Project,
   ProjectCreate,
   ProjectUpdate,
@@ -121,9 +120,42 @@ api.interceptors.response.use(
           }
           break;
         }
-        case 403:
-          errorMessage = data?.detail || '没有权限访问';
+        case 402: {
+          // New API 额度不足：detail 可能是字符串或 {error: "quota_exhausted", message: "..."}
+          const detail = data?.detail;
+          const isQuotaExhausted =
+            (typeof detail === 'object' && detail?.error === 'quota_exhausted') ||
+            (typeof detail === 'string' && detail.includes('quota_exhausted')) ||
+            data?.error === 'quota_exhausted';
+          if (isQuotaExhausted) {
+            // 派发自定义事件，由全局 QuotaModal 监听并弹窗
+            const quotaMsg = (typeof detail === 'object' && detail?.message)
+              ? detail.message
+              : '您的 AI 写作额度已用完，请前往个人中心充值。';
+            window.dispatchEvent(new CustomEvent('quota:exhausted', {
+              detail: { message: quotaMsg }
+            }));
+            // 不弹普通 toast
+            return Promise.reject(error);
+          }
+          errorMessage = (typeof detail === 'string' ? detail : data?.message) || '需要付款';
           break;
+        }
+        case 403: {
+          // 订阅权限不足：切换模型时非订阅用户
+          const detail = data?.detail;
+          const isSubscriptionRequired =
+            (typeof detail === 'object' && detail?.error === 'subscription_required') ||
+            data?.error === 'subscription_required';
+          if (isSubscriptionRequired) {
+            window.dispatchEvent(new CustomEvent('subscription:required', {
+              detail: { message: detail?.message || '切换模型需要订阅' }
+            }));
+            return Promise.reject(error);
+          }
+          errorMessage = (typeof detail === 'string' ? detail : data?.message) || '没有权限访问';
+          break;
+        }
         case 404:
           errorMessage = data?.detail || '请求的资源不存在';
           break;
@@ -157,46 +189,24 @@ api.interceptors.response.use(
 
 export const authApi = {
   getAuthConfig: () => api.get<unknown, {
+    newapi_auth_enabled: boolean;
+    newapi_register_enabled: boolean;
+    // 兼容旧字段（恒 false）
     local_auth_enabled: boolean;
     linuxdo_enabled: boolean;
     email_auth_enabled: boolean;
     email_register_enabled: boolean;
   }>('/auth/config'),
 
-  localLogin: (username: string, password: string) =>
-    api.post<unknown, { success: boolean; message: string; user: User }>('/auth/local/login', { username, password }),
+  // New API 账号登录（代理 New API /api/user/login）
+  newApiLogin: (username: string, password: string) =>
+    api.post<unknown, { success: boolean; message: string; user: User | null }>('/auth/newapi/login', { username, password }),
 
-  bindAccountLogin: (username: string, password: string) =>
-    api.post<unknown, { success: boolean; message: string; user: User }>('/auth/bind/login', { username, password }),
-
-  emailLogin: (payload: import('../types').EmailLoginPayload) =>
-    api.post<unknown, { success: boolean; message: string; user: User }>('/auth/email/login', payload),
-
-  sendEmailCode: (payload: import('../types').EmailSendCodePayload) =>
-    api.post<unknown, { success: boolean; message: string; expire_in_seconds: number; resend_interval_seconds: number }>('/auth/email/send-code', payload),
-
-  emailRegister: (payload: import('../types').EmailRegisterPayload) =>
-    api.post<unknown, { success: boolean; message: string; user: User }>('/auth/email/register', payload),
-
-  resetEmailPassword: (payload: import('../types').EmailResetPasswordPayload) =>
-    api.post<unknown, { success: boolean; message: string }>('/auth/email/reset-password', payload),
-
-  getLinuxDOAuthUrl: () => api.get<unknown, AuthUrlResponse>('/auth/linuxdo/url'),
+  // New API 账号注册（代理 New API /api/user/register，成功后自动登录）
+  newApiRegister: (payload: { username: string; password: string; email?: string }) =>
+    api.post<unknown, { success: boolean; message: string; user: User | null }>('/auth/newapi/register', payload),
 
   getCurrentUser: () => api.get<unknown, User>('/auth/user'),
-
-  getPasswordStatus: () => api.get<unknown, {
-    has_password: boolean;
-    has_custom_password: boolean;
-    username: string | null;
-    default_password: string | null;
-  }>('/auth/password/status'),
-
-  setPassword: (password: string) =>
-    api.post<unknown, { success: boolean; message: string }>('/auth/password/set', { password }),
-
-  initializePassword: (password: string) =>
-    api.post<unknown, { success: boolean; message: string }>('/auth/password/initialize', { password }),
 
   refreshSession: () => api.post<unknown, { message: string; expire_at: number; remaining_minutes: number }>('/auth/refresh'),
 
@@ -214,14 +224,6 @@ export const userApi = {
   deleteUser: (userId: string) => api.delete(`/users/${userId}`),
 
   getUser: (userId: string) => api.get<unknown, User>(`/users/${userId}`),
-
-  resetPassword: (userId: string, newPassword?: string) =>
-    api.post<unknown, {
-      message: string;
-      user_id: string;
-      username: string;
-      default_password?: string;
-    }>('/users/reset-password', { user_id: userId, new_password: newPassword }),
 };
 
 export const settingsApi = {
@@ -1008,6 +1010,91 @@ export const inspirationApi = {
     }>('/inspiration/quick-generate', data),
 };
 
+export const newApi = {
+  // 查询余额
+  getBalance: () => api.get<unknown, {
+    enabled: boolean;
+    bound: boolean;
+    total_quota: number;
+    used_quota: number;
+    remaining_quota: number;
+    estimated_words: number;
+  }>('/newapi/balance'),
+
+  // 查询状态（绑定 + 订阅）
+  getStatus: () => api.get<unknown, {
+    enabled: boolean;
+    bound: boolean;
+    is_subscribed: boolean;
+    current_model: string | null;
+    default_model: string;
+  }>('/newapi/status'),
+
+  // 获取模型列表（含价格）
+  getModels: () => api.get<unknown, {
+    enabled: boolean;
+    models: Array<{ id: string; name: string; pricing: { input: number; output: number } }>;
+    is_subscribed: boolean;
+    current_model: string | null;
+  }>('/newapi/models'),
+
+  // 切换模型（仅订阅用户）
+  switchModel: (model_id: string) => api.put('/newapi/model', { model_id }),
+
+  // 充值信息（支付方式、金额档位）—— 代理 New API
+  getTopupInfo: () => api.get<unknown, {
+    success: boolean;
+    data: {
+      amount_options: number[];
+      min_topup: number;
+      pay_methods: Array<{ name: string; type: string; color?: string; min_topup?: string }>;
+      enable_redemption: boolean;
+    };
+  }>('/newapi/topup/info'),
+
+  // 发起充值（返回支付链接）—— 代理 New API
+  createRecharge: (amount: number, payment_method: string = 'waffo_pancake') =>
+    api.post('/newapi/topup', { amount, payment_method }),
+
+  // 订阅套餐列表 —— 代理 New API
+  getSubscriptionPlans: () => api.get<unknown, {
+    success: boolean;
+    data: Array<{
+      plan: {
+        id: number;
+        title: string;
+        subtitle: string;
+        price_amount: number;
+        currency: string;
+        duration_unit: string;
+        duration_value: number;
+        total_amount: number;
+        allow_balance_pay: boolean;
+      };
+    }>;
+  }>('/newapi/subscription/plans'),
+
+  // 当前用户订阅状态 —— 代理 New API
+  getSubscriptionSelf: () => api.get<unknown, {
+    success: boolean;
+    data: {
+      billing_preference: string;
+      subscriptions: Array<Record<string, unknown>>;
+      all_subscriptions: Array<Record<string, unknown>>;
+    };
+  }>('/newapi/subscription/self'),
+
+  // 购买订阅（余额支付）—— 代理 New API
+  subscribe: (plan_id: number, payment_method: string = 'balance') =>
+    api.post('/newapi/subscribe', { plan_id, payment_method }),
+
+  // 充值/订阅历史
+  listSubscriptions: () => api.get<unknown, { items: any[]; total: number }>('/newapi/subscriptions'),
+
+  // 自助激活
+  activate: () => api.post('/newapi/activate'),
+};
+
 export default api;
 
 
@@ -1208,14 +1295,6 @@ export const adminApi = {
       message: string;
       is_active: boolean;
     }>(`/admin/users/${userId}/toggle-status`, { is_active: isActive }),
-
-  // 重置密码
-  resetPassword: (userId: string, newPassword?: string) =>
-    api.post<unknown, {
-      success: boolean;
-      message: string;
-      new_password: string;
-    }>(`/admin/users/${userId}/reset-password`, { new_password: newPassword }),
 
   // 删除用户
   deleteUser: (userId: string) =>

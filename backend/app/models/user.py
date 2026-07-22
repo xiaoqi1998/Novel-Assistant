@@ -17,6 +17,10 @@ class User(Base):
     trust_level = Column(Integer, default=0, comment="信任等级（仅用于显示）")
     is_admin = Column(Boolean, default=False, comment="是否为管理员")
     linuxdo_id = Column(String(100), nullable=False, unique=True, index=True, comment="LinuxDO用户ID或本地用户ID")
+    # New API 关联字段（注册签发，可能为空——签发失败或未启用时）
+    newapi_user_id = Column(Integer, nullable=True, index=True, comment="New API 用户ID（签发后回填）")
+    newapi_key = Column(String(200), nullable=True, comment="New API 专属API Key (sk-xxx)")
+    newapi_access_token = Column(String(100), nullable=True, comment="New API access_token（用于代理调用充值/订阅等 selfRoute 接口）")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), comment="创建时间")
     last_login = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), comment="最后登录时间")
     

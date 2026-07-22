@@ -2,13 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Button,
-  Card,
   Divider,
   Form,
   Grid,
   Input,
   Layout,
-  Space,
   Spin,
   Tabs,
   Typography,
@@ -18,45 +16,36 @@ import {
 import {
   LockOutlined,
   MailOutlined,
-  SafetyCertificateOutlined,
   UserOutlined,
+  SafetyCertificateOutlined,
 } from '@ant-design/icons';
 import { authApi } from '../services/api';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import ThemeSwitch from '../components/ThemeSwitch';
 
-const { Title, Paragraph, Text } = Typography;
+const { Title, Paragraph } = Typography;
 
 interface AuthConfig {
+  // 新字段：New API 对齐后的认证开关
+  newapi_auth_enabled: boolean;
+  newapi_register_enabled: boolean;
+  // 兼容旧字段（恒 false，保留以避免历史代码报错）
   local_auth_enabled: boolean;
   linuxdo_enabled: boolean;
   email_auth_enabled: boolean;
   email_register_enabled: boolean;
 }
 
-interface LocalLoginValues {
+interface NewApiLoginValues {
   username: string;
   password: string;
 }
 
-interface EmailLoginValues {
-  email: string;
-  code: string;
-}
-
-interface EmailRegisterValues {
-  email: string;
-  code: string;
+interface NewApiRegisterValues {
+  username: string;
   password: string;
   confirmPassword: string;
-  display_name?: string;
-}
-
-interface ResetPasswordValues {
-  email: string;
-  code: string;
-  new_password: string;
-  confirmNewPassword: string;
+  email?: string;
 }
 
 export default function Login() {
@@ -65,62 +54,23 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(true);
   const [authConfig, setAuthConfig] = useState<AuthConfig>({
+    newapi_auth_enabled: false,
+    newapi_register_enabled: false,
     local_auth_enabled: false,
     linuxdo_enabled: false,
     email_auth_enabled: false,
     email_register_enabled: false,
   });
-  const [localForm] = Form.useForm<LocalLoginValues>();
-  const [emailLoginForm] = Form.useForm<EmailLoginValues>();
-  const [emailRegisterForm] = Form.useForm<EmailRegisterValues>();
-  const [resetPasswordForm] = Form.useForm<ResetPasswordValues>();
+  const [newApiLoginForm] = Form.useForm<NewApiLoginValues>();
+  const [newApiRegisterForm] = Form.useForm<NewApiRegisterValues>();
   const { token } = theme.useToken();
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
   const alphaColor = (color: string, alpha: number) => `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
   const primaryButtonShadow = `0 8px 20px ${alphaColor(token.colorPrimary, 0.28)}`;
-  const hoverButtonShadow = `0 12px 28px ${alphaColor(token.colorPrimary, 0.36)}`;
-  const [loginCodeSending, setLoginCodeSending] = useState(false);
-  const [registerCodeSending, setRegisterCodeSending] = useState(false);
-  const [resetCodeSending, setResetCodeSending] = useState(false);
-  const [loginCountdown, setLoginCountdown] = useState(0);
-  const [registerCountdown, setRegisterCountdown] = useState(0);
-  const [resetCountdown, setResetCountdown] = useState(0);
-  const [showResetPassword, setShowResetPassword] = useState(false);
 
-  const localAuthEnabled = authConfig.local_auth_enabled;
-  const linuxdoEnabled = authConfig.linuxdo_enabled;
-  const emailAuthEnabled = authConfig.email_auth_enabled;
-  const emailRegisterEnabled = authConfig.email_register_enabled;
-
-  useEffect(() => {
-    const timers = [
-      { value: loginCountdown, setter: setLoginCountdown },
-      { value: registerCountdown, setter: setRegisterCountdown },
-      { value: resetCountdown, setter: setResetCountdown },
-    ].map(({ value, setter }) => {
-      if (value <= 0) {
-        return null;
-      }
-
-      return window.setInterval(() => {
-        setter((prev) => {
-          if (prev <= 1) {
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    });
-
-    return () => {
-      timers.forEach((timer) => {
-        if (timer) {
-          window.clearInterval(timer);
-        }
-      });
-    };
-  }, [loginCountdown, registerCountdown, resetCountdown]);
+  const newapiAuthEnabled = authConfig.newapi_auth_enabled;
+  const newapiRegisterEnabled = authConfig.newapi_register_enabled;
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -131,12 +81,14 @@ export default function Login() {
       } catch {
         try {
           const config = await authApi.getAuthConfig();
-          setAuthConfig(config);
+          setAuthConfig(config as AuthConfig);
         } catch (error) {
           console.error('获取认证配置失败:', error);
           setAuthConfig({
+            newapi_auth_enabled: true,
+            newapi_register_enabled: true,
             local_auth_enabled: false,
-            linuxdo_enabled: true,
+            linuxdo_enabled: false,
             email_auth_enabled: false,
             email_register_enabled: false,
           });
@@ -153,473 +105,145 @@ export default function Login() {
     navigate(redirect);
   };
 
-  const handleLocalLogin = async (values: LocalLoginValues) => {
+  const handleNewApiLogin = async (values: NewApiLoginValues) => {
     try {
       setLoading(true);
-      const response = await authApi.localLogin(values.username, values.password);
+      const response = await authApi.newApiLogin(values.username, values.password);
       if (response.success) {
         handleLoginSuccess();
       }
     } catch (error) {
-      console.error('本地登录失败:', error);
+      console.error('New API 登录失败:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleEmailLogin = async (values: EmailLoginValues) => {
+  const handleNewApiRegister = async (values: NewApiRegisterValues) => {
     try {
       setLoading(true);
-      const response = await authApi.emailLogin({
-        email: values.email,
-        code: values.code,
-      });
-      if (response.success) {
-        handleLoginSuccess();
-      }
-    } catch (error) {
-      console.error('邮箱验证码登录失败:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const sendLoginCode = async () => {
-    try {
-      const values = await emailLoginForm.validateFields(['email']);
-      setLoginCodeSending(true);
-      const result = await authApi.sendEmailCode({ email: values.email, scene: 'login' });
-      message.success(result.message || '验证码已发送');
-      setLoginCountdown(result.resend_interval_seconds || 60);
-    } catch (error) {
-      console.error('发送 login 验证码失败:', error);
-    } finally {
-      setLoginCodeSending(false);
-    }
-  };
-
-  const sendRegisterCode = async () => {
-    try {
-      const values = await emailRegisterForm.validateFields(['email']);
-      setRegisterCodeSending(true);
-      const result = await authApi.sendEmailCode({ email: values.email, scene: 'register' });
-      message.success(result.message || '验证码已发送');
-      setRegisterCountdown(result.resend_interval_seconds || 60);
-    } catch (error) {
-      console.error('发送 register 验证码失败:', error);
-    } finally {
-      setRegisterCodeSending(false);
-    }
-  };
-
-  const sendResetCode = async () => {
-    try {
-      const values = await resetPasswordForm.validateFields(['email']);
-      setResetCodeSending(true);
-      const result = await authApi.sendEmailCode({ email: values.email, scene: 'reset_password' });
-      message.success(result.message || '验证码已发送');
-      setResetCountdown(result.resend_interval_seconds || 60);
-    } catch (error) {
-      console.error('发送 reset_password 验证码失败:', error);
-    } finally {
-      setResetCodeSending(false);
-    }
-  };
-
-  const handleEmailRegister = async (values: EmailRegisterValues) => {
-    try {
-      setLoading(true);
-      const response = await authApi.emailRegister({
-        email: values.email,
-        code: values.code,
+      const response = await authApi.newApiRegister({
+        username: values.username,
         password: values.password,
-        display_name: values.display_name?.trim() || undefined,
+        email: values.email?.trim() || undefined,
       });
       if (response.success) {
-        message.success('注册成功，已自动登录');
-        emailRegisterForm.resetFields(['code', 'password', 'confirmPassword']);
-        setRegisterCountdown(0);
+        message.success(response.message || '注册成功，已自动登录');
         handleLoginSuccess();
       }
     } catch (error) {
-      console.error('邮箱注册失败:', error);
+      console.error('New API 注册失败:', error);
     } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleResetPassword = async (values: ResetPasswordValues) => {
-    try {
-      setLoading(true);
-      const result = await authApi.resetEmailPassword({
-        email: values.email,
-        code: values.code,
-        new_password: values.new_password,
-      });
-      message.success(result.message || '密码重置成功');
-      resetPasswordForm.resetFields(['code', 'new_password', 'confirmNewPassword']);
-      setResetCountdown(0);
-      setShowResetPassword(false);
-    } catch (error) {
-      console.error('重置密码失败:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleLinuxDOLogin = async () => {
-    try {
-      setLoading(true);
-      const response = await authApi.getLinuxDOAuthUrl();
-
-      const redirect = searchParams.get('redirect');
-      if (redirect) {
-        sessionStorage.setItem('login_redirect', redirect);
-      }
-
-      window.location.href = response.auth_url;
-    } catch (error) {
-      console.error('获取授权地址失败:', error);
-      message.error('获取授权地址失败，请稍后重试');
       setLoading(false);
     }
   };
 
   const loginTips = useMemo(() => {
-    const tips = [
-      '首次 LinuxDO 登录会自动创建账号。',
+    const tips: string[] = [
+      '使用 New API 账号登录；如无账号请先注册。',
+      '管理员为 New API 的 admin/root 角色账号。',
     ];
-
-    if (localAuthEnabled) {
-      tips.unshift('本地登录默认账号：admin / admin123');
-    }
-
-    if (emailAuthEnabled) {
-      tips.push('邮箱注册用户支持通过邮箱验证码重置密码。');
-    }
-
     return tips;
-  }, [emailAuthEnabled, localAuthEnabled]);
+  }, []);
 
-  const renderLocalLogin = () => (
-    <>
-      <Form
-        form={localForm}
-        layout="vertical"
-        onFinish={handleLocalLogin}
-        size="large"
-        style={{ marginTop: 16 }}
-      >
-        <Form.Item
-          name="username"
-          label="管理账号"
-          rules={[{ required: true, message: '请输入管理账号/邮箱' }]}
-        >
-          <Input
-            prefix={<UserOutlined style={{ color: token.colorTextTertiary }} />}
-            placeholder="请输入管理账号/邮箱"
-            autoComplete="username"
-            style={{ height: 46, borderRadius: 12 }}
-          />
-        </Form.Item>
-        <Form.Item
-          name="password"
-          label="访问密钥"
-          rules={[{ required: true, message: '请输入访问密钥' }]}
-        >
-          <Input.Password
-            prefix={<LockOutlined style={{ color: token.colorTextTertiary }} />}
-            placeholder="请输入访问密钥"
-            autoComplete="current-password"
-            style={{ height: 46, borderRadius: 12 }}
-          />
-        </Form.Item>
-        <Form.Item style={{ marginBottom: 0, marginTop: 8 }}>
-          <Button
-            type="primary"
-            htmlType="submit"
-            loading={loading}
-            block
-            style={{
-              height: 46,
-              fontSize: 16,
-              fontWeight: 600,
-              background: `linear-gradient(90deg, ${token.colorPrimary} 0%, ${alphaColor(token.colorPrimary, 0.86)} 100%)`,
-              border: 'none',
-              borderRadius: '12px',
-              boxShadow: primaryButtonShadow,
-            }}
-          >
-            登录系统
-          </Button>
-        </Form.Item>
-      </Form>
-
-      {linuxdoEnabled ? (
-        <>
-          <Divider style={{ margin: '18px 0 16px' }}>第三方登录</Divider>
-          {renderLinuxDOLogin()}
-        </>
-      ) : null}
-    </>
-  );
-
-  const renderEmailLogin = () => {
-    if (showResetPassword) {
-      return (
-        <div style={{ marginTop: 16 }}>
-          <Space direction="vertical" size={12} style={{ width: '100%' }}>
-            <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-              <Title level={5} style={{ margin: 0 }}>忘记密码 / 重置密码</Title>
-              <Button type="link" style={{ paddingInline: 0 }} onClick={() => setShowResetPassword(false)}>
-                返回验证码登录
-              </Button>
-            </Space>
-
-            <Card size="small" bordered={false} style={{ borderRadius: 12, background: token.colorFillAlter }}>
-              <Form
-                form={resetPasswordForm}
-                layout="vertical"
-                onFinish={handleResetPassword}
-                size="middle"
-              >
-                <Form.Item
-                  name="email"
-                  label="注册邮箱"
-                  rules={[
-                    { required: true, message: '请输入注册邮箱' },
-                    { type: 'email', message: '请输入有效的邮箱地址' },
-                  ]}
-                >
-                  <Input prefix={<MailOutlined />} placeholder="请输入注册邮箱" />
-                </Form.Item>
-                <Form.Item label="重置验证码" required style={{ marginBottom: 12 }}>
-                  <Space.Compact style={{ width: '100%' }}>
-                    <Form.Item
-                      name="code"
-                      noStyle
-                      rules={[
-                        { required: true, message: '请输入重置验证码' },
-                        { len: 6, message: '验证码长度为 6 位' },
-                      ]}
-                    >
-                      <Input placeholder="请输入重置验证码" maxLength={6} />
-                    </Form.Item>
-                    <Button
-                      onClick={sendResetCode}
-                      loading={resetCodeSending}
-                      disabled={resetCountdown > 0}
-                    >
-                      {resetCountdown > 0 ? `${resetCountdown}s 后重发` : '发送验证码'}
-                    </Button>
-                  </Space.Compact>
-                </Form.Item>
-                <Form.Item
-                  name="new_password"
-                  label="新密码"
-                  rules={[
-                    { required: true, message: '请输入新密码' },
-                    { min: 6, message: '密码长度至少为 6 个字符' },
-                  ]}
-                >
-                  <Input.Password prefix={<LockOutlined />} placeholder="请输入新密码" />
-                </Form.Item>
-                <Form.Item
-                  name="confirmNewPassword"
-                  label="确认新密码"
-                  dependencies={['new_password']}
-                  rules={[
-                    { required: true, message: '请再次输入新密码' },
-                    ({ getFieldValue }) => ({
-                      validator(_, value) {
-                        if (!value || getFieldValue('new_password') === value) {
-                          return Promise.resolve();
-                        }
-                        return Promise.reject(new Error('两次输入的新密码不一致'));
-                      },
-                    }),
-                  ]}
-                >
-                  <Input.Password prefix={<LockOutlined />} placeholder="请再次输入新密码" />
-                </Form.Item>
-                <Button type="default" htmlType="submit" loading={loading} block>
-                  重置密码
-                </Button>
-              </Form>
-            </Card>
-          </Space>
-        </div>
-      );
-    }
-
-    return (
-      <Form
-        form={emailLoginForm}
-        layout="vertical"
-        onFinish={handleEmailLogin}
-        size="large"
-        style={{ marginTop: 16 }}
-      >
-        <Form.Item
-          name="email"
-          label="邮箱地址"
-          rules={[
-            { required: true, message: '请输入邮箱地址' },
-            { type: 'email', message: '请输入有效的邮箱地址' },
-          ]}
-        >
-          <Input
-            prefix={<MailOutlined style={{ color: token.colorTextTertiary }} />}
-            placeholder="请输入已注册邮箱"
-            autoComplete="email"
-            style={{ height: 46, borderRadius: 12 }}
-          />
-        </Form.Item>
-
-        <Form.Item label="登录验证码" required style={{ marginBottom: 24 }}>
-          <Space.Compact style={{ width: '100%' }}>
-            <Form.Item
-              name="code"
-              noStyle
-              rules={[
-                { required: true, message: '请输入登录验证码' },
-                { len: 6, message: '验证码长度为 6 位' },
-              ]}
-            >
-              <Input
-                prefix={<SafetyCertificateOutlined style={{ color: token.colorTextTertiary }} />}
-                placeholder="请输入 6 位登录验证码"
-                maxLength={6}
-                style={{ height: 46, borderRadius: '12px 0 0 12px' }}
-              />
-            </Form.Item>
-            <Button
-              style={{ height: 46 }}
-              onClick={sendLoginCode}
-              loading={loginCodeSending}
-              disabled={loginCountdown > 0}
-            >
-              {loginCountdown > 0 ? `${loginCountdown}s 后重发` : '发送验证码'}
-            </Button>
-          </Space.Compact>
-        </Form.Item>
-
-        <Form.Item style={{ marginBottom: 0, marginTop: 8 }}>
-          <Button
-            type="primary"
-            htmlType="submit"
-            loading={loading}
-            block
-            style={{
-              height: 46,
-              fontSize: 16,
-              fontWeight: 600,
-              background: `linear-gradient(90deg, ${token.colorPrimary} 0%, ${alphaColor(token.colorPrimary, 0.86)} 100%)`,
-              border: 'none',
-              borderRadius: '12px',
-              boxShadow: primaryButtonShadow,
-            }}
-          >
-            验证码登录
-          </Button>
-        </Form.Item>
-
-        <div style={{ marginTop: 12, textAlign: 'right' }}>
-          <Button type="link" style={{ paddingInline: 0 }} onClick={() => setShowResetPassword(true)}>
-            忘记密码？点击重置
-          </Button>
-        </div>
-      </Form>
-    );
-  };
-
-  const renderEmailRegister = () => (
+  const renderNewApiLogin = () => (
     <Form
-      form={emailRegisterForm}
+      form={newApiLoginForm}
       layout="vertical"
-      onFinish={handleEmailRegister}
+      onFinish={handleNewApiLogin}
       size="large"
       style={{ marginTop: 16 }}
     >
       <Form.Item
-        name="email"
-        label="注册邮箱"
-        rules={[
-          { required: true, message: '请输入注册邮箱' },
-          { type: 'email', message: '请输入有效的邮箱地址' },
-        ]}
-      >
-        <Input
-          prefix={<MailOutlined style={{ color: token.colorTextTertiary }} />}
-          placeholder="请输入注册邮箱"
-          autoComplete="email"
-          style={{ height: 46, borderRadius: 12 }}
-        />
-      </Form.Item>
-
-      <Form.Item label="邮箱验证码" required style={{ marginBottom: 12 }}>
-        <Space.Compact style={{ width: '100%' }}>
-          <Form.Item
-            name="code"
-            noStyle
-            rules={[
-              { required: true, message: '请输入邮箱验证码' },
-              { len: 6, message: '验证码长度为 6 位' },
-            ]}
-          >
-            <Input
-              prefix={<SafetyCertificateOutlined style={{ color: token.colorTextTertiary }} />}
-              placeholder="请输入 6 位验证码"
-              maxLength={6}
-              style={{ height: 46, borderRadius: '12px 0 0 12px' }}
-            />
-          </Form.Item>
-          <Button
-            style={{ height: 46 }}
-            onClick={sendRegisterCode}
-            loading={registerCodeSending}
-            disabled={registerCountdown > 0}
-          >
-            {registerCountdown > 0 ? `${registerCountdown}s 后重发` : '发送验证码'}
-          </Button>
-        </Space.Compact>
-      </Form.Item>
-
-      <Form.Item
-        name="display_name"
-        label="昵称"
-        rules={[{ max: 50, message: '昵称长度不能超过 50 个字符' }]}
+        name="username"
+        label="账号"
+        rules={[{ required: true, message: '请输入账号' }]}
       >
         <Input
           prefix={<UserOutlined style={{ color: token.colorTextTertiary }} />}
-          placeholder="选填，默认使用邮箱前缀"
-          autoComplete="nickname"
+          placeholder="请输入 New API 账号"
+          autoComplete="username"
           style={{ height: 46, borderRadius: 12 }}
         />
       </Form.Item>
-
       <Form.Item
         name="password"
-        label="登录密码"
+        label="密码"
+        rules={[{ required: true, message: '请输入密码' }]}
+      >
+        <Input.Password
+          prefix={<LockOutlined style={{ color: token.colorTextTertiary }} />}
+          placeholder="请输入密码"
+          autoComplete="current-password"
+          style={{ height: 46, borderRadius: 12 }}
+        />
+      </Form.Item>
+      <Form.Item style={{ marginBottom: 0, marginTop: 8 }}>
+        <Button
+          type="primary"
+          htmlType="submit"
+          loading={loading}
+          block
+          style={{
+            height: 46,
+            fontSize: 16,
+            fontWeight: 600,
+            background: `linear-gradient(90deg, ${token.colorPrimary} 0%, ${alphaColor(token.colorPrimary, 0.86)} 100%)`,
+            border: 'none',
+            borderRadius: '12px',
+            boxShadow: primaryButtonShadow,
+          }}
+        >
+          登录系统
+        </Button>
+      </Form.Item>
+    </Form>
+  );
+
+  const renderNewApiRegister = () => (
+    <Form
+      form={newApiRegisterForm}
+      layout="vertical"
+      onFinish={handleNewApiRegister}
+      size="large"
+      style={{ marginTop: 16 }}
+    >
+      <Form.Item
+        name="username"
+        label="账号"
         rules={[
-          { required: true, message: '请输入登录密码' },
-          { min: 6, message: '密码长度至少为 6 个字符' },
+          { required: true, message: '请输入账号' },
+          { min: 3, message: '账号至少 3 位' },
+        ]}
+      >
+        <Input
+          prefix={<UserOutlined style={{ color: token.colorTextTertiary }} />}
+          placeholder="设置账号（至少 3 位）"
+          autoComplete="username"
+          style={{ height: 46, borderRadius: 12 }}
+        />
+      </Form.Item>
+      <Form.Item
+        name="password"
+        label="密码"
+        rules={[
+          { required: true, message: '请输入密码' },
+          { min: 8, message: '密码至少 8 位' },
         ]}
       >
         <Input.Password
           prefix={<LockOutlined style={{ color: token.colorTextTertiary }} />}
-          placeholder="请输入登录密码"
+          placeholder="设置密码（至少 8 位）"
           autoComplete="new-password"
           style={{ height: 46, borderRadius: 12 }}
         />
       </Form.Item>
-
       <Form.Item
         name="confirmPassword"
         label="确认密码"
         dependencies={['password']}
         rules={[
-          { required: true, message: '请再次输入登录密码' },
+          { required: true, message: '请再次输入密码' },
           ({ getFieldValue }) => ({
             validator(_, value) {
               if (!value || getFieldValue('password') === value) {
@@ -632,12 +256,25 @@ export default function Login() {
       >
         <Input.Password
           prefix={<LockOutlined style={{ color: token.colorTextTertiary }} />}
-          placeholder="请再次输入登录密码"
+          placeholder="请再次输入密码"
           autoComplete="new-password"
           style={{ height: 46, borderRadius: 12 }}
         />
       </Form.Item>
-
+      <Form.Item
+        name="email"
+        label="邮箱（选填）"
+        rules={[
+          { type: 'email', message: '请输入有效的邮箱地址' },
+        ]}
+      >
+        <Input
+          prefix={<MailOutlined style={{ color: token.colorTextTertiary }} />}
+          placeholder="选填，用于密码找回"
+          autoComplete="email"
+          style={{ height: 46, borderRadius: 12 }}
+        />
+      </Form.Item>
       <Form.Item style={{ marginBottom: 0, marginTop: 8 }}>
         <Button
           type="primary"
@@ -657,82 +294,28 @@ export default function Login() {
           注册并登录
         </Button>
       </Form.Item>
-
-      <Text type="secondary" style={{ marginTop: 12, display: 'block' }}>
-        验证码将发送到你填写的邮箱，若未收到请检查垃圾箱或稍后重试。注册后可通过邮箱验证码登录，也支持邮箱重置密码。
-      </Text>
+      <Paragraph style={{ marginTop: 12, marginBottom: 0, color: token.colorTextSecondary, fontSize: 12 }}>
+        注册后即可使用 New API 账号登录墨笔，初始赠送 $5 写作额度。
+      </Paragraph>
     </Form>
   );
 
-  const renderLinuxDOLogin = () => (
-    <div>
-      <Button
-        type="primary"
-        size="large"
-        icon={(
-          <img
-            src="/favicon.ico"
-            alt="LinuxDO"
-            style={{
-              width: 20,
-              height: 20,
-              marginRight: 8,
-              verticalAlign: 'middle',
-            }}
-          />
-        )}
-        loading={loading}
-        onClick={handleLinuxDOLogin}
-        block
-        style={{
-          height: 46,
-          fontSize: 16,
-          fontWeight: 600,
-          background: `linear-gradient(90deg, ${token.colorPrimary} 0%, ${alphaColor(token.colorPrimary, 0.86)} 100%)`,
-          border: 'none',
-          borderRadius: '12px',
-          boxShadow: primaryButtonShadow,
-          transition: 'all 0.3s ease',
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.transform = 'translateY(-2px)';
-          e.currentTarget.style.boxShadow = hoverButtonShadow;
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.transform = 'translateY(0)';
-          e.currentTarget.style.boxShadow = primaryButtonShadow;
-        }}
-      >
-        使用 LinuxDO OAuth 登录
-      </Button>
-    </div>
-  );
-
   const authTabs = [
-    ...(localAuthEnabled
+    ...(newapiAuthEnabled
       ? [
           {
-            key: 'local-login',
-            label: '本地登录',
-            children: renderLocalLogin(),
+            key: 'newapi-login',
+            label: '登录',
+            children: renderNewApiLogin(),
           },
         ]
       : []),
-    ...(emailAuthEnabled
+    ...(newapiRegisterEnabled
       ? [
           {
-            key: 'email-login',
-            label: '邮箱登录',
-            children: renderEmailLogin(),
-          },
-        ]
-      : []),
-    ...(emailAuthEnabled && emailRegisterEnabled
-      ? [
-          {
-            key: 'email-register',
-            label: '邮箱注册',
-            children: renderEmailRegister(),
+            key: 'newapi-register',
+            label: '注册',
+            children: renderNewApiRegister(),
           },
         ]
       : []),
@@ -902,22 +485,12 @@ export default function Login() {
                   <Tabs defaultActiveKey={authTabs[0].key} items={authTabs} />
                 ) : null}
 
-                {!localAuthEnabled && !linuxdoEnabled && !emailAuthEnabled ? (
+                {!newapiAuthEnabled && !newapiRegisterEnabled ? (
                   <Alert
                     type="warning"
                     showIcon
                     message="当前未启用可用登录方式"
-                    description="请联系管理员在系统配置中启用本地登录、邮箱认证或 LinuxDO OAuth 登录。"
-                  />
-                ) : null}
-
-                {emailAuthEnabled && !emailRegisterEnabled ? (
-                  <Alert
-                    type="info"
-                    showIcon
-                    style={{ marginTop: 12, borderRadius: 12 }}
-                    message="邮箱注册暂未开放"
-                    description="当前仅开放邮箱验证码登录与找回密码，如需注册请联系管理员。"
+                    description="New API 登录未启用，请联系管理员在系统配置中开启 New API。"
                   />
                 ) : null}
 

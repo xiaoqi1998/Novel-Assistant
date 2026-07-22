@@ -18,6 +18,7 @@ import WritingStyles from './pages/WritingStyles';
 import PromptWorkshop from './pages/PromptWorkshop';
 import Settings from './pages/Settings';
 import SystemSettings from './pages/SystemSettings';
+import AccountCenter from './pages/AccountCenter';
 import MCPPlugins from './pages/MCPPlugins';
 import UserManagement from './pages/UserManagement';
 import PromptTemplates from './pages/PromptTemplates';
@@ -50,6 +51,7 @@ function App() {
             <Route path="/" element={<ProjectList />} />
             <Route path="/projects" element={<ProjectList />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/account" element={<AccountCenter />} />
             <Route path="/system-settings" element={<SystemSettings />} />
             <Route path="/mcp-plugins" element={<MCPPlugins />} />
             <Route path="/prompt-templates" element={<PromptTemplates />} />

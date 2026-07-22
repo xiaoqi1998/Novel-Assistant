@@ -134,7 +134,29 @@ class Settings(BaseSettings):
     WORKSHOP_MODE: str = "client"  # client: 本地部署实例, server: 云端中央服务器
     WORKSHOP_CLOUD_URL: str = "https://mumuverse.space:1566"  # 云端服务地址
     WORKSHOP_API_TIMEOUT: int = 30  # 云端API请求超时时间（秒）
-    
+
+    # ==================== New API 中转网关配置 ====================
+    # 总开关：未配置 Root Token 时为 False，系统降级为现有直连模式
+    NEW_API_ENABLED: bool = False
+    # Admin API 地址（容器内）；写入用户 Settings 时需追加 /v1
+    NEW_API_BASE_URL: str = "http://new-api:3000"
+    # Root Admin Token（⚠️ 用户需提供）
+    NEW_API_ROOT_TOKEN: Optional[str] = None
+    # 注册赠送额度（$5，New API quota 字段直接以美元计价）
+    NEW_API_GIFT_QUOTA: float = 5
+    # 新用户分组
+    NEW_API_DEFAULT_GROUP: str = "default"
+    # Admin API 超时秒数
+    NEW_API_REQUEST_TIMEOUT: int = 15
+    # 非订阅用户默认模型（锁定的唯一可用模型）
+    NEW_API_DEFAULT_MODEL: str = "deepseek-v4-pro"
+    # 订阅用户可选模型白名单（空=不限制，用 New API 模型列表）
+    NEW_API_SUBSCRIPTION_MODELS: list = []
+    # USD→CNY 汇率（余额展示用）
+    NEW_API_USD_CNY_RATE: float = 7.2
+    # New API 角色映射为墨笔管理员的角色列表（逗号分隔，10=admin, 100=root）
+    NEW_API_ADMIN_ROLES: str = "10,100"
+
     class Config:
         env_file = ".env"
         case_sensitive = False

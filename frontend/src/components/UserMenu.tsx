@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Dropdown, Avatar, Space, Typography, message, Modal, Form, Input, Button, theme } from 'antd';
-import { UserOutlined, LogoutOutlined, TeamOutlined, CrownOutlined, LockOutlined } from '@ant-design/icons';
+import { Dropdown, Avatar, Space, Typography, message, theme } from 'antd';
+import { UserOutlined, LogoutOutlined, TeamOutlined, CrownOutlined } from '@ant-design/icons';
 import { authApi } from '../services/api';
 import type { User } from '../types';
 import type { MenuProps } from 'antd';
@@ -18,9 +18,6 @@ interface UserMenuProps {
 export default function UserMenu({ showFullInfo = false, compact = false }: UserMenuProps) {
   const navigate = useNavigate();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [showChangePassword, setShowChangePassword] = useState(false);
-  const [changePasswordForm] = Form.useForm();
-  const [changingPassword, setChangingPassword] = useState(false);
   const { token } = theme.useToken();
   const alphaColor = (color: string, alpha: number) => `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
 
@@ -56,22 +53,6 @@ export default function UserMenu({ showFullInfo = false, compact = false }: User
     navigate('/user-management');
   };
 
-  const handleChangePassword = async (values: { oldPassword: string; newPassword: string }) => {
-    try {
-      setChangingPassword(true);
-      await authApi.setPassword(values.newPassword);
-      message.success('密码修改成功');
-      setShowChangePassword(false);
-      changePasswordForm.resetFields();
-    } catch (error: unknown) {
-      console.error('修改密码失败:', error);
-      const err = error as { response?: { data?: { detail?: string } } };
-      message.error(err.response?.data?.detail || '修改密码失败');
-    } finally {
-      setChangingPassword(false);
-    }
-  };
-
   const menuItems: MenuProps['items'] = [
     {
       key: 'user-info',
@@ -101,15 +82,6 @@ export default function UserMenu({ showFullInfo = false, compact = false }: User
         type: 'divider' as const,
       }
     ] : []),
-    {
-      key: 'change-password',
-      icon: <LockOutlined />,
-      label: '修改密码',
-      onClick: () => setShowChangePassword(true),
-    },
-    {
-      type: 'divider',
-    },
     {
       key: 'logout',
       icon: <LogoutOutlined />,
@@ -199,77 +171,6 @@ export default function UserMenu({ showFullInfo = false, compact = false }: User
           </Space>
         </div>
       </Dropdown>
-
-      <Modal
-        title="修改密码"
-        open={showChangePassword}
-        onCancel={() => {
-          setShowChangePassword(false);
-          changePasswordForm.resetFields();
-        }}
-        footer={null}
-        width={480}
-        centered
-      >
-        <Form
-          form={changePasswordForm}
-          layout="vertical"
-          onFinish={handleChangePassword}
-          autoComplete="off"
-        >
-          <Form.Item
-            label="新密码"
-            name="newPassword"
-            rules={[
-              { required: true, message: '请输入新密码' },
-              { min: 6, message: '密码至少6个字符' },
-            ]}
-          >
-            <Input.Password
-              prefix={<LockOutlined />}
-              placeholder="请输入新密码（至少6个字符）"
-              autoComplete="new-password"
-            />
-          </Form.Item>
-
-          <Form.Item
-            label="确认密码"
-            name="confirmPassword"
-            dependencies={['newPassword']}
-            rules={[
-              { required: true, message: '请确认新密码' },
-              ({ getFieldValue }) => ({
-                validator(_, value) {
-                  if (!value || getFieldValue('newPassword') === value) {
-                    return Promise.resolve();
-                  }
-                  return Promise.reject(new Error('两次输入的密码不一致'));
-                },
-              }),
-            ]}
-          >
-            <Input.Password
-              prefix={<LockOutlined />}
-              placeholder="请再次输入新密码"
-              autoComplete="new-password"
-            />
-          </Form.Item>
-
-          <Form.Item style={{ marginBottom: 0 }}>
-            <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
-              <Button onClick={() => {
-                setShowChangePassword(false);
-                changePasswordForm.resetFields();
-              }}>
-                取消
-              </Button>
-              <Button type="primary" htmlType="submit" loading={changingPassword}>
-                确认修改
-              </Button>
-            </Space>
-          </Form.Item>
-        </Form>
-      </Modal>
     </>
   );
 }

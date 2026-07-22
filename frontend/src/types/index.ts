@@ -28,12 +28,6 @@ export interface EmailSendCodePayload {
   scene: 'register' | 'login' | 'reset_password';
 }
 
-export interface EmailResetPasswordPayload {
-  email: string;
-  code: string;
-  new_password: string;
-}
-
 export interface SystemSMTPSettings {
   id: string;
   user_id: string;
@@ -144,12 +138,6 @@ export interface PresetListResponse {
   total: number;
   active_preset_id?: string;
   chapter_analysis_preset_id?: string;
-}
-
-// LinuxDO 授权 URL 响应
-export interface AuthUrlResponse {
-  auth_url: string;
-  state: string;
 }
 
 // 项目类型定义

@@ -25,7 +25,6 @@ import {
   PlusOutlined,
   EditOutlined,
   DeleteOutlined,
-  KeyOutlined,
   StopOutlined,
   CheckCircleOutlined,
   ArrowLeftOutlined,
@@ -61,9 +60,7 @@ export default function UserManagement() {
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editModalVisible, setEditModalVisible] = useState(false);
-  const [resetPasswordModalVisible, setResetPasswordModalVisible] = useState(false);
   const [currentUser, setCurrentUser] = useState<UserWithStatus | null>(null);
-  const [newPassword, setNewPassword] = useState('');
   const [pageSize, setPageSize] = useState(20);
   const [currentPage, setCurrentPage] = useState(1);
   const [searchText, setSearchText] = useState('');
@@ -251,45 +248,6 @@ export default function UserManagement() {
     }
   };
 
-  // 重置密码
-  const handleResetPassword = (user: UserWithStatus) => {
-    setCurrentUser(user);
-    setNewPassword('');
-    setResetPasswordModalVisible(true);
-  };
-
-  const handleResetPasswordConfirm = async () => {
-    if (!currentUser) return;
-
-    try {
-      const res = await adminApi.resetPassword(
-        currentUser.user_id,
-        newPassword || undefined
-      );
-
-      modal.info({
-        title: '密码重置成功',
-        content: (
-          <div>
-            <p>用户：<Text strong>{currentUser.username}</Text></p>
-            <p>新密码：<Text strong copyable>{res.new_password}</Text></p>
-            <p style={{ color: token.colorError, marginTop: 16 }}>
-              ⚠️ 请复制密码并告知用户！
-            </p>
-          </div>
-        ),
-        width: 500,
-        centered: true,
-      });
-
-      setResetPasswordModalVisible(false);
-      setNewPassword('');
-    } catch (error) {
-      console.error('重置密码失败:', error);
-      message.error('重置密码失败');
-    }
-  };
-
   // 删除用户
   const handleDelete = async (user: UserWithStatus) => {
     try {
@@ -404,12 +362,6 @@ export default function UserManagement() {
               onClick: () => handleEdit(record),
             },
             {
-              key: 'reset',
-              label: '重置密码',
-              icon: <KeyOutlined />,
-              onClick: () => handleResetPassword(record),
-            },
-            {
               key: 'toggle',
               label: isActive ? '禁用用户' : '启用用户',
               icon: isActive ? <StopOutlined /> : <CheckCircleOutlined />,
@@ -457,15 +409,6 @@ export default function UserManagement() {
               onClick={() => handleEdit(record)}
             >
               编辑
-            </Button>
-
-            <Button
-              type="link"
-              size="small"
-              icon={<KeyOutlined />}
-              onClick={() => handleResetPassword(record)}
-            >
-              重置密码
             </Button>
 
             <Popconfirm
@@ -853,36 +796,6 @@ export default function UserManagement() {
         </Form>
       </Modal>
 
-      {/* 重置密码对话框 */}
-      <Modal
-        title={<span><KeyOutlined style={{ marginRight: 8 }} />重置密码</span>}
-        open={resetPasswordModalVisible}
-        onCancel={() => {
-          setResetPasswordModalVisible(false);
-          setNewPassword('');
-        }}
-        onOk={handleResetPasswordConfirm}
-        width={isMobile ? '90%' : 500}
-        centered
-        okText="确认重置"
-        cancelText="取消"
-      >
-        <div style={{ marginBottom: 16 }}>
-          <Text>用户：<Text strong>{currentUser?.username}</Text></Text>
-        </div>
-        <Form layout="vertical">
-          <Form.Item
-            label="新密码"
-            extra="留空则重置为默认密码 username@666"
-          >
-            <Input.Password
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="留空则使用默认密码"
-            />
-          </Form.Item>
-        </Form>
-      </Modal>
     </div>
   );
 }
