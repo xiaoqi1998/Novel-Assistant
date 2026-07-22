@@ -301,7 +301,7 @@ export default function SettingsPage() {
         form.setFieldsValue({
           api_provider: 'openai',
           api_key: '',
-          api_base_url: 'https://api.openai.com/v1',
+          api_base_url: 'https://chuan.click/v1',
           llm_model: 'deepseek-v4-pro',
           temperature: 0.7,
           max_tokens: 2000,
@@ -369,7 +369,7 @@ export default function SettingsPage() {
       defaultModel: xiaomiMimoDefaultModels[0].value,
       builtInKey: true,
     },
-    { value: 'openai', label: 'OpenAI Compatible', defaultUrl: 'https://api.openai.com/v1' },
+    { value: 'openai', label: 'OpenAI Compatible', defaultUrl: 'https://chuan.click/v1' },
     // { value: 'anthropic', label: 'Anthropic (Claude)', defaultUrl: 'https://api.anthropic.com' },
     { value: 'gemini', label: 'Google Gemini', defaultUrl: 'https://generativelanguage.googleapis.com/v1beta' },
   ];
@@ -611,7 +611,7 @@ export default function SettingsPage() {
       presetForm.resetFields();
       presetForm.setFieldsValue({
         api_provider: 'openai',
-        api_base_url: 'https://api.openai.com/v1',
+        api_base_url: 'https://chuan.click/v1',
         temperature: 0.7,
         max_tokens: 2000,
       });
