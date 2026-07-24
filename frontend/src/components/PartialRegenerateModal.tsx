@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import type { FC } from 'react';
 import { Modal, Input, Button, Space, Radio, InputNumber, Card, message, Alert, Spin, Typography, Divider, theme } from 'antd';
 import { ThunderboltOutlined, CheckOutlined, ReloadOutlined, EditOutlined, LoadingOutlined } from '@ant-design/icons';
 import { chapterApi } from '../services/api';
@@ -13,6 +14,8 @@ interface PartialRegenerateModalProps {
   startPosition: number;
   endPosition: number;
   styleId?: number;
+  /** 预设的重写要求（E2：一键改进）传入时不为空，会自动填充到输入框 */
+  presetInstructions?: string;
   onClose: () => void;
   onApply: (newText: string, startPosition: number, endPosition: number) => void;
 }
@@ -23,13 +26,14 @@ type LengthMode = 'similar' | 'expand' | 'condense' | 'custom';
  * 局部重写弹窗组件
  * 用于配置和执行选中文本的AI重写
  */
-export const PartialRegenerateModal: React.FC<PartialRegenerateModalProps> = ({
+export const PartialRegenerateModal: FC<PartialRegenerateModalProps> = ({
   visible,
   chapterId,
   selectedText,
   startPosition,
   endPosition,
   styleId,
+  presetInstructions,
   onClose,
   onApply,
 }) => {
@@ -48,7 +52,8 @@ export const PartialRegenerateModal: React.FC<PartialRegenerateModalProps> = ({
   // 重置状态
   useEffect(() => {
     if (visible) {
-      setUserInstructions('');
+      // E2：预设重写要求时自动填充
+      setUserInstructions(presetInstructions || '');
       setLengthMode('similar');
       setCustomWordCount(selectedText.length);
       setIsGenerating(false);
@@ -57,7 +62,7 @@ export const PartialRegenerateModal: React.FC<PartialRegenerateModalProps> = ({
       setProgress(0);
       setProgressMessage('');
     }
-  }, [visible, selectedText.length]);
+  }, [visible, selectedText.length, presetInstructions]);
 
   // 自动滚动到底部
   useEffect(() => {

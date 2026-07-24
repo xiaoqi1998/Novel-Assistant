@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Button, List, Modal, Form, Input, message, Empty, Space, Popconfirm, Card, Select, Radio, Tag, InputNumber, Tabs, Pagination, theme } from 'antd';
 import { EditOutlined, DeleteOutlined, ThunderboltOutlined, BranchesOutlined, AppstoreAddOutlined, CheckCircleOutlined, ExclamationCircleOutlined, PlusOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
@@ -476,6 +476,13 @@ export default function Outline() {
             });
             
             message.success('大纲更新成功');
+            // E4：大纲-章节联动提醒
+            if (outline.has_chapters) {
+              message.warning({
+                content: '大纲已更新，关联的已生成章节可能与新大纲不一致，建议重新生成受影响的章节',
+                duration: 6,
+              });
+            }
           } catch (error) {
             console.error('更新失败:', error);
             message.error('更新失败');

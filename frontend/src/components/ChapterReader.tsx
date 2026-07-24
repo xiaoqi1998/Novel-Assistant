@@ -3,7 +3,7 @@
  * 提供沉浸式阅读体验，支持主题切换、字体调节、翻页导航等功能
  */
 import { useState, useEffect, useCallback } from 'react';
-import { Modal, Button, Slider, Radio, Space, Typography, Spin, message, theme, Rate, Input } from 'antd';
+import { Modal, Button, Slider, Radio, Space, Typography, Spin, message, theme, Rate, Input, Collapse, Tag, Empty, Tooltip } from 'antd';
 import {
   LeftOutlined,
   RightOutlined,
@@ -11,7 +11,11 @@ import {
   FontSizeOutlined,
   BgColorsOutlined,
   CloseOutlined,
-  ColumnHeightOutlined
+  ColumnHeightOutlined,
+  CheckCircleOutlined,
+  LineChartOutlined,
+  BulbOutlined,
+  ArrowRightOutlined
 } from '@ant-design/icons';
 import type { Chapter } from '../types';
 
@@ -102,6 +106,23 @@ export default function ChapterReader({
   const [feedbackSaving, setFeedbackSaving] = useState(false);
   const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
 
+  // 反馈影响追踪（E3）
+  type ImpactScores = {
+    pacing?: number;
+    engagement?: number;
+    coherence?: number;
+    overall?: number;
+  };
+  type ImpactData = {
+    nextChapterNumber: number | null;
+    nextChapterTitle: string | null;
+    feedbackKeywords: string[];
+    nextChapterScores: ImpactScores | null;
+    nextChapterSuggestions: string[];
+  };
+  const [impactLoading, setImpactLoading] = useState(false);
+  const [impactData, setImpactData] = useState<ImpactData | null>(null);
+
   // 响应式检测
   useEffect(() => {
     const handleResize = () => {
@@ -184,12 +205,84 @@ export default function ChapterReader({
       const data = await res.json();
       message.success(data.message || '反馈已保存');
       setFeedbackSubmitted(true);
+      // 反馈提交成功后加载影响数据
+      loadImpactData();
     } catch (err) {
       message.error('提交反馈失败');
     } finally {
       setFeedbackSaving(false);
     }
   }, [chapter?.id, userRating, userFeedback]);
+
+  // 加载反馈影响追踪数据（E3）
+  // 策略：当用户已反馈且存在下一章时，拉取下一章的 PLOT_ANALYSIS 评分
+  // 关键词从用户反馈中简单抽取（低分维度 + 反馈文本前若干字）
+  const loadImpactData = useCallback(async () => {
+    if (!chapter?.id || !navigation?.next) {
+      setImpactData(null);
+      return;
+    }
+    setImpactLoading(true);
+    try {
+      const nextId = navigation.next.id;
+      const [analysisRes] = await Promise.all([
+        fetch(`/api/chapters/${nextId}/analysis/status`).then(r => r.ok ? r.json() : null).catch(() => null),
+      ]);
+      let nextScores: ImpactScores | null = null;
+      let nextSuggestions: string[] = [];
+      if (analysisRes && analysisRes.status === 'completed' && analysisRes.analysis_id) {
+        // 拉取分析详情
+        const detailRes = await fetch(`/api/chapters/${nextId}/analysis`).then(r => r.ok ? r.json() : null).catch(() => null);
+        if (detailRes?.analysis) {
+          const a = detailRes.analysis;
+          nextScores = {
+            pacing: a.pacing_score,
+            engagement: a.engagement_score,
+            coherence: a.coherence_score,
+            overall: a.overall_quality_score,
+          };
+          nextSuggestions = Array.isArray(a.suggestions) ? a.suggestions.slice(0, 3) : [];
+        }
+      }
+      // 提取反馈关键词：低分维度 + 反馈文本片段
+      const keywords: string[] = [];
+      if (userRating !== null && userRating < 4) {
+        if (userRating <= 2) keywords.push('整体质量待改进');
+        if (userFeedback) {
+          // 简单分词：按标点切分取前 2 段
+          const segments = userFeedback.split(/[，。！？;；,.\n\s]+/).filter(s => s.trim().length >= 2).slice(0, 2);
+          keywords.push(...segments);
+        }
+      } else if (userRating !== null && userRating >= 4) {
+        keywords.push('整体质量良好');
+        if (userFeedback) {
+          const segments = userFeedback.split(/[，。！？;；,.\n\s]+/).filter(s => s.trim().length >= 2).slice(0, 2);
+          keywords.push(...segments);
+        }
+      }
+      setImpactData({
+        nextChapterNumber: navigation.next.chapter_number,
+        nextChapterTitle: navigation.next.title,
+        feedbackKeywords: keywords,
+        nextChapterScores: nextScores,
+        nextChapterSuggestions: nextSuggestions,
+      });
+    } catch (err) {
+      console.warn('加载反馈影响数据失败:', err);
+      setImpactData(null);
+    } finally {
+      setImpactLoading(false);
+    }
+  }, [chapter?.id, navigation?.next, userRating, userFeedback]);
+
+  // 当导航信息和反馈状态变化时加载影响数据
+  useEffect(() => {
+    if (feedbackSubmitted && navigation?.next) {
+      loadImpactData();
+    } else {
+      setImpactData(null);
+    }
+  }, [feedbackSubmitted, navigation?.next?.id, loadImpactData]);
 
   // 上一章
   const handlePrevious = useCallback(() => {
@@ -526,6 +619,129 @@ export default function ChapterReader({
                 {feedbackSubmitted ? '更新反馈' : '提交反馈'}
               </Button>
             </div>
+
+            {/* E3：反馈影响追踪面板（仅在已提交反馈且存在下一章时显示） */}
+            {feedbackSubmitted && navigation?.next && (
+              <div style={{ marginTop: 16 }}>
+                <Collapse
+                  size="small"
+                  items={[{
+                    key: 'impact',
+                    label: (
+                      <Space size={6}>
+                        <LineChartOutlined style={{ color: token.colorPrimary }} />
+                        <span style={{ fontSize: 13, fontWeight: 500 }}>
+                          反馈影响追踪
+                        </span>
+                        {impactData?.nextChapterScores?.overall != null && (
+                          <Tag color="blue" style={{ fontSize: 11, marginInline: 0 }}>
+                            下一章评分 {impactData.nextChapterScores.overall.toFixed(1)}/10
+                          </Tag>
+                        )}
+                      </Space>
+                    ),
+                    children: (
+                      <Spin spinning={impactLoading} size="small">
+                        {impactData ? (
+                          <div style={{ fontSize: 12, lineHeight: 1.7 }}>
+                            {/* 反馈关键词 */}
+                            <div style={{ marginBottom: 10 }}>
+                              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                                你的反馈关键词：
+                              </Typography.Text>
+                              <div style={{ marginTop: 4, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                {impactData.feedbackKeywords.length > 0 ? (
+                                  impactData.feedbackKeywords.map((kw, i) => (
+                                    <Tag key={i} color="purple" style={{ fontSize: 11 }}>{kw}</Tag>
+                                  ))
+                                ) : (
+                                  <Typography.Text type="secondary" style={{ fontSize: 11 }}>（无文字反馈，仅评分）</Typography.Text>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* 注入下一章的提示 */}
+                            <div style={{
+                              padding: '8px 10px',
+                              background: `color-mix(in srgb, ${token.colorSuccessBg} 60%, transparent)`,
+                              borderRadius: 6,
+                              marginBottom: 10,
+                              border: `1px solid ${token.colorSuccessBorder}`,
+                            }}>
+                              <Typography.Text style={{ fontSize: 12, color: token.colorSuccess }}>
+                                <CheckCircleOutlined /> 已注入下一章生成上下文
+                              </Typography.Text>
+                              <div style={{ marginTop: 4, fontSize: 11, color: token.colorTextSecondary }}>
+                                下一章生成时 AI 会看到：
+                                <span style={{ color: token.colorText, fontWeight: 500 }}>
+                                  &ldquo;上一章评分 {userRating ?? '-'}/5{userFeedback ? `，反馈：${userFeedback.slice(0, 40)}${userFeedback.length > 40 ? '...' : ''}` : ''}&rdquo;
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* 下一章评分对比 */}
+                            {impactData.nextChapterScores ? (
+                              <div>
+                                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                                  下一章《{impactData.nextChapterTitle}》的 AI 自评：
+                                </Typography.Text>
+                                <div style={{
+                                  display: 'grid',
+                                  gridTemplateColumns: 'repeat(4, 1fr)',
+                                  gap: 8,
+                                  marginTop: 6,
+                                }}>
+                                  {[
+                                    { label: '节奏', value: impactData.nextChapterScores.pacing },
+                                    { label: '吸引力', value: impactData.nextChapterScores.engagement },
+                                    { label: '连贯', value: impactData.nextChapterScores.coherence },
+                                    { label: '整体', value: impactData.nextChapterScores.overall },
+                                  ].map((item) => (
+                                    <div key={item.label} style={{
+                                      textAlign: 'center',
+                                      padding: '4px 0',
+                                      background: `color-mix(in srgb, ${token.colorPrimaryBg} 50%, transparent)`,
+                                      borderRadius: 4,
+                                    }}>
+                                      <div style={{ fontSize: 10, color: token.colorTextSecondary }}>{item.label}</div>
+                                      <div style={{ fontSize: 14, fontWeight: 600, color: token.colorPrimary }}>
+                                        {item.value != null ? item.value.toFixed(1) : '-'}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                                {impactData.nextChapterSuggestions.length > 0 && (
+                                  <div style={{ marginTop: 8 }}>
+                                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                                      <BulbOutlined /> 下一章改进建议：
+                                    </Typography.Text>
+                                    <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
+                                      {impactData.nextChapterSuggestions.map((s, i) => (
+                                        <li key={i} style={{ fontSize: 11, color: token.colorTextSecondary, marginBottom: 2 }}>
+                                          {s}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div style={{ fontSize: 11, color: token.colorTextSecondary }}>
+                                <Tooltip title="下一章尚未完成 PLOT_ANALYSIS 分析，生成后可查看对比">
+                                  <span><ArrowRightOutlined /> 下一章尚未分析，暂无评分对比数据</span>
+                                </Tooltip>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无影响数据" />
+                        )}
+                      </Spin>
+                    ),
+                  }]}
+                />
+              </div>
+            )}
           </div>
         )}
       </div>

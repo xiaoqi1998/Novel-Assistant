@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, theme } from 'antd';
-import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined } from '@ant-design/icons';
+import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined, BulbOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { eventBus } from '../store/eventBus';
 import { useChapterSync } from '../store/hooks';
@@ -14,6 +14,8 @@ import { SSELoadingOverlay } from '../components/SSELoadingOverlay';
 import ChapterReader from '../components/ChapterReader';
 import PartialRegenerateToolbar from '../components/PartialRegenerateToolbar';
 import PartialRegenerateModal from '../components/PartialRegenerateModal';
+import WritingAssistantPanel from '../components/WritingAssistantPanel';
+import InspirationButton from '../components/InspirationButton';
 
 const { TextArea } = Input;
 
@@ -97,6 +99,14 @@ export default function Chapters() {
   const [selectionStartPosition, setSelectionStartPosition] = useState(0);
   const [selectionEndPosition, setSelectionEndPosition] = useState(0);
   const [partialRegenerateModalVisible, setPartialRegenerateModalVisible] = useState(false);
+  // E2：预设改进要求（从工具栏一键改进按钮传入）
+  const [presetInstructions, setPresetInstructions] = useState<string | undefined>(undefined);
+
+  // E1：写作助手侧边栏显示状态（桌面端默认展开）
+  const [assistantVisible, setAssistantVisible] = useState(!isMobile);
+
+  // E4：大纲-章节联动提醒（可关闭）
+  const [syncAlertVisible, setSyncAlertVisible] = useState(true);
 
   // 单章节生成进度状态
   const [singleChapterProgress, setSingleChapterProgress] = useState(0);
@@ -1944,8 +1954,38 @@ export default function Chapters() {
 
   // 打开局部重写弹窗
   const handleOpenPartialRegenerate = () => {
+    setPresetInstructions(undefined);
     setPartialRegenerateToolbarVisible(false);
     setPartialRegenerateModalVisible(true);
+  };
+
+  // E2：一键改进 - 预设改进要求后打开局部重写弹窗
+  const handleQuickImprove = (instructions: string) => {
+    setPresetInstructions(instructions);
+    setPartialRegenerateToolbarVisible(false);
+    setPartialRegenerateModalVisible(true);
+  };
+
+  // E5：插入灵感文本到编辑器光标位置
+  const handleInsertInspiration = (text: string) => {
+    const textarea = contentTextAreaRef.current?.resizableTextArea?.textArea;
+    if (!textarea) {
+      // 降级：追加到末尾
+      const current = editorForm.getFieldValue('content') || '';
+      editorForm.setFieldsValue({ content: current + text });
+      return;
+    }
+    const start = textarea.selectionStart ?? (editorForm.getFieldValue('content') || '').length;
+    const end = textarea.selectionEnd ?? start;
+    const current = editorForm.getFieldValue('content') || '';
+    const newContent = current.substring(0, start) + text + current.substring(end);
+    editorForm.setFieldsValue({ content: newContent });
+    // 移动光标到插入文本之后
+    setTimeout(() => {
+      const newPos = start + text.length;
+      textarea.focus();
+      textarea.setSelectionRange(newPos, newPos);
+    }, 0);
   };
 
   // 应用局部重写结果
@@ -2052,6 +2092,23 @@ export default function Chapters() {
         </Space>
       </div>
 
+
+      {/* E4：大纲-章节联动提醒（仅在有已生成章节时显示，可关闭） */}
+      {syncAlertVisible && chapters.some(c => c.content && c.content.trim()) && (
+        <Alert
+          type="info"
+          showIcon
+          closable
+          onClose={() => setSyncAlertVisible(false)}
+          style={{ marginBottom: 12 }}
+          message="大纲与章节同步提醒"
+          description={
+            <span style={{ fontSize: 12 }}>
+              如果你修改过大纲，已生成章节的内容可能与新大纲不一致。建议在「大纲」页面更新后，回到此处重新生成受影响的章节。
+            </span>
+          }
+        />
+      )}
 
       <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
         {chapters.length === 0 ? (
@@ -2551,7 +2608,23 @@ export default function Chapters() {
       </Modal>
 
       <Modal
-        title="编辑章节内容"
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingRight: 40 }}>
+            <span>编辑章节内容</span>
+            {!isMobile && editingId && (
+              <Button
+                type="text"
+                size="small"
+                icon={<BulbOutlined />}
+                onClick={() => setAssistantVisible(!assistantVisible)}
+                title={assistantVisible ? '隐藏写作助手' : '显示写作助手'}
+                style={{ color: assistantVisible ? token.colorPrimary : token.colorTextSecondary }}
+              >
+                {assistantVisible ? '隐藏助手' : '写作助手'}
+              </Button>
+            )}
+          </div>
+        }
         open={isEditorOpen}
         onCancel={() => {
           if (isGenerating) {
@@ -2763,24 +2836,55 @@ export default function Chapters() {
             </Form.Item>
           </div>
 
-          <Form.Item label="章节内容" name="content">
-            <TextArea
-              ref={contentTextAreaRef}
-              rows={isMobile ? 12 : 20}
-              placeholder="开始写作..."
-              style={{ fontFamily: 'monospace', fontSize: isMobile ? 12 : 14 }}
-              disabled={isGenerating}
-            />
-          </Form.Item>
+          {/* E5：卡壳灵感浮动按钮（编辑器打开且非生成中时显示） */}
+          {isEditorOpen && !isGenerating && (
+            <InspirationButton onInsertText={handleInsertInspiration} />
+          )}
 
-          {/* 局部重写浮动工具栏 */}
-          <div data-partial-regenerate-toolbar>
-            <PartialRegenerateToolbar
-              visible={partialRegenerateToolbarVisible && !isGenerating}
-              position={partialRegenerateToolbarPosition}
-              selectedText={selectedTextForRegenerate}
-              onRegenerate={handleOpenPartialRegenerate}
-            />
+          {/* E1：章节内容 + 写作助手侧边栏（左右布局） */}
+          <div style={{
+            display: 'flex',
+            gap: 8,
+            alignItems: 'flex-start',
+            position: 'relative',
+          }}>
+            {/* 左侧：编辑区 */}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Form.Item label="章节内容" name="content">
+                <TextArea
+                  ref={contentTextAreaRef}
+                  rows={isMobile ? 12 : 20}
+                  placeholder="开始写作..."
+                  style={{ fontFamily: 'monospace', fontSize: isMobile ? 12 : 14 }}
+                  disabled={isGenerating}
+                />
+              </Form.Item>
+            </div>
+
+            {/* 右侧：写作助手侧边栏（仅桌面端且可见时显示） */}
+            {!isMobile && assistantVisible && editingId && (
+              <div style={{
+                width: 280,
+                flexShrink: 0,
+                height: 'calc(100vh - 320px)',
+                minHeight: 400,
+                position: 'sticky',
+                top: 0,
+              }}>
+                <WritingAssistantPanel chapterId={editingId} />
+              </div>
+            )}
+
+            {/* 局部重写浮动工具栏 */}
+            <div data-partial-regenerate-toolbar>
+              <PartialRegenerateToolbar
+                visible={partialRegenerateToolbarVisible && !isGenerating}
+                position={partialRegenerateToolbarPosition}
+                selectedText={selectedTextForRegenerate}
+                onRegenerate={handleOpenPartialRegenerate}
+                onQuickImprove={handleQuickImprove}
+              />
+            </div>
           </div>
 
           <Form.Item>
@@ -3126,7 +3230,8 @@ export default function Chapters() {
           startPosition={selectionStartPosition}
           endPosition={selectionEndPosition}
           styleId={selectedStyleId}
-          onClose={() => setPartialRegenerateModalVisible(false)}
+          presetInstructions={presetInstructions}
+          onClose={() => { setPartialRegenerateModalVisible(false); setPresetInstructions(undefined); }}
           onApply={handleApplyPartialRegenerate}
         />
       )}
