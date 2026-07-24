@@ -43,7 +43,9 @@ from app.schemas.chapter import (
     BatchGenerateResponse,
     BatchGenerateStatusResponse,
     ExpansionPlanUpdate,
-    PartialRegenerateRequest
+    PartialRegenerateRequest,
+    ChapterFeedbackRequest,
+    ChapterFeedbackResponse
 )
 from app.schemas.regeneration import (
     ChapterRegenerateRequest,
@@ -53,7 +55,10 @@ from app.schemas.regeneration import (
 from app.services.ai_service import AIService
 from app.services.prompt_service import prompt_service, PromptService, WritingStyleManager
 from app.services.plot_analyzer import PlotAnalyzer
-from app.services.memory_service import memory_service
+try:
+    from app.services.memory_service import memory_service
+except ImportError:
+    memory_service = None
 from app.services.foreshadow_service import foreshadow_service
 from app.services.chapter_regenerator import ChapterRegenerator
 from app.services.newapi_errors import QuotaExhaustedError
@@ -1620,8 +1625,15 @@ async def generate_chapter_content_stream(
                             chapter_number=current_chapter.chapter_number,
                             chapter_title=current_chapter.title,
                             chapter_outline=chapter_context.chapter_outline,
+                            emotion_curve=chapter_context.emotion_curve or '',
+                            ending_hook_type=chapter_context.ending_hook_type or '',
+                            ending_hook_description=chapter_context.ending_hook_description or '',
+                            ending_hook_target_emotion=chapter_context.ending_hook_target_emotion or '',
+                            scene_beats=chapter_context.scene_beats or '',
+                            information_rhythm=chapter_context.information_rhythm or '',
                             target_word_count=target_word_count,
                             genre=project.genre or '未设定',
+                            **PromptService.get_genre_strategy(project.genre),
                             narrative_perspective=chapter_perspective,
                             previous_chapter_content=chapter_context.continuation_point,
                             previous_chapter_summary=chapter_context.previous_chapter_summary or '（无上一章摘要）',
@@ -1642,8 +1654,15 @@ async def generate_chapter_content_stream(
                             chapter_number=current_chapter.chapter_number,
                             chapter_title=current_chapter.title,
                             chapter_outline=chapter_context.chapter_outline,
+                            emotion_curve=chapter_context.emotion_curve or '',
+                            ending_hook_type=chapter_context.ending_hook_type or '',
+                            ending_hook_description=chapter_context.ending_hook_description or '',
+                            ending_hook_target_emotion=chapter_context.ending_hook_target_emotion or '',
+                            scene_beats=chapter_context.scene_beats or '',
+                            information_rhythm=chapter_context.information_rhythm or '',
                             target_word_count=target_word_count,
                             genre=project.genre or '未设定',
+                            **PromptService.get_genre_strategy(project.genre),
                             narrative_perspective=chapter_perspective,
                             characters_info=chapter_context.chapter_characters or '暂无角色信息',
                             chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
@@ -1669,9 +1688,16 @@ async def generate_chapter_content_stream(
                             chapter_number=current_chapter.chapter_number,
                             chapter_title=current_chapter.title,
                             chapter_outline=chapter_context.chapter_outline,
+                            emotion_curve=chapter_context.emotion_curve or '',
+                            ending_hook_type=chapter_context.ending_hook_type or '',
+                            ending_hook_description=chapter_context.ending_hook_description or '',
+                            ending_hook_target_emotion=chapter_context.ending_hook_target_emotion or '',
+                            scene_beats=chapter_context.scene_beats or '',
+                            information_rhythm=chapter_context.information_rhythm or '',
                             target_word_count=target_word_count,
                             continuation_point=chapter_context.continuation_point,
                             genre=project.genre or '未设定',
+                            **PromptService.get_genre_strategy(project.genre),
                             narrative_perspective=chapter_perspective,
                             characters_info=chapter_context.chapter_characters or '暂无角色信息',
                             chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
@@ -1692,8 +1718,15 @@ async def generate_chapter_content_stream(
                             chapter_number=current_chapter.chapter_number,
                             chapter_title=current_chapter.title,
                             chapter_outline=chapter_context.chapter_outline,
+                            emotion_curve=chapter_context.emotion_curve or '',
+                            ending_hook_type=chapter_context.ending_hook_type or '',
+                            ending_hook_description=chapter_context.ending_hook_description or '',
+                            ending_hook_target_emotion=chapter_context.ending_hook_target_emotion or '',
+                            scene_beats=chapter_context.scene_beats or '',
+                            information_rhythm=chapter_context.information_rhythm or '',
                             target_word_count=target_word_count,
                             genre=project.genre or '未设定',
+                            **PromptService.get_genre_strategy(project.genre),
                             narrative_perspective=chapter_perspective,
                             characters_info=chapter_context.chapter_characters or '暂无角色信息',
                             chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
@@ -2192,8 +2225,15 @@ async def _run_chapter_generation_bg(
                 chapter_number=current_chapter.chapter_number,
                 chapter_title=current_chapter.title,
                 chapter_outline=chapter_context.chapter_outline,
+                emotion_curve=chapter_context.emotion_curve or '',
+                ending_hook_type=chapter_context.ending_hook_type or '',
+                ending_hook_description=chapter_context.ending_hook_description or '',
+                ending_hook_target_emotion=chapter_context.ending_hook_target_emotion or '',
+                scene_beats=chapter_context.scene_beats or '',
+                information_rhythm=chapter_context.information_rhythm or '',
                 target_word_count=target_word_count,
                 genre=project.genre or '未设定',
+                **PromptService.get_genre_strategy(project.genre),
                 narrative_perspective=chapter_perspective,
                 previous_chapter_content=chapter_context.continuation_point,
                 previous_chapter_summary=chapter_context.previous_chapter_summary or '（无上一章摘要）',
@@ -2212,8 +2252,15 @@ async def _run_chapter_generation_bg(
                 chapter_number=current_chapter.chapter_number,
                 chapter_title=current_chapter.title,
                 chapter_outline=chapter_context.chapter_outline,
+                emotion_curve=chapter_context.emotion_curve or '',
+                ending_hook_type=chapter_context.ending_hook_type or '',
+                ending_hook_description=chapter_context.ending_hook_description or '',
+                ending_hook_target_emotion=chapter_context.ending_hook_target_emotion or '',
+                scene_beats=chapter_context.scene_beats or '',
+                information_rhythm=chapter_context.information_rhythm or '',
                 target_word_count=target_word_count,
                 genre=project.genre or '未设定',
+                **PromptService.get_genre_strategy(project.genre),
                 narrative_perspective=chapter_perspective,
                 characters_info=chapter_context.chapter_characters or '暂无角色信息',
                 chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
@@ -2230,9 +2277,16 @@ async def _run_chapter_generation_bg(
                 chapter_number=current_chapter.chapter_number,
                 chapter_title=current_chapter.title,
                 chapter_outline=chapter_context.chapter_outline,
+                emotion_curve=chapter_context.emotion_curve or '',
+                ending_hook_type=chapter_context.ending_hook_type or '',
+                ending_hook_description=chapter_context.ending_hook_description or '',
+                ending_hook_target_emotion=chapter_context.ending_hook_target_emotion or '',
+                scene_beats=chapter_context.scene_beats or '',
+                information_rhythm=chapter_context.information_rhythm or '',
                 target_word_count=target_word_count,
                 continuation_point=chapter_context.continuation_point,
                 genre=project.genre or '未设定',
+                **PromptService.get_genre_strategy(project.genre),
                 narrative_perspective=chapter_perspective,
                 characters_info=chapter_context.chapter_characters or '暂无角色信息',
                 chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
@@ -2250,8 +2304,15 @@ async def _run_chapter_generation_bg(
                 chapter_number=current_chapter.chapter_number,
                 chapter_title=current_chapter.title,
                 chapter_outline=chapter_context.chapter_outline,
+                emotion_curve=chapter_context.emotion_curve or '',
+                ending_hook_type=chapter_context.ending_hook_type or '',
+                ending_hook_description=chapter_context.ending_hook_description or '',
+                ending_hook_target_emotion=chapter_context.ending_hook_target_emotion or '',
+                scene_beats=chapter_context.scene_beats or '',
+                information_rhythm=chapter_context.information_rhythm or '',
                 target_word_count=target_word_count,
                 genre=project.genre or '未设定',
+                **PromptService.get_genre_strategy(project.genre),
                 narrative_perspective=chapter_perspective,
                 characters_info=chapter_context.chapter_characters or '暂无角色信息',
                 chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
@@ -2683,8 +2744,15 @@ async def _run_chapter_generation_bg(
                 chapter_number=current_chapter.chapter_number,
                 chapter_title=current_chapter.title,
                 chapter_outline=chapter_context.chapter_outline,
+                emotion_curve=chapter_context.emotion_curve or '',
+                ending_hook_type=chapter_context.ending_hook_type or '',
+                ending_hook_description=chapter_context.ending_hook_description or '',
+                ending_hook_target_emotion=chapter_context.ending_hook_target_emotion or '',
+                scene_beats=chapter_context.scene_beats or '',
+                information_rhythm=chapter_context.information_rhythm or '',
                 target_word_count=target_word_count,
                 genre=project.genre or '未设定',
+                **PromptService.get_genre_strategy(project.genre),
                 narrative_perspective=chapter_perspective,
                 previous_chapter_content=chapter_context.continuation_point,
                 previous_chapter_summary=chapter_context.previous_chapter_summary or '（无上一章摘要）',
@@ -2703,8 +2771,15 @@ async def _run_chapter_generation_bg(
                 chapter_number=current_chapter.chapter_number,
                 chapter_title=current_chapter.title,
                 chapter_outline=chapter_context.chapter_outline,
+                emotion_curve=chapter_context.emotion_curve or '',
+                ending_hook_type=chapter_context.ending_hook_type or '',
+                ending_hook_description=chapter_context.ending_hook_description or '',
+                ending_hook_target_emotion=chapter_context.ending_hook_target_emotion or '',
+                scene_beats=chapter_context.scene_beats or '',
+                information_rhythm=chapter_context.information_rhythm or '',
                 target_word_count=target_word_count,
                 genre=project.genre or '未设定',
+                **PromptService.get_genre_strategy(project.genre),
                 narrative_perspective=chapter_perspective,
                 characters_info=chapter_context.chapter_characters or '暂无角色信息',
                 chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
@@ -2721,9 +2796,16 @@ async def _run_chapter_generation_bg(
                 chapter_number=current_chapter.chapter_number,
                 chapter_title=current_chapter.title,
                 chapter_outline=chapter_context.chapter_outline,
+                emotion_curve=chapter_context.emotion_curve or '',
+                ending_hook_type=chapter_context.ending_hook_type or '',
+                ending_hook_description=chapter_context.ending_hook_description or '',
+                ending_hook_target_emotion=chapter_context.ending_hook_target_emotion or '',
+                scene_beats=chapter_context.scene_beats or '',
+                information_rhythm=chapter_context.information_rhythm or '',
                 target_word_count=target_word_count,
                 continuation_point=chapter_context.continuation_point,
                 genre=project.genre or '未设定',
+                **PromptService.get_genre_strategy(project.genre),
                 narrative_perspective=chapter_perspective,
                 characters_info=chapter_context.chapter_characters or '暂无角色信息',
                 chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
@@ -2741,8 +2823,15 @@ async def _run_chapter_generation_bg(
                 chapter_number=current_chapter.chapter_number,
                 chapter_title=current_chapter.title,
                 chapter_outline=chapter_context.chapter_outline,
+                emotion_curve=chapter_context.emotion_curve or '',
+                ending_hook_type=chapter_context.ending_hook_type or '',
+                ending_hook_description=chapter_context.ending_hook_description or '',
+                ending_hook_target_emotion=chapter_context.ending_hook_target_emotion or '',
+                scene_beats=chapter_context.scene_beats or '',
+                information_rhythm=chapter_context.information_rhythm or '',
                 target_word_count=target_word_count,
                 genre=project.genre or '未设定',
+                **PromptService.get_genre_strategy(project.genre),
                 narrative_perspective=chapter_perspective,
                 characters_info=chapter_context.chapter_characters or '暂无角色信息',
                 chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
@@ -4264,8 +4353,15 @@ async def generate_single_chapter_for_batch(
                 chapter_number=chapter.chapter_number,
                 chapter_title=chapter.title,
                 chapter_outline=chapter_context.chapter_outline,
+                emotion_curve=chapter_context.emotion_curve or '',
+                ending_hook_type=chapter_context.ending_hook_type or '',
+                ending_hook_description=chapter_context.ending_hook_description or '',
+                ending_hook_target_emotion=chapter_context.ending_hook_target_emotion or '',
+                scene_beats=chapter_context.scene_beats or '',
+                information_rhythm=chapter_context.information_rhythm or '',
                 target_word_count=target_word_count,
                 genre=project.genre or '未设定',
+                **PromptService.get_genre_strategy(project.genre),
                 narrative_perspective=temp_narrative_perspective or project.narrative_perspective or '第三人称',
                 previous_chapter_content=chapter_context.continuation_point,
                 characters_info=chapter_context.chapter_characters or '暂无角色信息',
@@ -4285,8 +4381,15 @@ async def generate_single_chapter_for_batch(
                 chapter_number=chapter.chapter_number,
                 chapter_title=chapter.title,
                 chapter_outline=chapter_context.chapter_outline,
+                emotion_curve=chapter_context.emotion_curve or '',
+                ending_hook_type=chapter_context.ending_hook_type or '',
+                ending_hook_description=chapter_context.ending_hook_description or '',
+                ending_hook_target_emotion=chapter_context.ending_hook_target_emotion or '',
+                scene_beats=chapter_context.scene_beats or '',
+                information_rhythm=chapter_context.information_rhythm or '',
                 target_word_count=target_word_count,
                 genre=project.genre or '未设定',
+                **PromptService.get_genre_strategy(project.genre),
                 narrative_perspective=temp_narrative_perspective or project.narrative_perspective or '第三人称',
                 characters_info=chapter_context.chapter_characters or '暂无角色信息',
                 chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
@@ -4312,9 +4415,16 @@ async def generate_single_chapter_for_batch(
                 chapter_number=chapter.chapter_number,
                 chapter_title=chapter.title,
                 chapter_outline=chapter_context.chapter_outline,
+                emotion_curve=chapter_context.emotion_curve or '',
+                ending_hook_type=chapter_context.ending_hook_type or '',
+                ending_hook_description=chapter_context.ending_hook_description or '',
+                ending_hook_target_emotion=chapter_context.ending_hook_target_emotion or '',
+                scene_beats=chapter_context.scene_beats or '',
+                information_rhythm=chapter_context.information_rhythm or '',
                 target_word_count=target_word_count,
                 continuation_point=chapter_context.continuation_point,
                 genre=project.genre or '未设定',
+                **PromptService.get_genre_strategy(project.genre),
                 narrative_perspective=temp_narrative_perspective or project.narrative_perspective or '第三人称',
                 characters_info=chapter_context.chapter_characters or '暂无角色信息',
                 chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
@@ -4333,8 +4443,15 @@ async def generate_single_chapter_for_batch(
                 chapter_number=chapter.chapter_number,
                 chapter_title=chapter.title,
                 chapter_outline=chapter_context.chapter_outline,
+                emotion_curve=chapter_context.emotion_curve or '',
+                ending_hook_type=chapter_context.ending_hook_type or '',
+                ending_hook_description=chapter_context.ending_hook_description or '',
+                ending_hook_target_emotion=chapter_context.ending_hook_target_emotion or '',
+                scene_beats=chapter_context.scene_beats or '',
+                information_rhythm=chapter_context.information_rhythm or '',
                 target_word_count=target_word_count,
                 genre=project.genre or '未设定',
+                **PromptService.get_genre_strategy(project.genre),
                 narrative_perspective=temp_narrative_perspective or project.narrative_perspective or '第三人称',
                 characters_info=chapter_context.chapter_characters or '暂无角色信息',
                 chapter_careers=chapter_context.chapter_careers or '暂无职业信息',
@@ -5293,7 +5410,7 @@ async def apply_partial_regenerate(
     await db.refresh(chapter)
     
     logger.info(f"✅ 局部重写已应用: 章节{chapter_id}, {old_word_count}字 -> {new_word_count}字")
-    
+
     return {
         "success": True,
         "chapter_id": chapter_id,
@@ -5301,4 +5418,86 @@ async def apply_partial_regenerate(
         "old_word_count": old_word_count,
         "message": "局部重写已应用"
     }
+
+
+# ==================== 章节用户反馈（质量反馈闭环） ====================
+
+@router.post("/{chapter_id}/feedback", response_model=ChapterFeedbackResponse, summary="用户对章节评分反馈")
+async def submit_chapter_feedback(
+    chapter_id: str,
+    feedback_data: ChapterFeedbackRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    用户对章节评分反馈
+
+    - 评分 1-5 分
+    - 可选文字反馈
+    - 反馈将注入到下一章生成的 quality_feedback，引导 AI 改进
+    - 用户评分 ≤2 分时，下一章生成会加强警告
+    """
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    # 验证章节存在
+    chapter_result = await db.execute(
+        select(Chapter).where(Chapter.id == chapter_id)
+    )
+    chapter = chapter_result.scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+
+    # 验证用户权限
+    await verify_project_access(chapter.project_id, user_id, db)
+
+    # 更新反馈字段
+    chapter.user_rating = feedback_data.rating
+    chapter.user_feedback = feedback_data.feedback
+    chapter.user_feedback_at = datetime.now()
+
+    await db.commit()
+    await db.refresh(chapter)
+
+    logger.info(f"✅ 章节反馈已保存: 章节{chapter_id}, 评分{feedback_data.rating}/5")
+
+    return ChapterFeedbackResponse(
+        chapter_id=chapter_id,
+        user_rating=chapter.user_rating,
+        user_feedback=chapter.user_feedback,
+        user_feedback_at=chapter.user_feedback_at,
+        message="反馈已保存，将在下一章生成时引导 AI 改进"
+    )
+
+
+@router.get("/{chapter_id}/feedback", response_model=ChapterFeedbackResponse, summary="获取章节用户反馈")
+async def get_chapter_feedback(
+    chapter_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """获取章节的用户评分和反馈"""
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    # 验证章节存在
+    chapter_result = await db.execute(
+        select(Chapter).where(Chapter.id == chapter_id)
+    )
+    chapter = chapter_result.scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+
+    # 验证用户权限
+    await verify_project_access(chapter.project_id, user_id, db)
+
+    return ChapterFeedbackResponse(
+        chapter_id=chapter_id,
+        user_rating=chapter.user_rating,
+        user_feedback=chapter.user_feedback,
+        user_feedback_at=chapter.user_feedback_at,
+        message="获取成功"
+    )
 

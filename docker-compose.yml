@@ -31,14 +31,14 @@ services:
       - DEBUG=${DEBUG:-false}
 
       # 数据库配置（复用 1Panel PostgreSQL）
-      - DATABASE_URL=postgresql+asyncpg://user_HWMSKX:Xiaoqi1234.@1Panel-postgresql-QDKg:5432/mumuai_novel
+      - DATABASE_URL=${DATABASE_URL}
 
       # 数据库连接信息（用于 entrypoint.sh）
-      - DB_HOST=1Panel-postgresql-QDKg
-      - DB_PORT=5432
-      - POSTGRES_USER=user_HWMSKX
-      - POSTGRES_PASSWORD=Xiaoqi1234.
-      - POSTGRES_DB=mumuai_novel
+      - DB_HOST=${DB_HOST:-postgres}
+      - DB_PORT=${DB_PORT:-5432}
+      - POSTGRES_USER=${POSTGRES_USER:-mobinovel}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-123456}
+      - POSTGRES_DB=${POSTGRES_DB:-mobinovel}
 
       # PostgreSQL 连接池配置
       - DATABASE_POOL_SIZE=30

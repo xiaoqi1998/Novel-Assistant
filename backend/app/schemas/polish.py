@@ -10,6 +10,7 @@ class PolishRequest(BaseModel):
     provider: Optional[str] = Field(None, description="AI提供商")
     model: Optional[str] = Field(None, description="AI模型")
     temperature: Optional[float] = Field(0.8, description="温度参数，建议0.7-0.9")
+    writing_style_id: Optional[int] = Field(None, description="写作风格ID，不提供则查询用户默认风格（style_type='custom' 且 order_index 最小）")
 
 
 class PolishResponse(BaseModel):

@@ -66,8 +66,6 @@ def normalize_provider(provider: Optional[str]) -> Optional[str]:
         return None
 
     normalized = provider.lower().strip()
-    if normalized == "mumu":
-        return "openai"
     return normalized
 
 

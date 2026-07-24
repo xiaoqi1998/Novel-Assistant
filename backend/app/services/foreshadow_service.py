@@ -10,7 +10,10 @@ from app.models.foreshadow import Foreshadow
 from app.models.chapter import Chapter
 from app.models.memory import PlotAnalysis, StoryMemory
 from app.models.project import Project
-from app.services.memory_service import memory_service
+try:
+    from app.services.memory_service import memory_service
+except ImportError:
+    memory_service = None
 from app.schemas.foreshadow import (
     ForeshadowCreate, ForeshadowUpdate,
     PlantForeshadowRequest, ResolveForeshadowRequest,

@@ -1,6 +1,12 @@
 """向量记忆服务 - 基于ChromaDB实现长期记忆和语义检索"""
-import chromadb
-from sentence_transformers import SentenceTransformer
+try:
+    import chromadb
+    from sentence_transformers import SentenceTransformer
+    MEMORY_AVAILABLE = True
+except ImportError:
+    MEMORY_AVAILABLE = False
+    chromadb = None
+    SentenceTransformer = None
 from typing import List, Dict, Any, Optional
 import json
 from datetime import datetime
@@ -81,6 +87,13 @@ class MemoryService:
     def __init__(self):
         """初始化ChromaDB和Embedding模型"""
         if self._initialized:
+            return
+
+        if not MEMORY_AVAILABLE:
+            self.client = None
+            self.embedding_model = None
+            self._initialized = True
+            logger.warning("⚠️ 向量记忆功能不可用（缺少 chromadb/sentence-transformers），如需启用请运行: pip install chromadb sentence-transformers")
             return
 
         try:

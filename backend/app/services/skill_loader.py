@@ -286,6 +286,11 @@ def get_skill_by_trigger(user_input: str) -> Optional[Dict]:
         "去味": ["SKILL_STORY_DESLOP"],
         "太ai了": ["SKILL_STORY_DESLOP"],
         "润色": ["SKILL_STORY_DESLOP"],
+        "文风学习": ["SKILL_STORY_STYLE_EXTRACT"],
+        "学习我的文风": ["SKILL_STORY_STYLE_EXTRACT"],
+        "提取文风": ["SKILL_STORY_STYLE_EXTRACT"],
+        "分析我的写作风格": ["SKILL_STORY_STYLE_EXTRACT"],
+        "我的写作风格": ["SKILL_STORY_STYLE_EXTRACT"],
         "浏览器": ["SKILL_BROWSER_CDP"],
     }
     

@@ -1,16 +1,17 @@
 #!/bin/bash
 # =============================================================================
-# MuMuAINovel Termux 一键安装脚本
+# Mobinovel Termux 一键安装脚本
 # =============================================================================
-# 
+#
 
 set -e
 
 # ── 路径配置 ──────────────────────────────────────────────────────────────────
-INSTALL_DIR="$HOME/MuMuAINovel"                    # 项目安装目录
-DATA_DIR="$HOME/mumuainovel/data"                   # 数据库目录
-LOG_DIR="$HOME/mumuainovel/logs"                    # 日志目录
-REPO="https://ghfast.top/https://github.com/xiamuceer-j/MuMuAINovel.git"  # GitHub 镜像
+INSTALL_DIR="$HOME/Mobinovel"                    # 项目安装目录
+DATA_DIR="$HOME/mobinovel/data"                   # 数据库目录
+LOG_DIR="$HOME/mobinovel/logs"                    # 日志目录
+# REPO="https://github.com/your-name/Mobinovel.git"  # 请替换为你的仓库地址
+REPO=""  # 默认空，使用前请取消上一行注释并填写实际仓库地址
 
 # ── 输出函数 ──────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -53,7 +54,7 @@ MIRROR="-i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun
 # =============================================================================
 echo ""
 echo -e "${CYAN}╔══════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║   📚 MuMuAINovel Termux 一键安装         ║${NC}"
+echo -e "${CYAN}║   📚 Mobinovel Termux 一键安装            ║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════╝${NC}"
 echo ""
 
@@ -118,7 +119,7 @@ LOG="$TMPDIR/patch.log"
 # ── 4a. 修补 memory_service.py ──────────────────────────────────────────────
 python3 << 'PYEOF'
 import os
-f = os.path.expanduser("~/MuMuAINovel/backend/app/services/memory_service.py")
+f = os.path.expanduser("~/Mobinovel/backend/app/services/memory_service.py")
 with open(f) as fh:
     c = fh.read()
 
@@ -150,11 +151,11 @@ python3 << 'PYEOF'
 import os
 home = os.path.expanduser("~")
 files = [
-    f"{home}/MuMuAINovel/backend/app/api/chapters.py",
-    f"{home}/MuMuAINovel/backend/app/api/memories.py",
-    f"{home}/MuMuAINovel/backend/app/api/outlines.py",
-    f"{home}/MuMuAINovel/backend/app/api/projects.py",
-    f"{home}/MuMuAINovel/backend/app/services/foreshadow_service.py",
+    f"{home}/Mobinovel/backend/app/api/chapters.py",
+    f"{home}/Mobinovel/backend/app/api/memories.py",
+    f"{home}/Mobinovel/backend/app/api/outlines.py",
+    f"{home}/Mobinovel/backend/app/api/projects.py",
+    f"{home}/Mobinovel/backend/app/services/foreshadow_service.py",
 ]
 old = 'from app.services.memory_service import memory_service'
 new = 'try:\n    from app.services.memory_service import memory_service\nexcept ImportError:\n    memory_service = None'
@@ -173,20 +174,20 @@ PYEOF
 mkdir -p "$DATA_DIR" "$LOG_DIR"
 if [ ! -f "$BACKEND/.env" ]; then
 cat > "$BACKEND/.env" << 'ENVEOF'
-# MuMuAINovel Termux 配置
-APP_NAME=MuMuAINovel
+# Mobinovel Termux 配置
+APP_NAME=Mobinovel
 APP_HOST=0.0.0.0
 APP_PORT=8000
 DEBUG=false
 TZ=Asia/Shanghai
 
 # SQLite 数据库（替代 PostgreSQL）
-DATABASE_URL=sqlite+aiosqlite:///data/data/com.termux/files/home/mumuainovel/data/ai_story.db
+DATABASE_URL=sqlite+aiosqlite:///data/data/com.termux/files/home/mobinovel/data/ai_story.db
 
 # 日志
 LOG_LEVEL=INFO
 LOG_TO_FILE=true
-LOG_FILE_PATH=/data/data/com.termux/files/home/mumuainovel/logs/app.log
+LOG_FILE_PATH=/data/data/com.termux/files/home/mobinovel/logs/app.log
 LOG_MAX_BYTES=10485760
 LOG_BACKUP_COUNT=5
 
@@ -295,12 +296,12 @@ grep -E "built in" "$LOG" | sed 's/^/    /'
 
 # =============================================================================
 # 步骤 9: 创建启动脚本
-# 说明: 生成 ~/mumuainovel-start.sh，支持前台/后台运行
+# 说明: 生成 ~/mobinovel-start.sh，支持前台/后台运行
 # =============================================================================
 step 9 $TOTAL "创建启动脚本"
-cat > "$HOME/mumuainovel-start.sh" << STARTEOF
+cat > "$HOME/mobinovel-start.sh" << STARTEOF
 #!/bin/bash
-# MuMuAINovel Termux 启动脚本
+# Mobinovel Termux 启动脚本
 set -e
 
 BACKEND="$BACKEND"
@@ -313,44 +314,44 @@ export DATABASE_URL="sqlite+aiosqlite:///\$DATA_DIR/ai_story.db"
 cd "\$BACKEND"
 
 if [ "\$1" = "--bg" ]; then
-    echo "🚀 后台启动 MuMuAINovel (端口 8000)..."
+    echo "🚀 后台启动 Mobinovel (端口 8000)..."
     nohup "\$PYTHON" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 \\
         > "\$LOG_DIR/app.log" 2>&1 &
-    echo \$! > "$HOME/mumuainovel.pid"
+    echo \$! > "$HOME/mobinovel.pid"
     sleep 2
-    if kill -0 \$(cat "$HOME/mumuainovel.pid") 2>/dev/null; then
-        echo "✅ 已启动, PID: \$(cat $HOME/mumuainovel.pid)"
+    if kill -0 \$(cat "$HOME/mobinovel.pid") 2>/dev/null; then
+        echo "✅ 已启动, PID: \$(cat $HOME/mobinovel.pid)"
     else
         echo "❌ 启动失败，查看日志: \$LOG_DIR/app.log"
         exit 1
     fi
 else
-    echo "🚀 启动 MuMuAINovel (端口 8000, Ctrl+C 停止)..."
+    echo "🚀 启动 Mobinovel (端口 8000, Ctrl+C 停止)..."
     exec "\$PYTHON" -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 fi
 STARTEOF
-chmod +x "$HOME/mumuainovel-start.sh"
-info "启动脚本已创建: ~/mumuainovel-start.sh"
+chmod +x "$HOME/mobinovel-start.sh"
+info "启动脚本已创建: ~/mobinovel-start.sh"
 
 # =============================================================================
 # 安装完成
 # =============================================================================
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║  🎉 MuMuAINovel 安装完成！                   ║${NC}"
+echo -e "${GREEN}║  🎉 Mobinovel 安装完成！                      ║${NC}"
 echo -e "${GREEN}╠══════════════════════════════════════════════╣${NC}"
 echo -e "${GREEN}║                                              ║${NC}"
 echo -e "${GREEN}║  前台运行（Ctrl+C 停止）:                     ║${NC}"
-echo -e "${GREEN}║    bash ~/mumuainovel-start.sh                ║${NC}"
+echo -e "${GREEN}║    bash ~/mobinovel-start.sh                  ║${NC}"
 echo -e "${GREEN}║                                              ║${NC}"
 echo -e "${GREEN}║  后台运行:                                    ║${NC}"
-echo -e "${GREEN}║    bash ~/mumuainovel-start.sh --bg           ║${NC}"
+echo -e "${GREEN}║    bash ~/mobinovel-start.sh --bg             ║${NC}"
 echo -e "${GREEN}║                                              ║${NC}"
 echo -e "${GREEN}║  停止后台:                                    ║${NC}"
-echo -e "${GREEN}║    kill \$(cat ~/mumuainovel.pid)              ║${NC}"
+echo -e "${GREEN}║    kill \$(cat ~/mobinovel.pid)                ║${NC}"
 echo -e "${GREEN}║                                              ║${NC}"
 echo -e "${GREEN}║  查看日志:                                    ║${NC}"
-echo -e "${GREEN}║    tail -f ~/mumuainovel/logs/app.log         ║${NC}"
+echo -e "${GREEN}║    tail -f ~/mobinovel/logs/app.log           ║${NC}"
 echo -e "${GREEN}║                                              ║${NC}"
 echo -e "${GREEN}║  🌐 访问: http://127.0.0.1:8000               ║${NC}"
 echo -e "${GREEN}║  🔑 账号: admin / admin123                    ║${NC}"

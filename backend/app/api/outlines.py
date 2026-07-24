@@ -29,10 +29,12 @@ from app.schemas.outline import (
 from app.services.ai_service import AIService
 from app.services.json_helper import loads_json
 from app.services.prompt_service import prompt_service, PromptService
-from app.services.memory_service import memory_service
+try:
+    from app.services.memory_service import memory_service
+except ImportError:
+    memory_service = None
 from app.services.plot_expansion_service import PlotExpansionService
 from app.services.foreshadow_service import foreshadow_service
-from app.services.memory_service import memory_service
 from app.logger import get_logger
 from app.api.settings import get_user_ai_service
 from app.utils.sse_response import SSEResponse, create_sse_response, WizardProgressTracker

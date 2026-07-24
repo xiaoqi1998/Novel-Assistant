@@ -16,8 +16,8 @@ echo "================================================"
 
 DB_HOST="${DB_HOST:-postgres}"
 DB_PORT="${DB_PORT:-5432}"
-DB_USER="${POSTGRES_USER:-mumuai}"
-DB_NAME="${POSTGRES_DB:-mumuai_novel}"
+DB_USER="${POSTGRES_USER:-mobinovel}"
+DB_NAME="${POSTGRES_DB:-mobinovel}"
 
 echo "⏳ 等待数据库启动..."
 MAX_RETRIES=30

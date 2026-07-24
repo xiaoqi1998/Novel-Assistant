@@ -257,3 +257,18 @@ class PartialRegenerateResponse(BaseModel):
     word_count: int = Field(..., description="新内容字数")
     original_word_count: int = Field(..., description="原文字数")
     message: str = Field("重写成功", description="响应消息")
+
+
+class ChapterFeedbackRequest(BaseModel):
+    """章节用户反馈请求"""
+    rating: int = Field(..., description="用户对本章的评分 1-5", ge=1, le=5)
+    feedback: Optional[str] = Field(None, description="用户对本章的文字反馈", max_length=1000)
+
+
+class ChapterFeedbackResponse(BaseModel):
+    """章节用户反馈响应"""
+    chapter_id: str
+    user_rating: Optional[int] = None
+    user_feedback: Optional[str] = None
+    user_feedback_at: Optional[datetime] = None
+    message: str = "反馈已保存"

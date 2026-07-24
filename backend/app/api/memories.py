@@ -7,7 +7,10 @@ from app.database import get_db
 from app.models.memory import StoryMemory, PlotAnalysis
 from app.models.chapter import Chapter
 from app.models.project import Project
-from app.services.memory_service import memory_service
+try:
+    from app.services.memory_service import memory_service
+except ImportError:
+    memory_service = None
 from app.services.plot_analyzer import get_plot_analyzer
 from app.services.foreshadow_service import foreshadow_service
 from app.services.ai_service import create_user_ai_service

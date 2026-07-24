@@ -545,7 +545,11 @@ class PlotAnalyzer:
             lines.append(f"  整体质量: {scores.get('overall', 'N/A')}/10")
             lines.append(f"  节奏把控: {scores.get('pacing', 'N/A')}/10")
             lines.append(f"  吸引力: {scores.get('engagement', 'N/A')}/10")
-            lines.append(f"  连贯性: {scores.get('coherence', 'N/A')}/10\n")
+            lines.append(f"  连贯性: {scores.get('coherence', 'N/A')}/10")
+            lines.append(f"  情绪曲线遵循度: {scores.get('emotion_curve_adherence', 'N/A')}/10")
+            lines.append(f"  章末追读钩子强度: {scores.get('ending_hook_strength', 'N/A')}/10")
+            lines.append(f"  对话质量: {scores.get('dialogue_quality', 'N/A')}/10")
+            lines.append(f"  悬念维持度: {scores.get('suspense_maintenance', 'N/A')}/10\n")
             
             # 剧情阶段
             lines.append(f"【剧情阶段】{analysis.get('plot_stage', '未知')}\n")

@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import ProjectList from './pages/ProjectList';
 import ProjectWizardNew from './pages/ProjectWizardNew';
 import Inspiration from './pages/Inspiration';
+import HelpPage from './pages/HelpPage';
 import ProjectDetail from './pages/ProjectDetail';
 import WorldSetting from './pages/WorldSetting';
 import Outline from './pages/Outline';
@@ -50,6 +51,7 @@ function App() {
           <Route element={<ProtectedRoute><RootLayout /></ProtectedRoute>}>
             <Route path="/" element={<ProjectList />} />
             <Route path="/projects" element={<ProjectList />} />
+            <Route path="/help" element={<HelpPage />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/account" element={<AccountCenter />} />
             <Route path="/system-settings" element={<SystemSettings />} />

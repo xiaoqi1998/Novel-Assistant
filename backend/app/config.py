@@ -14,18 +14,19 @@ DATA_DIR.mkdir(exist_ok=True)
 # 配置模块使用标准logging（在logger.py初始化之前）
 config_logger = logging.getLogger(__name__)
 
-# 数据库配置：PostgreSQL
-# 从环境变量获取数据库URL
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://mumuai:password@localhost:5432/mumuai_novel")
+# 数据库配置：默认 SQLite（无需安装 PostgreSQL，适合本地/小白部署）
+# 生产环境或需多用户并发时，请在 .env 中设置 DATABASE_URL 指向 PostgreSQL
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///data/ai_story.db")
 
-config_logger.debug(f"数据库类型: PostgreSQL")
+_db_type = "PostgreSQL" if "postgresql" in DATABASE_URL.lower() else "SQLite"
+config_logger.debug(f"数据库类型: {_db_type}")
 config_logger.debug(f"数据库URL: {DATABASE_URL}")
 
 class Settings(BaseSettings):
     """应用配置"""
     
     # 应用配置
-    app_name: str = "MuMuAINovel"
+    app_name: str = "墨笔"
     app_version: str = "1.0.0"
     app_host: str = "0.0.0.0"
     app_port: int = 8000
@@ -124,7 +125,7 @@ class Settings(BaseSettings):
     SMTP_USE_TLS: bool = False
     SMTP_USE_SSL: bool = True
     SMTP_FROM_EMAIL: Optional[str] = None
-    SMTP_FROM_NAME: str = "MuMuAINovel"
+    SMTP_FROM_NAME: str = "墨笔"
     EMAIL_AUTH_ENABLED: bool = True
     EMAIL_REGISTER_ENABLED: bool = True
     EMAIL_VERIFICATION_CODE_TTL_MINUTES: int = 10
@@ -132,7 +133,7 @@ class Settings(BaseSettings):
     
     # 提示词工坊配置
     WORKSHOP_MODE: str = "client"  # client: 本地部署实例, server: 云端中央服务器
-    WORKSHOP_CLOUD_URL: str = "https://mumuverse.space:1566"  # 云端服务地址
+    WORKSHOP_CLOUD_URL: str = ""  # 云端服务地址
     WORKSHOP_API_TIMEOUT: int = 30  # 云端API请求超时时间（秒）
 
     # ==================== New API 中转网关配置 ====================

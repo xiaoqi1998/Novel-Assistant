@@ -101,6 +101,178 @@ def _select_memories_with_fallback(
     return fallback
 
 
+def _extract_emotion_curve(chapter: Chapter) -> Optional[str]:
+    """
+    从 expansion_plan 提取情绪曲线并格式化为可注入提示词的文本。
+
+    expansion_plan 中的 emotion_curve 结构：
+        {"start": "平静", "middle": "紧张", "peak": "震撼",
+         "end": "释然", "transitions": ["平静→紧张：触发事件", ...]}
+
+    Returns:
+        格式化后的情绪曲线文本；无 emotion_curve 或解析失败时返回 None（向后兼容）
+    """
+    if not chapter.expansion_plan:
+        return None
+    try:
+        plan = json.loads(chapter.expansion_plan)
+        curve = plan.get('emotion_curve')
+        if not curve or not isinstance(curve, dict):
+            return None
+        lines = []
+        start = curve.get('start')
+        middle = curve.get('middle')
+        peak = curve.get('peak')
+        end = curve.get('end')
+        transitions = curve.get('transitions') or []
+        if start:
+            lines.append(f"起始情绪：{start}")
+        if middle:
+            lines.append(f"中段情绪：{middle}")
+        if peak:
+            lines.append(f"情绪高潮：{peak}")
+        if end:
+            lines.append(f"结尾情绪：{end}")
+        if transitions:
+            lines.append("情绪转折：")
+            for t in transitions:
+                if t and str(t).strip():
+                    lines.append(f"  - {t}")
+        return "\n".join(lines) if lines else None
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+
+
+def _extract_ending_hook(chapter: Chapter) -> tuple:
+    """
+    从 expansion_plan 提取章末追读钩子信息。
+
+    expansion_plan 中的 ending_hook 结构：
+        {"type": "突然揭示", "description": "结尾留什么悬念", "target_emotion": "好奇"}
+
+    Returns:
+        (type, description, target_emotion) 三元组；无 ending_hook 或解析失败时返回 (None, None, None)（向后兼容）
+    """
+    if not chapter.expansion_plan:
+        return (None, None, None)
+    try:
+        plan = json.loads(chapter.expansion_plan)
+        hook = plan.get('ending_hook')
+        if not hook or not isinstance(hook, dict):
+            return (None, None, None)
+        hook_type = hook.get('type')
+        hook_desc = hook.get('description')
+        hook_emotion = hook.get('target_emotion')
+        # 至少要有类型，否则视为无规划
+        if not hook_type or not str(hook_type).strip():
+            return (None, None, None)
+        return (
+            str(hook_type).strip(),
+            str(hook_desc).strip() if hook_desc else '',
+            str(hook_emotion).strip() if hook_emotion else '',
+        )
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return (None, None, None)
+
+
+def _extract_scene_beats(chapter: Chapter) -> Optional[str]:
+    """
+    从 expansion_plan 提取场景节拍并格式化为可注入提示词的文本。
+
+    expansion_plan 中的 scene_beats 结构：
+        [{"scene_order": 1, "location": "...", "entry_hook": "...",
+          "scene_goal": "...", "conflict": "...", "turning_point": "...",
+          "exit_hook": "...", "estimated_words": 800}, ...]
+
+    Returns:
+        格式化后的场景节拍文本；无 scene_beats 或解析失败时返回 None（向后兼容）
+    """
+    if not chapter.expansion_plan:
+        return None
+    try:
+        plan = json.loads(chapter.expansion_plan)
+        beats = plan.get('scene_beats')
+        if not beats or not isinstance(beats, list) or len(beats) == 0:
+            return None
+        lines = []
+        for beat in beats:
+            if not isinstance(beat, dict):
+                continue
+            order = beat.get('scene_order', '?')
+            location = beat.get('location', '未指定')
+            entry_hook = beat.get('entry_hook', '')
+            goal = beat.get('scene_goal', '')
+            conflict = beat.get('conflict', '')
+            turning = beat.get('turning_point', '')
+            exit_hook = beat.get('exit_hook', '')
+            est_words = beat.get('estimated_words', '')
+            lines.append(f"【场景{order}】地点：{location}（约{est_words}字）")
+            if entry_hook:
+                lines.append(f"  进入方式：{entry_hook}")
+            if goal:
+                lines.append(f"  场景目标：{goal}")
+            if conflict:
+                lines.append(f"  冲突/障碍：{conflict}")
+            if turning:
+                lines.append(f"  转折/高潮：{turning}")
+            if exit_hook:
+                lines.append(f"  退出方式：{exit_hook}")
+            lines.append("")
+        return "\n".join(lines).strip() if lines else None
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+
+
+def _extract_information_rhythm(chapter: Chapter) -> Optional[str]:
+    """
+    从 expansion_plan 提取信息释放节奏并格式化为可注入提示词的文本。
+
+    expansion_plan 中的 information_rhythm 结构：
+        {"reveal_points": [{"timing": "...", "info": "...", "method": "..."}],
+         "withhold_points": [{"info": "...", "reason": "...", "hint_type": "..."}],
+         "information_gap": "..."}
+
+    Returns:
+        格式化后的信息节奏文本；无 information_rhythm 或解析失败时返回 None（向后兼容）
+    """
+    if not chapter.expansion_plan:
+        return None
+    try:
+        plan = json.loads(chapter.expansion_plan)
+        rhythm = plan.get('information_rhythm')
+        if not rhythm or not isinstance(rhythm, dict):
+            return None
+        lines = []
+        reveal_points = rhythm.get('reveal_points') or []
+        withhold_points = rhythm.get('withhold_points') or []
+        info_gap = rhythm.get('information_gap')
+        if reveal_points:
+            lines.append("【信息释放点】")
+            for rp in reveal_points:
+                if not isinstance(rp, dict):
+                    continue
+                timing = rp.get('timing', '未指定')
+                info = rp.get('info', '')
+                method = rp.get('method', '')
+                lines.append(f"  {timing}：透露"{info}"（方式：{method}）")
+            lines.append("")
+        if withhold_points:
+            lines.append("【信息保留点 - 本章绝对不可透露】")
+            for wp in withhold_points:
+                if not isinstance(wp, dict):
+                    continue
+                info = wp.get('info', '')
+                reason = wp.get('reason', '')
+                hint = wp.get('hint_type', '')
+                lines.append(f"  保留"{info}"（原因：{reason}；暗示方式：{hint}）")
+            lines.append("")
+        if info_gap:
+            lines.append(f"【信息差设计】{info_gap}")
+        return "\n".join(lines).strip() if lines else None
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+
+
 @dataclass
 class OneToManyContext:
     """
@@ -114,6 +286,12 @@ class OneToManyContext:
     
     # === P0-核心信息 ===
     chapter_outline: str = ""           # 本章大纲（从expansion_plan构建）
+    emotion_curve: Optional[str] = None  # 本章情绪曲线（从expansion_plan提取，格式化文本）
+    ending_hook_type: Optional[str] = None  # 章末追读钩子类型（从expansion_plan提取）
+    ending_hook_description: Optional[str] = None  # 章末追读钩子描述
+    ending_hook_target_emotion: Optional[str] = None  # 章末追读钩子目标情绪
+    scene_beats: Optional[str] = None  # 场景节拍规划（从expansion_plan提取，格式化文本）
+    information_rhythm: Optional[str] = None  # 信息释放节奏（从expansion_plan提取，格式化文本）
     recent_chapters_context: Optional[str] = None  # 最近10章expansion_plan摘要
     continuation_point: Optional[str] = None  # 衔接锚点（上一章完整正文）
     previous_chapter_summary: Optional[str] = None  # 上一章剧情摘要
@@ -148,7 +326,7 @@ class OneToManyContext:
     def get_total_context_length(self) -> int:
         """计算总上下文长度"""
         total = 0
-        for field_name in ['chapter_outline', 'recent_chapters_context', 'continuation_point',
+        for field_name in ['chapter_outline', 'emotion_curve', 'recent_chapters_context', 'continuation_point',
                           'chapter_characters', 'chapter_careers',
                           'relevant_memories', 'foreshadow_reminders',
                           'previous_chapter_summary', 'quality_feedback']:
@@ -171,6 +349,12 @@ class OneToOneContext:
     
     # === P0-核心信息 ===
     chapter_outline: str = ""           # 从outline.structure提取
+    emotion_curve: Optional[str] = None  # 本章情绪曲线（从expansion_plan提取，格式化文本）
+    ending_hook_type: Optional[str] = None  # 章末追读钩子类型（从expansion_plan提取）
+    ending_hook_description: Optional[str] = None  # 章末追读钩子描述
+    ending_hook_target_emotion: Optional[str] = None  # 章末追读钩子目标情绪
+    scene_beats: Optional[str] = None  # 场景节拍规划（从expansion_plan提取，格式化文本）
+    information_rhythm: Optional[str] = None  # 信息释放节奏（从expansion_plan提取，格式化文本）
     target_word_count: int = 3000
     min_word_count: int = 2500
     max_word_count: int = 4000
@@ -203,7 +387,7 @@ class OneToOneContext:
     def get_total_context_length(self) -> int:
         """计算总上下文长度"""
         total = 0
-        for field_name in ['chapter_outline', 'recent_chapters_context', 'continuation_point', 'previous_chapter_summary',
+        for field_name in ['chapter_outline', 'emotion_curve', 'recent_chapters_context', 'continuation_point', 'previous_chapter_summary',
                           'chapter_characters', 'chapter_careers', 'foreshadow_reminders',
                           'relevant_memories', 'quality_feedback']:
             value = getattr(self, field_name, None)
@@ -299,7 +483,27 @@ class OneToManyContextBuilder:
         
         # === P0-核心信息（始终构建）===
         context.chapter_outline = self._build_chapter_outline_1n(chapter, outline)
-        
+
+        # === P0-情绪曲线（从expansion_plan提取）===
+        context.emotion_curve = _extract_emotion_curve(chapter)
+        if context.emotion_curve:
+            logger.info(f"  ✅ 情绪曲线: {len(context.emotion_curve)}字符")
+
+        # === P0-章末追读钩子（从expansion_plan提取）===
+        context.ending_hook_type, context.ending_hook_description, context.ending_hook_target_emotion = _extract_ending_hook(chapter)
+        if context.ending_hook_type:
+            logger.info(f"  ✅ 章末追读钩子: type={context.ending_hook_type}")
+
+        # === P0-场景节拍（从expansion_plan提取）===
+        context.scene_beats = _extract_scene_beats(chapter)
+        if context.scene_beats:
+            logger.info(f"  ✅ 场景节拍: {len(context.scene_beats)}字符")
+
+        # === P0-信息释放节奏（从expansion_plan提取）===
+        context.information_rhythm = _extract_information_rhythm(chapter)
+        if context.information_rhythm:
+            logger.info(f"  ✅ 信息释放节奏: {len(context.information_rhythm)}字符")
+
         # === 最近10章expansion_plan摘要 ===
         if chapter_number > 1:
             context.recent_chapters_context = await self._build_recent_chapters_context(
@@ -837,7 +1041,7 @@ class OneToManyContextBuilder:
         chapter: Chapter,
         db: AsyncSession
     ) -> Optional[str]:
-        """构建上一章质量反馈（suggestions + 低分维度），用于软反馈闭环。"""
+        """构建上一章质量反馈（AI 评分 + 用户反馈），用于软反馈闭环。"""
         try:
             # 查询上一章
             prev_result = await db.execute(
@@ -851,54 +1055,74 @@ class OneToManyContextBuilder:
             if not prev_chapter:
                 return None
 
-            # 查询上一章的剧情分析记录
+            # 查询上一章的剧情分析记录（可选，用户反馈不依赖 AI 分析）
             analysis_result = await db.execute(
                 select(PlotAnalysis).where(PlotAnalysis.chapter_id == prev_chapter.id)
             )
             analysis = analysis_result.scalar_one_or_none()
-            if not analysis:
+
+            # 检查是否有用户反馈
+            has_user_feedback = (
+                prev_chapter.user_rating is not None
+                or (prev_chapter.user_feedback and prev_chapter.user_feedback.strip())
+            )
+
+            # 如果 AI 分析和用户反馈都不存在，返回 None
+            if not analysis and not has_user_feedback:
                 return None
 
-            # 提取评分
-            coherence = analysis.coherence_score or 0.0
-            engagement = analysis.engagement_score or 0.0
-            pacing = analysis.pacing_score or 0.0
-
-            # 识别低分维度（< 6.0）
-            low_dims = []
-            dim_labels = {
-                'coherence': ('连贯性', '注意情节衔接和逻辑一致性'),
-                'engagement': ('吸引力', '建议加强悬念和冲突'),
-                'pacing': ('节奏', '注意叙事节奏的快慢交替'),
-            }
-            scores = {'coherence': coherence, 'engagement': engagement, 'pacing': pacing}
-            for dim, score in scores.items():
-                if score < 6.0:
-                    label, advice = dim_labels[dim]
-                    low_dims.append(f"{label}({score:.1f}) — {advice}")
-
-            # 提取改进建议（取前3条）
-            suggestions = analysis.suggestions or []
-            if isinstance(suggestions, list):
-                suggestions = [s for s in suggestions if isinstance(s, str) and s.strip()][:3]
-            else:
-                suggestions = []
-
-            # 如果评分均 >= 6.0 且无 suggestions，返回 None
-            if not low_dims and not suggestions:
-                return None
-
-            # 格式化反馈文本
             lines = ["【上一章质量反馈 - 请避免同类问题】"]
-            lines.append(f"上一章评分: 连贯性 {coherence:.1f} | 吸引力 {engagement:.1f} | 节奏 {pacing:.1f}")
 
-            if low_dims:
-                lines.append(f"⚠️ 低分维度: {'; '.join(low_dims)}")
+            # === AI 评分反馈 ===
+            if analysis:
+                # 提取评分
+                coherence = analysis.coherence_score or 0.0
+                engagement = analysis.engagement_score or 0.0
+                pacing = analysis.pacing_score or 0.0
 
-            if suggestions:
-                lines.append("改进建议:")
-                for s in suggestions:
-                    lines.append(f"- {s}")
+                # 识别低分维度（< 6.0）
+                low_dims = []
+                dim_labels = {
+                    'coherence': ('连贯性', '注意情节衔接和逻辑一致性'),
+                    'engagement': ('吸引力', '建议加强悬念和冲突'),
+                    'pacing': ('节奏', '注意叙事节奏的快慢交替'),
+                }
+                scores = {'coherence': coherence, 'engagement': engagement, 'pacing': pacing}
+                for dim, score in scores.items():
+                    if score < 6.0:
+                        label, advice = dim_labels[dim]
+                        low_dims.append(f"{label}({score:.1f}) — {advice}")
+
+                # 提取改进建议（取前3条）
+                suggestions = analysis.suggestions or []
+                if isinstance(suggestions, list):
+                    suggestions = [s for s in suggestions if isinstance(s, str) and s.strip()][:3]
+                else:
+                    suggestions = []
+
+                lines.append(f"AI 评分: 连贯性 {coherence:.1f} | 吸引力 {engagement:.1f} | 节奏 {pacing:.1f}")
+
+                if low_dims:
+                    lines.append(f"⚠️ 低分维度: {'; '.join(low_dims)}")
+
+                if suggestions:
+                    lines.append("改进建议:")
+                    for s in suggestions:
+                        lines.append(f"- {s}")
+
+            # === 用户反馈（权重高于 AI 自评，因为用户反馈是真实体感） ===
+            if has_user_feedback:
+                lines.append("")
+                lines.append("【用户对上一章的反馈 - 重点关注】")
+                if prev_chapter.user_rating is not None:
+                    lines.append(f"用户评分: {prev_chapter.user_rating}/5")
+                    # 评分低于 3 分时加强警告
+                    if prev_chapter.user_rating <= 2:
+                        lines.append("⚠️ 用户明显不满意，本章务必避免同类问题")
+                    elif prev_chapter.user_rating <= 3:
+                        lines.append("⚠️ 用户不太满意，本章注意改进相关方面")
+                if prev_chapter.user_feedback and prev_chapter.user_feedback.strip():
+                    lines.append(f"用户原话: {prev_chapter.user_feedback.strip()}")
 
             return "\n".join(lines)
 
@@ -1271,6 +1495,26 @@ class OneToOneContextBuilder:
         # === P0-核心信息 ===
         context.chapter_outline = self._build_outline_from_structure(outline, chapter)
         logger.info(f"  ✅ P0-大纲信息: {len(context.chapter_outline)}字符")
+
+        # === P0-情绪曲线（从expansion_plan提取）===
+        context.emotion_curve = _extract_emotion_curve(chapter)
+        if context.emotion_curve:
+            logger.info(f"  ✅ 情绪曲线: {len(context.emotion_curve)}字符")
+
+        # === P0-章末追读钩子（从expansion_plan提取）===
+        context.ending_hook_type, context.ending_hook_description, context.ending_hook_target_emotion = _extract_ending_hook(chapter)
+        if context.ending_hook_type:
+            logger.info(f"  ✅ 章末追读钩子: type={context.ending_hook_type}")
+
+        # === P0-场景节拍（从expansion_plan提取）===
+        context.scene_beats = _extract_scene_beats(chapter)
+        if context.scene_beats:
+            logger.info(f"  ✅ 场景节拍: {len(context.scene_beats)}字符")
+
+        # === P0-信息释放节奏（从expansion_plan提取）===
+        context.information_rhythm = _extract_information_rhythm(chapter)
+        if context.information_rhythm:
+            logger.info(f"  ✅ 信息释放节奏: {len(context.information_rhythm)}字符")
         
         # === P1-重要信息 ===
         # 0. 最近N章剧情摘要窗口
@@ -1456,7 +1700,7 @@ class OneToOneContextBuilder:
         chapter: Chapter,
         db: AsyncSession
     ) -> Optional[str]:
-        """构建上一章质量反馈（suggestions + 低分维度），用于软反馈闭环。"""
+        """构建上一章质量反馈（AI 评分 + 用户反馈），用于软反馈闭环。"""
         try:
             prev_result = await db.execute(
                 select(Chapter)
@@ -1473,44 +1717,65 @@ class OneToOneContextBuilder:
                 select(PlotAnalysis).where(PlotAnalysis.chapter_id == prev_chapter.id)
             )
             analysis = analysis_result.scalar_one_or_none()
-            if not analysis:
-                return None
 
-            coherence = analysis.coherence_score or 0.0
-            engagement = analysis.engagement_score or 0.0
-            pacing = analysis.pacing_score or 0.0
+            # 检查是否有用户反馈
+            has_user_feedback = (
+                prev_chapter.user_rating is not None
+                or (prev_chapter.user_feedback and prev_chapter.user_feedback.strip())
+            )
 
-            low_dims = []
-            dim_labels = {
-                'coherence': ('连贯性', '注意情节衔接和逻辑一致性'),
-                'engagement': ('吸引力', '建议加强悬念和冲突'),
-                'pacing': ('节奏', '注意叙事节奏的快慢交替'),
-            }
-            scores = {'coherence': coherence, 'engagement': engagement, 'pacing': pacing}
-            for dim, score in scores.items():
-                if score < 6.0:
-                    label, advice = dim_labels[dim]
-                    low_dims.append(f"{label}({score:.1f}) — {advice}")
-
-            suggestions = analysis.suggestions or []
-            if isinstance(suggestions, list):
-                suggestions = [s for s in suggestions if isinstance(s, str) and s.strip()][:3]
-            else:
-                suggestions = []
-
-            if not low_dims and not suggestions:
+            # 如果 AI 分析和用户反馈都不存在，返回 None
+            if not analysis and not has_user_feedback:
                 return None
 
             lines = ["【上一章质量反馈 - 请避免同类问题】"]
-            lines.append(f"上一章评分: 连贯性 {coherence:.1f} | 吸引力 {engagement:.1f} | 节奏 {pacing:.1f}")
 
-            if low_dims:
-                lines.append(f"⚠️ 低分维度: {'; '.join(low_dims)}")
+            # === AI 评分反馈 ===
+            if analysis:
+                coherence = analysis.coherence_score or 0.0
+                engagement = analysis.engagement_score or 0.0
+                pacing = analysis.pacing_score or 0.0
 
-            if suggestions:
-                lines.append("改进建议:")
-                for s in suggestions:
-                    lines.append(f"- {s}")
+                low_dims = []
+                dim_labels = {
+                    'coherence': ('连贯性', '注意情节衔接和逻辑一致性'),
+                    'engagement': ('吸引力', '建议加强悬念和冲突'),
+                    'pacing': ('节奏', '注意叙事节奏的快慢交替'),
+                }
+                scores = {'coherence': coherence, 'engagement': engagement, 'pacing': pacing}
+                for dim, score in scores.items():
+                    if score < 6.0:
+                        label, advice = dim_labels[dim]
+                        low_dims.append(f"{label}({score:.1f}) — {advice}")
+
+                suggestions = analysis.suggestions or []
+                if isinstance(suggestions, list):
+                    suggestions = [s for s in suggestions if isinstance(s, str) and s.strip()][:3]
+                else:
+                    suggestions = []
+
+                lines.append(f"AI 评分: 连贯性 {coherence:.1f} | 吸引力 {engagement:.1f} | 节奏 {pacing:.1f}")
+
+                if low_dims:
+                    lines.append(f"⚠️ 低分维度: {'; '.join(low_dims)}")
+
+                if suggestions:
+                    lines.append("改进建议:")
+                    for s in suggestions:
+                        lines.append(f"- {s}")
+
+            # === 用户反馈（权重高于 AI 自评） ===
+            if has_user_feedback:
+                lines.append("")
+                lines.append("【用户对上一章的反馈 - 重点关注】")
+                if prev_chapter.user_rating is not None:
+                    lines.append(f"用户评分: {prev_chapter.user_rating}/5")
+                    if prev_chapter.user_rating <= 2:
+                        lines.append("⚠️ 用户明显不满意，本章务必避免同类问题")
+                    elif prev_chapter.user_rating <= 3:
+                        lines.append("⚠️ 用户不太满意，本章注意改进相关方面")
+                if prev_chapter.user_feedback and prev_chapter.user_feedback.strip():
+                    lines.append(f"用户原话: {prev_chapter.user_feedback.strip()}")
 
             return "\n".join(lines)
 

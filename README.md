@@ -43,15 +43,29 @@
 
 ### Windows 一键启动(推荐)
 
-双击项目根目录的 `start.bat` 即可:
+适用于不会装环境的用户，只需已安装 [Python 3.10+](https://www.python.org/downloads/) 和 [Node.js 16+](https://nodejs.org/)。
 
-- 自动检查 Python / Node.js 环境
-- 自动复制 `.env`(若不存在)
-- 自动安装前端依赖(若 `node_modules` 缺失)
-- 启动后端(FastAPI,:8000)和前端(Vite,:5173)
-- 自动打开浏览器到 http://localhost:5173
+双击项目根目录的 `start.bat` 即可，脚本会自动完成：
 
-本地账号:`admin` / `admin123`
+- 创建 Python 虚拟环境（首次）
+- 安装精简版 Python 依赖（首次，约 100MB，不含向量记忆重型依赖）
+- 生成默认配置文件 `.env`（首次，默认 SQLite 数据库，无需安装 PostgreSQL）
+- 安装前端依赖并构建前端（首次）
+- 执行数据库迁移
+- 启动后端服务（单端口 `:8000`，前后端同源）
+- 自动打开浏览器到 http://localhost:8000
+
+首次启动约需 3-5 分钟配置环境，后续启动秒开。
+
+本地账号：`admin` / `admin123`（登录后请在「设置」页填入 AI API Key）
+
+其他脚本：
+- `stop.bat` — 停止运行中的服务
+- `update.bat` — 更新到新版本（拉取代码 + 更新依赖 + 迁移 + 重建前端）
+
+> **向量记忆功能**：精简版默认关闭向量记忆（chromadb/sentence-transformers 需约 2GB 依赖）。如需启用，运行 `cd backend && venv\Scripts\pip install -r requirements.txt` 后重启即可。
+>
+> **PostgreSQL 用户**：默认使用 SQLite 适合单用户本地使用。如需多用户并发，请在 `.env` 中设置 `DATABASE_URL` 指向 PostgreSQL。
 
 ### 从源码构建
 
@@ -78,7 +92,7 @@ cp .env.example .env
 # 启动 PostgreSQL(可使用 Docker)
 docker run -d --name postgres \
   -e POSTGRES_PASSWORD=your_password \
-  -e POSTGRES_DB=mumuai_novel \
+  -e POSTGRES_DB=mobinovel \
   -p 5432:5432 \
   postgres:18-alpine
 
@@ -118,7 +132,7 @@ docker-compose up -d
 
 ```bash
 # PostgreSQL 数据库
-DATABASE_URL=postgresql+asyncpg://user:password@host:5432/mumuai_novel
+DATABASE_URL=postgresql+asyncpg://user:password@host:5432/mobinovel
 
 # AI 服务
 OPENAI_API_KEY=your_openai_key
@@ -131,6 +145,18 @@ LOCAL_AUTH_ENABLED=true
 LOCAL_AUTH_USERNAME=admin
 LOCAL_AUTH_PASSWORD=admin123
 ```
+
+### ⚠️ 老部署升级说明（数据库重命名）
+
+从旧版本（库名为 `mumuai_novel`）升级时，**必须在 `.env` 中显式设置环境变量指向旧库**，否则会因默认库名改为 `mobinovel` 而创建空新库，导致数据"丢失"：
+
+```bash
+# 老部署升级时必须设置（保持原库名）
+POSTGRES_DB=mumuai_novel
+DATABASE_URL=postgresql+asyncpg://user:password@host:5432/mumuai_novel
+```
+
+全新部署无需设置，将使用默认库名 `mobinovel`。
 
 ### 可选配置
 
@@ -240,8 +266,6 @@ SESSION_COOKIE_SECURE=true
 - 📝 衍生作品必须使用 GPL v3 协议
 
 ## 🙏 致谢
-
-本项目基于 [MuMuAINovel](https://github.com/xiamuceer-j/MuMuAINovel) 二次开发,感谢原作者的开源贡献。
 
 - [FastAPI](https://fastapi.tiangolo.com/) - Python Web 框架
 - [React](https://react.dev/) - 前端框架

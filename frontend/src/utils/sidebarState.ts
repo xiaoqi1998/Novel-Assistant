@@ -1,4 +1,15 @@
-const SIDEBAR_COLLAPSED_STORAGE_KEY = 'mumu_sidebar_collapsed';
+const SIDEBAR_COLLAPSED_STORAGE_KEY = 'mobinovel_sidebar_collapsed';
+
+// 一次性迁移旧键
+try {
+  const legacy = localStorage.getItem('mumu_sidebar_collapsed');
+  if (legacy !== null && localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === null) {
+    localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, legacy);
+  }
+  localStorage.removeItem('mumu_sidebar_collapsed');
+} catch (e) {
+  // localStorage 不可用时忽略
+}
 
 export const getStoredSidebarCollapsed = (): boolean => {
   if (typeof window === 'undefined') {

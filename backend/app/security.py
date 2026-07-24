@@ -16,15 +16,9 @@ from app.config import settings
 
 
 def _session_secret() -> bytes:
-    secret = (
-        getattr(settings, "SESSION_SECRET_KEY", None)
-        or getattr(settings, "session_secret_key", None)
-        or settings.LINUXDO_CLIENT_SECRET
-        or settings.LOCAL_AUTH_PASSWORD
-        or settings.openai_api_key
-    )
+    secret = settings.SESSION_SECRET_KEY
     if not secret:
-        secret = "mumuainovel-development-session-secret"
+        raise RuntimeError("SESSION_SECRET_KEY 未配置，拒绝启动。请在环境变量中设置 SESSION_SECRET_KEY")
     return str(secret).encode("utf-8")
 
 

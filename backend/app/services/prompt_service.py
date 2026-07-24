@@ -556,6 +556,89 @@ class PromptService:
 ❌ 忽略最近大纲中的情节线索
 </constraints>"""
     
+    # ========== 题材差异化策略（变更3）==========
+    # 按题材定义差异化的 constraints 和 guidelines，注入到章节生成模板
+    # 覆盖核心 4 类题材（都市/玄幻/言情/悬疑），其余题材走 _default
+    GENRE_STRATEGIES = {
+        "都市": {
+            "constraints": [
+                "✅ 场景描写贴近现实生活，避免夸张的超自然元素",
+                "✅ 角色对话使用现代口语，可适当加入网络用语",
+                "✅ 冲突源于现实社会关系（职场/家庭/情感）",
+            ],
+            "guidelines": [
+                "【都市特色】重视生活质感细节（衣食住行），让读者有代入感",
+                "爽点来自'打脸现实'（身份反转/事业逆袭/情感翻盘）",
+            ],
+        },
+        "玄幻": {
+            "constraints": [
+                "✅ 修炼/能力体系须严格遵循设定，不可越级",
+                "✅ 装逼打脸节奏：压抑-反转-爽快三层递进",
+                "✅ 战斗描写侧重'势'与'威'，避免流水账",
+            ],
+            "guidelines": [
+                "【玄幻特色】重视'境界差距'的压迫感描写",
+                "爽点来自'以弱胜强'和'身份揭晓'",
+            ],
+        },
+        "言情": {
+            "constraints": [
+                "✅ 情感推进须有铺垫，不可突兀表白",
+                "✅ 对话须有潜台词，避免直白情绪表达",
+                "✅ 误会/拉扯须有合理动机，不为虐而虐",
+            ],
+            "guidelines": [
+                "【言情特色】重视'心动瞬间'的细节捕捉（眼神/小动作）",
+                "爽点来自'情感拉扯'和'双向暗恋揭晓'",
+            ],
+        },
+        "悬疑": {
+            "constraints": [
+                "✅ 线索须公平呈现，不可临时编造",
+                "✅ 反转须有前文铺垫，逻辑闭环",
+                "✅ 恐惧感来自'未知'而非'血腥'",
+            ],
+            "guidelines": [
+                "【悬疑特色】重视'信息差'的节奏控制（透露多少/何时透露）",
+                "爽点来自'真相揭晓'和'伏笔回收'",
+            ],
+        },
+        # 默认策略（通用网文，其他题材）
+        "_default": {
+            "constraints": [],
+            "guidelines": [],
+        },
+    }
+
+    @classmethod
+    def get_genre_strategy(cls, genre: str) -> Dict[str, str]:
+        """
+        根据题材返回差异化约束和指南文本。
+
+        Args:
+            genre: 项目题材（如"都市"/"玄幻"/"言情"/"悬疑"等）
+
+        Returns:
+            dict: {
+                "genre_specific_constraints": 题材特定约束文本（多行，可为空字符串），
+                "genre_specific_guidelines": 题材特定指南文本（多行，可为空字符串）
+            }
+            未命中题材时返回空字符串，行为与改造前一致（向后兼容）。
+        """
+        genre_key = (genre or "").strip()
+        # 去掉"未设定"等占位符题材
+        if not genre_key or genre_key in ("未设定", "无", "其他"):
+            strategy = cls.GENRE_STRATEGIES["_default"]
+        else:
+            strategy = cls.GENRE_STRATEGIES.get(genre_key, cls.GENRE_STRATEGIES["_default"])
+        constraints_text = "\n".join(strategy["constraints"]) if strategy["constraints"] else ""
+        guidelines_text = "\n".join(strategy["guidelines"]) if strategy["guidelines"] else ""
+        return {
+            "genre_specific_constraints": constraints_text,
+            "genre_specific_guidelines": guidelines_text,
+        }
+
     # 章节生成 - 1-N模式（第1章）
     CHAPTER_GENERATION_ONE_TO_MANY = """<system>
 你是《{project_title}》的作者，一位专注于{genre}类型的网络小说家。
@@ -575,6 +658,73 @@ class PromptService:
 {chapter_outline}
 </outline>
 
+<emotion_curve priority="P0">
+【本章情绪曲线 - 必须遵循】
+{emotion_curve}
+
+⚠️ 情绪曲线执行须知：
+- 章节情绪须按曲线起伏，不可平铺直叙
+- 每个 transition 节点须有明确的情绪转折信号（动作/对话/场景变化）
+- peak 情绪须有铺垫和释放，不可突兀
+- 如情绪曲线为空，则按大纲情感基调自然推进
+</emotion_curve>
+
+<chapter_ending priority="P0">
+【章末追读钩子 - 必须执行】
+钩子类型: {ending_hook_type}
+钩子描述: {ending_hook_description}
+目标情绪: {ending_hook_target_emotion}
+
+⚠️ 章末钩子执行须知：
+- 章节最后 200-400 字必须围绕上述钩子类型展开
+- 禁止用"总结/升华/感慨"方式收尾
+- 禁止在结尾回答本章提出的核心问题（要留到下一章）
+- 不同类型的钩子写法：
+  * 突然揭示：最后一句/一段揭示一个颠覆性信息
+  * 紧急危机：结尾处危机爆发，主角被迫行动
+  * 未完成动作：主角正在做某件关键事的中间状态
+  * 身份反转：某人的真实身份/意图在结尾显露端倪
+  * 两难抉择：主角面临无法兼得的两个选择
+  * 神秘物品：出现一件来历不明但意义重大的物品
+  * 倒计时：时间压力在结尾陡然升级
+  * 承诺威胁：某人做出无法收回的承诺或威胁
+  * 离奇消失：重要人物/物品在结尾神秘消失
+  * 隐藏含义：对话或场景中藏有读者能察觉但角色没意识到的深意
+  * 意象钩子：用一个有象征意义的意象收束，暗示后续发展
+  * 回声钩子：结尾呼应开头某个细节，但赋予新含义
+  * 留白钩子：刻意省略关键信息，让读者自行填补
+- 钩子必须与下一章的衔接自然，不可突兀截断
+- 如钩子类型为空，则按"未完成动作"类型写章末（最通用的追读钩子）
+</chapter_ending>
+
+<scene_beats priority="P0">
+【场景节拍规划 - 必须遵循】
+{scene_beats}
+
+⚠️ 场景节拍执行须知：
+- 严格按照 scene_beats 中的场景顺序写作
+- 每个场景从 entry_hook 指定的方式切入
+- 场景内必须包含：目标→冲突→转折 的完整节拍
+- 场景之间用 exit_hook → entry_hook 的衔接过渡
+- 每场景字数尽量接近 estimated_words
+- 禁止合并场景或跳过场景
+- 如 scene_beats 为空，则按大纲自然推进，无需强制分场景
+</scene_beats>
+
+<information_rhythm priority="P1">
+【信息释放节奏 - 必须遵循】
+{information_rhythm}
+
+⚠️ 信息节奏执行须知：
+- 严格按照 reveal_points 的规划在指定时机透露信息
+- withhold_points 中的信息在本章绝对不可透露
+- 但可以通过 hint_type 指定的方式给读者暗示（让读者"猜得到但不确定"）
+- 利用 information_gap 创造张力：让读者和角色掌握不同信息
+- 禁止一次释放过多信息（信息过载会稀释情绪冲击）
+- 禁止在情绪高潮时插入大量解释性信息（打断节奏）
+- 如 information_rhythm 为空，则按大纲自然推进，无需强制控制信息节奏
+</information_rhythm>
+
 <characters priority="P1">
 【本章角色 - 请严格遵循角色设定】
 {characters_info}
@@ -584,6 +734,38 @@ class PromptService:
 - 涉及组织的情节须体现角色在组织中的身份和职位
 - 角色的能力表现须符合其职业和阶段设定
 </characters>
+
+<dialogue_guidelines priority="P1">
+【对话质量要求 - 必须遵循】
+
+1. **潜台词比例**：对话中至少 30% 的信息通过潜台词传递（言外之意、未尽之言、反话）
+   - 角色说的不等于角色想的，让读者读出"弦外之音"
+   - 用停顿、转移话题、答非所问来暗示真实情绪
+
+2. **对话标签多样性**：
+   - 禁止连续使用"他说/她说"超过 2 次
+   - 优先使用动作伴随语（"他揉了揉太阳穴""她转过身"）替代"他说"
+   - 上下文清晰时可省略标签（谁在说话一目了然时）
+
+3. **对话节奏控制**：
+   - 紧张场景：短句交锋，一句一行，加快节奏（如："你确定？""我确定。"）
+   - 情感场景：长句+停顿，放慢节奏，让情绪有呼吸感
+   - 信息传递场景：对话+叙事穿插，控制信息密度，避免对话连续超过 5 句
+
+4. **角色声音差异化**：
+   - 每个角色的说话方式须有辨识度（句式长短/用词偏好/语气特征）
+   - 读者应能不看对话标签就分辨出说话者
+   - 角色对话须符合其性格设定（急躁的角色说话短促直接，沉稳的角色说话迂回含蓄）
+
+5. **禁止水对话**：
+   - 每句对话必须承载信息或情绪
+   - 无功能的寒暄、过渡对话用叙事一句带过
+   - 禁止用对话解释读者已知信息（"正如你所知..."）
+</dialogue_guidelines>
+
+<genre_guidelines priority="P1">
+{genre_specific_guidelines}
+</genre_guidelines>
 
 <careers priority="P2">
 【本章职业】
@@ -608,6 +790,7 @@ class PromptService:
 ✅ 组织相关情节须体现成员身份和职位层级
 ✅ 字数控制在目标范围内
 ✅ 如有伏笔提醒，请在本章中适当埋入或回收相应伏笔
+{genre_specific_constraints}
 
 【禁止事项】
 ❌ 输出章节标题、序号等元信息
@@ -644,10 +827,109 @@ class PromptService:
 {chapter_outline}
 </outline>
 
+<emotion_curve priority="P0">
+【本章情绪曲线 - 必须遵循】
+{emotion_curve}
+
+⚠️ 情绪曲线执行须知：
+- 章节情绪须按曲线起伏，不可平铺直叙
+- 每个 transition 节点须有明确的情绪转折信号（动作/对话/场景变化）
+- peak 情绪须有铺垫和释放，不可突兀
+- 如情绪曲线为空，则按大纲情感基调自然推进
+</emotion_curve>
+
+<chapter_ending priority="P0">
+【章末追读钩子 - 必须执行】
+钩子类型: {ending_hook_type}
+钩子描述: {ending_hook_description}
+目标情绪: {ending_hook_target_emotion}
+
+⚠️ 章末钩子执行须知：
+- 章节最后 200-400 字必须围绕上述钩子类型展开
+- 禁止用"总结/升华/感慨"方式收尾
+- 禁止在结尾回答本章提出的核心问题（要留到下一章）
+- 不同类型的钩子写法：
+  * 突然揭示：最后一句/一段揭示一个颠覆性信息
+  * 紧急危机：结尾处危机爆发，主角被迫行动
+  * 未完成动作：主角正在做某件关键事的中间状态
+  * 身份反转：某人的真实身份/意图在结尾显露端倪
+  * 两难抉择：主角面临无法兼得的两个选择
+  * 神秘物品：出现一件来历不明但意义重大的物品
+  * 倒计时：时间压力在结尾陡然升级
+  * 承诺威胁：某人做出无法收回的承诺或威胁
+  * 离奇消失：重要人物/物品在结尾神秘消失
+  * 隐藏含义：对话或场景中藏有读者能察觉但角色没意识到的深意
+  * 意象钩子：用一个有象征意义的意象收束，暗示后续发展
+  * 回声钩子：结尾呼应开头某个细节，但赋予新含义
+  * 留白钩子：刻意省略关键信息，让读者自行填补
+- 钩子必须与下一章的衔接自然，不可突兀截断
+- 如钩子类型为空，则按"未完成动作"类型写章末（最通用的追读钩子）
+</chapter_ending>
+
+<scene_beats priority="P0">
+【场景节拍规划 - 必须遵循】
+{scene_beats}
+
+⚠️ 场景节拍执行须知：
+- 严格按照 scene_beats 中的场景顺序写作
+- 每个场景从 entry_hook 指定的方式切入
+- 场景内必须包含：目标→冲突→转折 的完整节拍
+- 场景之间用 exit_hook → entry_hook 的衔接过渡
+- 每场景字数尽量接近 estimated_words
+- 禁止合并场景或跳过场景
+- 如 scene_beats 为空，则按大纲自然推进，无需强制分场景
+</scene_beats>
+
+<information_rhythm priority="P1">
+【信息释放节奏 - 必须遵循】
+{information_rhythm}
+
+⚠️ 信息节奏执行须知：
+- 严格按照 reveal_points 的规划在指定时机透露信息
+- withhold_points 中的信息在本章绝对不可透露
+- 但可以通过 hint_type 指定的方式给读者暗示（让读者"猜得到但不确定"）
+- 利用 information_gap 创造张力：让读者和角色掌握不同信息
+- 禁止一次释放过多信息（信息过载会稀释情绪冲击）
+- 禁止在情绪高潮时插入大量解释性信息（打断节奏）
+- 如 information_rhythm 为空，则按大纲自然推进，无需强制控制信息节奏
+</information_rhythm>
+
 <characters priority="P1">
 【本章角色】
 {characters_info}
 </characters>
+
+<dialogue_guidelines priority="P1">
+【对话质量要求 - 必须遵循】
+
+1. **潜台词比例**：对话中至少 30% 的信息通过潜台词传递（言外之意、未尽之言、反话）
+   - 角色说的不等于角色想的，让读者读出"弦外之音"
+   - 用停顿、转移话题、答非所问来暗示真实情绪
+
+2. **对话标签多样性**：
+   - 禁止连续使用"他说/她说"超过 2 次
+   - 优先使用动作伴随语（"他揉了揉太阳穴""她转过身"）替代"他说"
+   - 上下文清晰时可省略标签（谁在说话一目了然时）
+
+3. **对话节奏控制**：
+   - 紧张场景：短句交锋，一句一行，加快节奏（如："你确定？""我确定。"）
+   - 情感场景：长句+停顿，放慢节奏，让情绪有呼吸感
+   - 信息传递场景：对话+叙事穿插，控制信息密度，避免对话连续超过 5 句
+
+4. **角色声音差异化**：
+   - 每个角色的说话方式须有辨识度（句式长短/用词偏好/语气特征）
+   - 读者应能不看对话标签就分辨出说话者
+   - 角色对话须符合其性格设定（急躁的角色说话短促直接，沉稳的角色说话迂回含蓄）
+
+5. **禁止水对话**：
+   - 每句对话必须承载信息或情绪
+   - 无功能的寒暄、过渡对话用叙事一句带过
+   - 禁止用对话解释读者已知信息（"正如你所知..."）
+</dialogue_guidelines>
+
+<genre_guidelines priority="P1">
+{genre_specific_guidelines}
+</genre_guidelines>
 
 <careers priority="P2">
 【本章职业】
@@ -670,6 +952,7 @@ class PromptService:
 ✅ 保持角色性格、说话方式一致
 ✅ 字数需要严格控制在目标字数内
 ✅ 如有伏笔提醒，请在本章中适当埋入或回收相应伏笔
+{genre_specific_constraints}
 
 【禁止事项】
 ❌ 输出章节标题、序号等元信息
@@ -705,6 +988,73 @@ class PromptService:
 {chapter_outline}
 </outline>
 
+<emotion_curve priority="P0">
+【本章情绪曲线 - 必须遵循】
+{emotion_curve}
+
+⚠️ 情绪曲线执行须知：
+- 章节情绪须按曲线起伏，不可平铺直叙
+- 每个 transition 节点须有明确的情绪转折信号（动作/对话/场景变化）
+- peak 情绪须有铺垫和释放，不可突兀
+- 如情绪曲线为空，则按大纲情感基调自然推进
+</emotion_curve>
+
+<chapter_ending priority="P0">
+【章末追读钩子 - 必须执行】
+钩子类型: {ending_hook_type}
+钩子描述: {ending_hook_description}
+目标情绪: {ending_hook_target_emotion}
+
+⚠️ 章末钩子执行须知：
+- 章节最后 200-400 字必须围绕上述钩子类型展开
+- 禁止用"总结/升华/感慨"方式收尾
+- 禁止在结尾回答本章提出的核心问题（要留到下一章）
+- 不同类型的钩子写法：
+  * 突然揭示：最后一句/一段揭示一个颠覆性信息
+  * 紧急危机：结尾处危机爆发，主角被迫行动
+  * 未完成动作：主角正在做某件关键事的中间状态
+  * 身份反转：某人的真实身份/意图在结尾显露端倪
+  * 两难抉择：主角面临无法兼得的两个选择
+  * 神秘物品：出现一件来历不明但意义重大的物品
+  * 倒计时：时间压力在结尾陡然升级
+  * 承诺威胁：某人做出无法收回的承诺或威胁
+  * 离奇消失：重要人物/物品在结尾神秘消失
+  * 隐藏含义：对话或场景中藏有读者能察觉但角色没意识到的深意
+  * 意象钩子：用一个有象征意义的意象收束，暗示后续发展
+  * 回声钩子：结尾呼应开头某个细节，但赋予新含义
+  * 留白钩子：刻意省略关键信息，让读者自行填补
+- 钩子必须与下一章的衔接自然，不可突兀截断
+- 如钩子类型为空，则按"未完成动作"类型写章末（最通用的追读钩子）
+</chapter_ending>
+
+<scene_beats priority="P0">
+【场景节拍规划 - 必须遵循】
+{scene_beats}
+
+⚠️ 场景节拍执行须知：
+- 严格按照 scene_beats 中的场景顺序写作
+- 每个场景从 entry_hook 指定的方式切入
+- 场景内必须包含：目标→冲突→转折 的完整节拍
+- 场景之间用 exit_hook → entry_hook 的衔接过渡
+- 每场景字数尽量接近 estimated_words
+- 禁止合并场景或跳过场景
+- 如 scene_beats 为空，则按大纲自然推进，无需强制分场景
+</scene_beats>
+
+<information_rhythm priority="P1">
+【信息释放节奏 - 必须遵循】
+{information_rhythm}
+
+⚠️ 信息节奏执行须知：
+- 严格按照 reveal_points 的规划在指定时机透露信息
+- withhold_points 中的信息在本章绝对不可透露
+- 但可以通过 hint_type 指定的方式给读者暗示（让读者"猜得到但不确定"）
+- 利用 information_gap 创造张力：让读者和角色掌握不同信息
+- 禁止一次释放过多信息（信息过载会稀释情绪冲击）
+- 禁止在情绪高潮时插入大量解释性信息（打断节奏）
+- 如 information_rhythm 为空，则按大纲自然推进，无需强制控制信息节奏
+</information_rhythm>
+
 <previous_chapter_summary priority="P1">
 【上一章剧情概要】
 {previous_chapter_summary}
@@ -729,6 +1079,38 @@ class PromptService:
 {characters_info}
 </characters>
 
+<dialogue_guidelines priority="P1">
+【对话质量要求 - 必须遵循】
+
+1. **潜台词比例**：对话中至少 30% 的信息通过潜台词传递（言外之意、未尽之言、反话）
+   - 角色说的不等于角色想的，让读者读出"弦外之音"
+   - 用停顿、转移话题、答非所问来暗示真实情绪
+
+2. **对话标签多样性**：
+   - 禁止连续使用"他说/她说"超过 2 次
+   - 优先使用动作伴随语（"他揉了揉太阳穴""她转过身"）替代"他说"
+   - 上下文清晰时可省略标签（谁在说话一目了然时）
+
+3. **对话节奏控制**：
+   - 紧张场景：短句交锋，一句一行，加快节奏（如："你确定？""我确定。"）
+   - 情感场景：长句+停顿，放慢节奏，让情绪有呼吸感
+   - 信息传递场景：对话+叙事穿插，控制信息密度，避免对话连续超过 5 句
+
+4. **角色声音差异化**：
+   - 每个角色的说话方式须有辨识度（句式长短/用词偏好/语气特征）
+   - 读者应能不看对话标签就分辨出说话者
+   - 角色对话须符合其性格设定（急躁的角色说话短促直接，沉稳的角色说话迂回含蓄）
+
+5. **禁止水对话**：
+   - 每句对话必须承载信息或情绪
+   - 无功能的寒暄、过渡对话用叙事一句带过
+   - 禁止用对话解释读者已知信息（"正如你所知..."）
+</dialogue_guidelines>
+
+<genre_guidelines priority="P1">
+{genre_specific_guidelines}
+</genre_guidelines>
+
 <careers priority="P2">
 【本章职业】
 {chapter_careers}
@@ -751,6 +1133,7 @@ class PromptService:
 ✅ 保持角色性格、说话方式一致
 ✅ 字数需要严格控制在目标字数内
 ✅ 如有伏笔提醒，请在本章中适当埋入或回收相应伏笔
+{genre_specific_constraints}
 
 【禁止事项】
 ❌ 输出章节标题、序号等元信息
@@ -788,6 +1171,73 @@ class PromptService:
 {chapter_outline}
 </outline>
 
+<emotion_curve priority="P0">
+【本章情绪曲线 - 必须遵循】
+{emotion_curve}
+
+⚠️ 情绪曲线执行须知：
+- 章节情绪须按曲线起伏，不可平铺直叙
+- 每个 transition 节点须有明确的情绪转折信号（动作/对话/场景变化）
+- peak 情绪须有铺垫和释放，不可突兀
+- 如情绪曲线为空，则按大纲情感基调自然推进
+</emotion_curve>
+
+<chapter_ending priority="P0">
+【章末追读钩子 - 必须执行】
+钩子类型: {ending_hook_type}
+钩子描述: {ending_hook_description}
+目标情绪: {ending_hook_target_emotion}
+
+⚠️ 章末钩子执行须知：
+- 章节最后 200-400 字必须围绕上述钩子类型展开
+- 禁止用"总结/升华/感慨"方式收尾
+- 禁止在结尾回答本章提出的核心问题（要留到下一章）
+- 不同类型的钩子写法：
+  * 突然揭示：最后一句/一段揭示一个颠覆性信息
+  * 紧急危机：结尾处危机爆发，主角被迫行动
+  * 未完成动作：主角正在做某件关键事的中间状态
+  * 身份反转：某人的真实身份/意图在结尾显露端倪
+  * 两难抉择：主角面临无法兼得的两个选择
+  * 神秘物品：出现一件来历不明但意义重大的物品
+  * 倒计时：时间压力在结尾陡然升级
+  * 承诺威胁：某人做出无法收回的承诺或威胁
+  * 离奇消失：重要人物/物品在结尾神秘消失
+  * 隐藏含义：对话或场景中藏有读者能察觉但角色没意识到的深意
+  * 意象钩子：用一个有象征意义的意象收束，暗示后续发展
+  * 回声钩子：结尾呼应开头某个细节，但赋予新含义
+  * 留白钩子：刻意省略关键信息，让读者自行填补
+- 钩子必须与下一章的衔接自然，不可突兀截断
+- 如钩子类型为空，则按"未完成动作"类型写章末（最通用的追读钩子）
+</chapter_ending>
+
+<scene_beats priority="P0">
+【场景节拍规划 - 必须遵循】
+{scene_beats}
+
+⚠️ 场景节拍执行须知：
+- 严格按照 scene_beats 中的场景顺序写作
+- 每个场景从 entry_hook 指定的方式切入
+- 场景内必须包含：目标→冲突→转折 的完整节拍
+- 场景之间用 exit_hook → entry_hook 的衔接过渡
+- 每场景字数尽量接近 estimated_words
+- 禁止合并场景或跳过场景
+- 如 scene_beats 为空，则按大纲自然推进，无需强制分场景
+</scene_beats>
+
+<information_rhythm priority="P1">
+【信息释放节奏 - 必须遵循】
+{information_rhythm}
+
+⚠️ 信息节奏执行须知：
+- 严格按照 reveal_points 的规划在指定时机透露信息
+- withhold_points 中的信息在本章绝对不可透露
+- 但可以通过 hint_type 指定的方式给读者暗示（让读者"猜得到但不确定"）
+- 利用 information_gap 创造张力：让读者和角色掌握不同信息
+- 禁止一次释放过多信息（信息过载会稀释情绪冲击）
+- 禁止在情绪高潮时插入大量解释性信息（打断节奏）
+- 如 information_rhythm 为空，则按大纲自然推进，无需强制控制信息节奏
+</information_rhythm>
+
 <recent_context priority="P1">
 【最近章节规划 - 故事脉络参考】
 {recent_chapters_context}
@@ -822,6 +1272,38 @@ class PromptService:
 - 角色的能力表现须符合其职业和阶段设定
 </characters>
 
+<dialogue_guidelines priority="P1">
+【对话质量要求 - 必须遵循】
+
+1. **潜台词比例**：对话中至少 30% 的信息通过潜台词传递（言外之意、未尽之言、反话）
+   - 角色说的不等于角色想的，让读者读出"弦外之音"
+   - 用停顿、转移话题、答非所问来暗示真实情绪
+
+2. **对话标签多样性**：
+   - 禁止连续使用"他说/她说"超过 2 次
+   - 优先使用动作伴随语（"他揉了揉太阳穴""她转过身"）替代"他说"
+   - 上下文清晰时可省略标签（谁在说话一目了然时）
+
+3. **对话节奏控制**：
+   - 紧张场景：短句交锋，一句一行，加快节奏（如："你确定？""我确定。"）
+   - 情感场景：长句+停顿，放慢节奏，让情绪有呼吸感
+   - 信息传递场景：对话+叙事穿插，控制信息密度，避免对话连续超过 5 句
+
+4. **角色声音差异化**：
+   - 每个角色的说话方式须有辨识度（句式长短/用词偏好/语气特征）
+   - 读者应能不看对话标签就分辨出说话者
+   - 角色对话须符合其性格设定（急躁的角色说话短促直接，沉稳的角色说话迂回含蓄）
+
+5. **禁止水对话**：
+   - 每句对话必须承载信息或情绪
+   - 无功能的寒暄、过渡对话用叙事一句带过
+   - 禁止用对话解释读者已知信息（"正如你所知..."）
+</dialogue_guidelines>
+
+<genre_guidelines priority="P1">
+{genre_specific_guidelines}
+</genre_guidelines>
+
 <careers priority="P2">
 【本章职业】
 {chapter_careers}
@@ -846,6 +1328,7 @@ class PromptService:
 ✅ 组织相关情节须体现成员身份和职位层级
 ✅ 字数控制在目标范围内
 ✅ 如有伏笔提醒，请在本章中适当埋入或回收相应伏笔
+{genre_specific_constraints}
 
 【🔴 反重复特别指令】
 ✅ 检查本章开篇是否与"衔接锚点"内容重复
@@ -1216,8 +1699,40 @@ class PromptService:
 - 8.0-9.4（优秀）：逻辑严密，衔接自然；角色行为高度一致
 - 9.5-10.0（完美）：无懈可击的连贯性
 
+**情绪曲线遵循度 (emotion_curve_adherence)**：
+- 如本章无情绪曲线规划（emotion_curve 为空），直接评 7.0，不拉低 overall
+- 1.0-3.9（差）：完全无视情绪曲线，章节情绪平铺直叙或与规划严重背离
+- 4.0-5.9（中下）：部分遵循，但关键转折点缺失或情绪突变生硬
+- 6.0-7.9（中上）：基本遵循曲线，情绪起伏可见但 peak 不够突出
+- 8.0-9.4（优秀）：精准遵循曲线，每个 transition 有明确信号，peak 有铺垫和释放
+- 9.5-10.0（完美）：情绪曲线执行大师级，读者情绪完全被引导
+
+**章末追读钩子强度 (ending_hook_strength)**：
+- 如本章无 ending_hook 规划（ending_hook_type 为空），直接评 5.0，不拉低 overall
+- 1.0-3.9（差）：章末无有效钩子，或强行截断、总结收尾、回答悬念、用"他闭上眼睛陷入沉思"这类空泛收束
+- 4.0-5.9（中下）：有钩子但力度不足，或钩子类型与内容不匹配，读者可能不会追读下一章
+- 6.0-7.9（中上）：有明确钩子，能引发读者继续阅读的兴趣，结尾戛然而止但不过分
+- 8.0-9.4（优秀）：钩子设计精妙，类型选择恰当，力度恰到好处，读者会有强烈追读欲望
+- 9.5-10.0（完美）：钩子让人欲罢不能，结尾戛然而止在最需要知道下文的位置，读者必然追读下一章
+
+**对话质量 (dialogue_quality)**：
+- 如本章对话占比极低（dialogue_ratio < 0.1），直接评 7.0，不拉低 overall
+- 1.0-3.9（差）：对话干瘪如说明书，标签单调（通篇"他说/她说"），无潜台词，角色声音雷同
+- 4.0-5.9（中下）：对话基本可读但有明显问题；标签重复，潜台词不足，角色辨识度低
+- 6.0-7.9（中上）：对话有辨识度，标签有变化，部分潜台词，角色声音基本可区分
+- 8.0-9.4（优秀）：对话生动有张力，标签多样化，潜台词丰富，角色声音鲜明
+- 9.5-10.0（完美）：对话堪称经典，每句都有潜台词，不看标签知说话者
+
+**悬念维持度 (suspense_maintenance)**：
+- 如本章无 information_rhythm 规划，直接评 7.0，不拉低 overall
+- 1.0-3.9（差）：信息一次性全部释放，无保留；或该透露的不透露导致读者困惑
+- 4.0-5.9（中下）：信息节奏基本合理但有明显问题；高潮时插入解释、该保留的提前泄露
+- 6.0-7.9（中上）：信息释放节奏良好，有保留有透露，信息差有效
+- 8.0-9.4（优秀）：信息节奏精妙，每次透露都恰到好处，保留的信息让读者持续猜测
+- 9.5-10.0（完美）：信息节奏堪称教科书，信息差设计让读者欲罢不能
+
 **整体质量 (overall)**：
-- 计算公式：(pacing + engagement + coherence) / 3，保留一位小数
+- 计算公式：(pacing + engagement + coherence + emotion_curve_adherence + ending_hook_strength + dialogue_quality + suspense_maintenance) / 7，保留一位小数
 - 可根据综合印象±0.5调整，必须与各项分数保持一致性
 
 **9. 改进建议（与分数关联）**
@@ -1350,8 +1865,12 @@ class PromptService:
     "pacing": 6.5,
     "engagement": 5.8,
     "coherence": 7.2,
-    "overall": 6.5,
-    "score_justification": "节奏整体流畅但中段略显拖沓；钩子设置有效但不够巧妙；逻辑连贯无明显漏洞"
+    "emotion_curve_adherence": 7.0,
+    "ending_hook_strength": 6.8,
+    "dialogue_quality": 6.5,
+    "suspense_maintenance": 7.0,
+    "overall": 6.6,
+    "score_justification": "节奏整体流畅但中段略显拖沓；钩子设置有效但不够巧妙；逻辑连贯无明显漏洞；情绪曲线基本遵循；章末钩子有但力度可加强；对话有辨识度但潜台词不足；信息节奏基本合理"
   }},
   "plot_stage": "发展",
   "suggestions": [
@@ -1413,7 +1932,20 @@ class PromptService:
 1. 改味不改错：去AI味是风格问题，不是语法错误。只改"怎么说"，不改"说什么"。剧情、人设、情节走向一概不动。
 2. 改最少，效果最大：能改一个词就不改一句，能删一句就不重写一段。
 3. 保留作者意图：如果原文有逻辑问题，那不是去AI味的活。
+4. 改 AI 味，保人味，留个性：只去除"AI 味"（工整排比/机械总结/套路修辞），绝不抹平用户本人的笔感。
 </principles>
+
+<user_style priority="P1">
+【用户文风档案 - 必须保留】
+{style_content}
+
+⚠️ 文风保留须知：
+- 上述文风特征是用户本人的写作偏好，去 AI 味时必须保留这些个人特色
+- 只去除"AI 味"（工整排比/机械总结/套路修辞），不要改变用户的个人笔感
+- 如果用户偏好短句，去味后仍以短句为主；如果用户偏好华丽比喻，保留这种华丽
+- "改味不改错"原则升级为"改 AI 味，保人味，留个性"
+- 如上述档案为空，则按通用真人基准去味即可
+</user_style>
 
 <baseline>
 【真人写作基准 - 改写目标】
@@ -1481,6 +2013,105 @@ class PromptService:
 {original_text}
 </output>"""
 
+    # 文风学习提示词 - 从用户章节中提取结构化文风档案
+    STYLE_EXTRACT_TEMPLATE = """<system>
+你是网文写作风格分析专家，擅长从作者已有章节中提炼个性化的文风档案。
+你的任务不是改写，而是如实记录作者的写作特征，生成 AI 可执行的风格指令。
+核心信念：每个作者都有独特的"笔感"，文风不是"好坏"问题，是"个性"问题。
+</system>
+
+<task>
+【文风分析任务】
+分析以下作者章节，从 7 个维度提取结构化文风档案。
+
+【采样章节】
+{chapters_content}
+</task>
+
+<dimensions>
+【7 维度分析框架 - 每个维度必须给出正例+反例】
+
+1. 句式偏好
+   - 短句占比 / 平均句长 / 不完整句使用
+   - 正例：引用作者实际句子（标注章节号）
+   - 反例：不属于该作者风格的写法
+
+2. 对话风格
+   - 对话密度 / 标签使用 / 口语化程度
+   - 正例+反例
+
+3. 描写密度
+   - 环境/心理/动作描写比例 / 感官偏好
+   - 正例+反例
+
+4. 情绪表达方式
+   - 展示 vs 告诉 / 比喻类型 / 情绪强度
+   - 正例+反例
+
+5. 节奏偏好
+   - 段落长度 / 快慢切换 / 转场手法
+   - 正例+反例
+
+6. 用词特征
+   - 书面 vs 口语 / 高频词 / 禁用词
+   - 正例+反例
+
+7. 结构习惯
+   - 开头方式 / 结尾方式 / 章节内节奏曲线
+   - 正例+反例
+</dimensions>
+
+<principles>
+【三大原则】
+1. 如实记录，不改风格：即使你觉得"短句太多"或"对话太密"，也只描述特征，不评判优劣
+2. 正例 + 反例双重锚定：每个维度都要给出"用户实际写法的示例"和"不属于该用户风格的反例"
+3. 可执行性：用"句式以短句为主，平均 10 字"而非"句式简洁有力"，避免空泛评价
+</principles>
+
+<output>
+【输出格式 - 严格遵循 JSON 结构】
+{{
+  "overall_positioning": "一句话概括整体风格定位",
+  "dimensions": {{
+    "syntax": {{
+      "description": "正例描述 + 引用",
+      "counter_example": "反例描述"
+    }},
+    "dialogue": {{
+      "description": "正例描述 + 引用",
+      "counter_example": "反例描述"
+    }},
+    "description_density": {{
+      "description": "正例描述 + 引用",
+      "counter_example": "反例描述"
+    }},
+    "emotion": {{
+      "description": "正例描述 + 引用",
+      "counter_example": "反例描述"
+    }},
+    "pacing": {{
+      "description": "正例描述 + 引用",
+      "counter_example": "反例描述"
+    }},
+    "vocabulary": {{
+      "description": "正例描述 + 引用",
+      "counter_example": "反例描述"
+    }},
+    "structure": {{
+      "description": "正例描述 + 引用",
+      "counter_example": "反例描述"
+    }}
+  }},
+  "writing_instruction": "综合写作指令（200-400字，浓缩7维度特征，AI生成章节时遵循）"
+}}
+
+【输出要求】
+- 必须返回纯 JSON，不要 markdown 包裹
+- 正例必须引用作者章节中的实际句子，标注章节号
+- writing_instruction 要具体可执行，避免"风格独特"这类空泛评价
+- writing_instruction 要包含正反双向指令（要做什么 + 不要做什么）
+</output>"""
+
     # 大纲单批次展开提示词 V2（RTCO框架）
     OUTLINE_EXPAND_SINGLE = """<system>
 你是专业的小说情节架构师，擅长将大纲节点展开为详细章节规划。
@@ -1536,9 +2167,42 @@ class PromptService:
     "key_events": ["关键事件1", "关键事件2", "关键事件3"],
     "character_focus": ["角色A", "角色B"],
     "emotional_tone": "情感基调（如：紧张、温馨、悲伤）",
+    "emotion_curve": {{
+      "start": "起始情绪（1-4字，如：平静）",
+      "middle": "中段情绪（1-4字，如：紧张）",
+      "peak": "情绪高潮点（1-4字，如：震撼）",
+      "end": "结尾情绪（1-4字，如：释然）",
+      "transitions": ["起始→中段：触发事件简述", "中段→高潮：升级触发", "高潮→结尾：收束方式"]
+    }},
+    "ending_hook": {{
+      "type": "章末钩子类型（从13式中选1：突然揭示/紧急危机/未完成动作/身份反转/两难抉择/神秘物品/倒计时/承诺威胁/离奇消失/隐藏含义/意象钩子/回声钩子/留白钩子）",
+      "description": "钩子具体内容（30-50字，说明结尾留什么悬念）",
+      "target_emotion": "钩子要让读者产生的情绪（如：好奇/紧张/期待/震惊）"
+    }},
     "narrative_goal": "叙事目标（该章要达成的叙事效果）",
     "conflict_type": "冲突类型（如：内心挣扎、人际冲突）",
-    "estimated_words": 3000{scene_field}
+    "estimated_words": 3000,
+    "scene_beats": [
+      {{
+        "scene_order": 1,
+        "location": "场景地点",
+        "entry_hook": "进入场景的方式（从动作/对话/环境描写切入）",
+        "scene_goal": "本场景主角要达成什么",
+        "conflict": "场景中的冲突/障碍",
+        "turning_point": "场景的转折/高潮",
+        "exit_hook": "退出场景的方式（留什么悬念进入下一场景）",
+        "estimated_words": 800
+      }}
+    ],
+    "information_rhythm": {{
+      "reveal_points": [
+        {{"timing": "章节前1/3", "info": "要透露的信息", "method": "透露方式（对话/动作/环境/内心）"}}
+      ],
+      "withhold_points": [
+        {{"info": "要保留的信息", "reason": "保留原因", "hint_type": "给读者的暗示类型"}}
+      ],
+      "information_gap": "本章制造的信息差（读者知道但角色不知道 / 角色知道但读者不知道）"
+    }}
   }}
 ]
 
@@ -1568,6 +2232,20 @@ class PromptService:
 ✅ key_events在相邻章节间绝不重叠
 ✅ plot_summary描述该章独特内容，不与其他章雷同
 ✅ 同一事件的不同阶段要明确区分"前、中、后"
+
+【🎯 章末追读钩子约束（ending_hook）】
+✅ 每章必须规划一个明确的 ending_hook，三个字段（type/description/target_emotion）均不得为空
+✅ 相邻章节的 ending_hook.type 不得重复（如第1章"突然揭示"，第2章不得再用"突然揭示"）
+✅ ending_hook 必须与 emotion_curve.end 形成张力（如：情绪平静但钩子紧张，制造"暴风雨前的宁静"效果）
+✅ 钩子须与下一章的情节自然衔接，不可突兀截断
+✅ 钩子 description 须具体说明"留什么悬念"，不可写"留个悬念"这类空泛描述
+
+【🎬 场景节拍约束（scene_beats）】
+✅ 每章必须规划 2-4 个场景（scene_beats 数组长度 2-4）
+✅ 每个场景必须有完整的节拍：entry_hook → scene_goal → conflict → turning_point → exit_hook
+✅ 场景之间必须通过 exit_hook → entry_hook 自然过渡，不得跳跃
+✅ 同一场景内的 estimated_words 之和应接近章节总字数
+✅ 场景地点（location）在相邻场景间应有变化，避免全程同一地点
 
 【章节间要求】
 ✅ 衔接自然流畅（每章从不同起点开始）
@@ -1648,9 +2326,42 @@ class PromptService:
     "key_events": ["关键事件1", "关键事件2", "关键事件3"],
     "character_focus": ["角色A", "角色B"],
     "emotional_tone": "情感基调",
+    "emotion_curve": {{
+      "start": "起始情绪（1-4字，如：平静）",
+      "middle": "中段情绪（1-4字，如：紧张）",
+      "peak": "情绪高潮点（1-4字，如：震撼）",
+      "end": "结尾情绪（1-4字，如：释然）",
+      "transitions": ["起始→中段：触发事件简述", "中段→高潮：升级触发", "高潮→结尾：收束方式"]
+    }},
+    "ending_hook": {{
+      "type": "章末钩子类型（从13式中选1：突然揭示/紧急危机/未完成动作/身份反转/两难抉择/神秘物品/倒计时/承诺威胁/离奇消失/隐藏含义/意象钩子/回声钩子/留白钩子）",
+      "description": "钩子具体内容（30-50字，说明结尾留什么悬念）",
+      "target_emotion": "钩子要让读者产生的情绪（如：好奇/紧张/期待/震惊）"
+    }},
     "narrative_goal": "叙事目标",
     "conflict_type": "冲突类型",
-    "estimated_words": 3000{scene_field}
+    "estimated_words": 3000,
+    "scene_beats": [
+      {{
+        "scene_order": 1,
+        "location": "场景地点",
+        "entry_hook": "进入场景的方式（从动作/对话/环境描写切入）",
+        "scene_goal": "本场景主角要达成什么",
+        "conflict": "场景中的冲突/障碍",
+        "turning_point": "场景的转折/高潮",
+        "exit_hook": "退出场景的方式（留什么悬念进入下一场景）",
+        "estimated_words": 800
+      }}
+    ],
+    "information_rhythm": {{
+      "reveal_points": [
+        {{"timing": "章节前1/3", "info": "要透露的信息", "method": "透露方式（对话/动作/环境/内心）"}}
+      ],
+      "withhold_points": [
+        {{"info": "要保留的信息", "reason": "保留原因", "hint_type": "给读者的暗示类型"}}
+      ],
+      "information_gap": "本章制造的信息差（读者知道但角色不知道 / 角色知道但读者不知道）"
+    }}
   }}
 ]
 
@@ -1680,6 +2391,20 @@ class PromptService:
 ✅ plot_summary描述该章独特内容
 ✅ 特别注意与前序章节的差异化
 ✅ 避免重复已有内容
+
+【🎯 章末追读钩子约束（ending_hook）】
+✅ 每章必须规划一个明确的 ending_hook，三个字段（type/description/target_emotion）均不得为空
+✅ 相邻章节的 ending_hook.type 不得重复
+✅ ending_hook 必须与 emotion_curve.end 形成张力
+✅ 钩子须与前序/后续章节的情节自然衔接
+✅ 钩子 description 须具体说明"留什么悬念"
+
+【🎬 场景节拍约束（scene_beats）】
+✅ 每章必须规划 2-4 个场景（scene_beats 数组长度 2-4）
+✅ 每个场景必须有完整的节拍：entry_hook → scene_goal → conflict → turning_point → exit_hook
+✅ 场景之间必须通过 exit_hook → entry_hook 自然过渡，不得跳跃
+✅ 同一场景内的 estimated_words 之和应接近章节总字数
+✅ 场景地点（location）在相邻场景间应有变化
 
 【章节间要求】
 ✅ 与前面章节衔接自然流畅

@@ -8,7 +8,7 @@ import uuid
 class Chapter(Base):
     """章节表"""
     __tablename__ = "chapters"
-    
+
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     project_id = Column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
     chapter_number = Column(Integer, nullable=False, comment="章节序号")
@@ -17,16 +17,21 @@ class Chapter(Base):
     summary = Column(Text, comment="章节摘要")
     word_count = Column(Integer, default=0, comment="字数统计")
     status = Column(String(20), default="draft", comment="章节状态")
-    
+
     # 大纲关联字段（实现一对多关系）
     outline_id = Column(String(36), ForeignKey("outlines.id", ondelete="SET NULL"), nullable=True, comment="关联的大纲ID")
     sub_index = Column(Integer, default=1, comment="大纲下的子章节序号")
-    
+
     # 大纲展开规划数据（JSON格式）
     expansion_plan = Column(Text, comment="展开规划详情(JSON): 包含key_events, character_focus, emotional_tone等")
-    
+
+    # 用户反馈字段（用于质量反馈闭环）
+    user_rating = Column(Integer, nullable=True, comment="用户对本章的评分 1-5")
+    user_feedback = Column(Text, nullable=True, comment="用户对本章的文字反馈")
+    user_feedback_at = Column(DateTime, nullable=True, comment="用户反馈时间")
+
     created_at = Column(DateTime, server_default=func.now(), comment="创建时间")
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), comment="更新时间")
-    
+
     def __repr__(self):
         return f"<Chapter(id={self.id}, chapter_number={self.chapter_number}, title={self.title}, outline_id={self.outline_id})>"

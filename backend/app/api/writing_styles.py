@@ -2,19 +2,27 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, delete
-from typing import List
+from typing import List, Optional
+import json
 
 from ..database import get_db
 from ..models.writing_style import WritingStyle
 from ..models.project import Project
 from ..models.project_default_style import ProjectDefaultStyle
+from ..models.chapter import Chapter
 from ..schemas.writing_style import (
     WritingStyleCreate,
     WritingStyleUpdate,
     WritingStyleResponse,
     WritingStyleListResponse,
-    SetDefaultStyleRequest
+    SetDefaultStyleRequest,
+    StyleExtractRequest,
+    StyleExtractResponse,
+    SaveExtractedStyleRequest
 )
+from ..services.prompt_service import PromptService
+from ..services.ai_service import AIService
+from ..api.settings import get_user_ai_service
 from ..logger import get_logger
 
 router = APIRouter(prefix="/writing-styles", tags=["writing-styles"])
@@ -506,3 +514,187 @@ async def initialize_default_styles(
     """
     # 直接返回项目可用的所有风格（全局预设 + 用户自定义）
     return await get_project_styles(project_id, request, db)
+
+
+@router.post("/extract", summary="从章节提取文风档案")
+async def extract_writing_style(
+    request_data: StyleExtractRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user_ai_service: AIService = Depends(get_user_ai_service)
+):
+    """
+    文风学习 - 从用户已有章节中提取结构化文风档案
+
+    - 指定 chapter_ids：分析指定章节
+    - 不指定 chapter_ids：自动选取最近 5 章
+    - 返回 7 维度文风档案 + 综合写作指令（可直接保存为 WritingStyle）
+    """
+    user_id = get_current_user_id(request)
+
+    # 验证项目访问权限
+    result = await db.execute(
+        select(Project).where(
+            Project.id == request_data.project_id,
+            Project.user_id == user_id
+        )
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在或无权访问")
+
+    # 查询章节内容
+    if request_data.chapter_ids:
+        result = await db.execute(
+            select(Chapter).where(
+                Chapter.project_id == request_data.project_id,
+                Chapter.id.in_(request_data.chapter_ids)
+            ).order_by(Chapter.chapter_number)
+        )
+    else:
+        # 自动选最近 5 章有内容的章节
+        result = await db.execute(
+            select(Chapter).where(
+                Chapter.project_id == request_data.project_id,
+                Chapter.content.isnot(None),
+                Chapter.content != ""
+            ).order_by(Chapter.chapter_number.desc()).limit(5)
+        )
+
+    chapters = list(result.scalars().all())
+    # 自动选取时按正序排列
+    if not request_data.chapter_ids:
+        chapters.reverse()
+
+    if len(chapters) < 3:
+        raise HTTPException(
+            status_code=400,
+            detail=f"采样章节不足 3 章（当前 {len(chapters)} 章），文风分析需要至少 3 章内容"
+        )
+
+    # 构建 chapters_content
+    chapters_content_parts = []
+    sampled_info = []
+    for ch in chapters:
+        content = (ch.content or "").strip()
+        if not content:
+            continue
+        # 截取每章前 3000 字（避免总长度过大）
+        if len(content) > 3000:
+            content = content[:3000] + "……（截断）"
+        chapters_content_parts.append(f"=== 第 {ch.chapter_number} 章《{ch.title}》===\n{content}")
+        sampled_info.append({
+            "chapter_id": ch.id,
+            "chapter_number": ch.chapter_number,
+            "title": ch.title,
+            "word_count": ch.word_count or len(content)
+        })
+
+    if not chapters_content_parts:
+        raise HTTPException(status_code=400, detail="所选章节均无有效内容")
+
+    chapters_content = "\n\n".join(chapters_content_parts)
+
+    # 获取提示词模板（支持用户自定义）
+    template = await PromptService.get_template_with_fallback(
+        "STYLE_EXTRACT_TEMPLATE",
+        user_id=user_id,
+        db=db
+    )
+    if not template:
+        raise HTTPException(status_code=500, detail="文风提取提示词模板未找到")
+
+    prompt = PromptService.format_prompt(template, chapters_content=chapters_content)
+
+    # 调用 AI 生成文风档案
+    try:
+        raw_result = await user_ai_service.generate_text(
+            prompt=prompt,
+            temperature=0.3,  # 低温度保证分析稳定性
+        )
+    except Exception as e:
+        logger.error(f"文风提取 AI 调用失败: {e}")
+        raise HTTPException(status_code=500, detail=f"文风提取失败: {str(e)}")
+
+    # 解析 JSON 结果
+    try:
+        # 清理可能的 markdown 包裹
+        cleaned = raw_result.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("```")[1] if "```" in cleaned[3:] else cleaned[3:]
+            if cleaned.startswith("json"):
+                cleaned = cleaned[4:]
+        cleaned = cleaned.strip("` \n")
+
+        style_data = json.loads(cleaned)
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.error(f"文风提取结果 JSON 解析失败: {e}")
+        # 返回原始文本供用户参考
+        return {
+            "overall_positioning": "解析失败",
+            "dimensions": {},
+            "writing_instruction": raw_result,
+            "sampled_chapters": sampled_info,
+            "parse_error": True
+        }
+
+    return {
+        "overall_positioning": style_data.get("overall_positioning", ""),
+        "dimensions": style_data.get("dimensions", {}),
+        "writing_instruction": style_data.get("writing_instruction", ""),
+        "sampled_chapters": sampled_info
+    }
+
+
+@router.post("/extract/save", response_model=WritingStyleResponse, status_code=201)
+async def save_extracted_style(
+    request_data: SaveExtractedStyleRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    保存提取的文风档案为新的 WritingStyle
+
+    - 接收 writing_instruction（来自 /extract 的输出）
+    - 创建新的自定义风格记录
+    """
+    user_id = get_current_user_id(request)
+
+    if not request_data.writing_instruction or not request_data.writing_instruction.strip():
+        raise HTTPException(status_code=400, detail="writing_instruction 不能为空")
+
+    # 获取当前用户的最大 order_index
+    count_result = await db.execute(
+        select(func.count(WritingStyle.id))
+        .where(WritingStyle.user_id == user_id)
+    )
+    max_order = count_result.scalar_one()
+
+    # 创建风格记录
+    new_style = WritingStyle(
+        user_id=user_id,
+        name=request_data.name or "我的文风 - 自动提取",
+        style_type="custom",
+        preset_id=None,
+        description=request_data.description or "从章节中自动提取的文风档案",
+        prompt_content=request_data.writing_instruction,
+        order_index=max_order + 1
+    )
+
+    db.add(new_style)
+    await db.commit()
+    await db.refresh(new_style)
+
+    return {
+        "id": new_style.id,
+        "user_id": new_style.user_id,
+        "name": new_style.name,
+        "style_type": new_style.style_type,
+        "preset_id": new_style.preset_id,
+        "description": new_style.description,
+        "prompt_content": new_style.prompt_content,
+        "order_index": new_style.order_index,
+        "created_at": new_style.created_at,
+        "updated_at": new_style.updated_at,
+        "is_default": False
+    }

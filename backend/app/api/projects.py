@@ -30,7 +30,10 @@ from app.schemas.import_export import (
     ImportResult
 )
 from app.services.import_export_service import ImportExportService
-from app.services.memory_service import memory_service
+try:
+    from app.services.memory_service import memory_service
+except ImportError:
+    memory_service = None
 from app.logger import get_logger
 from app.utils.data_consistency import (
     run_full_data_consistency_check,

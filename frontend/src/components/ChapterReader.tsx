@@ -3,7 +3,7 @@
  * 提供沉浸式阅读体验，支持主题切换、字体调节、翻页导航等功能
  */
 import { useState, useEffect, useCallback } from 'react';
-import { Modal, Button, Slider, Radio, Space, Typography, Spin, message, theme } from 'antd';
+import { Modal, Button, Slider, Radio, Space, Typography, Spin, message, theme, Rate, Input } from 'antd';
 import {
   LeftOutlined,
   RightOutlined,
@@ -96,6 +96,12 @@ export default function ChapterReader({
   // 移动端检测
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
 
+  // 章节评分状态
+  const [userRating, setUserRating] = useState<number | null>(null);
+  const [userFeedback, setUserFeedback] = useState<string>('');
+  const [feedbackSaving, setFeedbackSaving] = useState(false);
+  const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
+
   // 响应式检测
   useEffect(() => {
     const handleResize = () => {
@@ -130,6 +136,60 @@ export default function ChapterReader({
   useEffect(() => {
     saveSettings(settings);
   }, [settings]);
+
+  // 加载已有用户反馈
+  useEffect(() => {
+    if (visible && chapter?.id) {
+      fetch(`/api/chapters/${chapter.id}/feedback`)
+        .then(res => {
+          if (!res.ok) return null;
+          return res.json();
+        })
+        .then(data => {
+          if (data && data.user_rating != null) {
+            setUserRating(data.user_rating);
+            setUserFeedback(data.user_feedback || '');
+            setFeedbackSubmitted(true);
+          } else {
+            setUserRating(null);
+            setUserFeedback('');
+            setFeedbackSubmitted(false);
+          }
+        })
+        .catch(() => {
+          setUserRating(null);
+          setUserFeedback('');
+          setFeedbackSubmitted(false);
+        });
+    }
+  }, [visible, chapter?.id]);
+
+  // 提交章节反馈
+  const handleSubmitFeedback = useCallback(async () => {
+    if (userRating === null) {
+      message.warning('请先选择评分');
+      return;
+    }
+    setFeedbackSaving(true);
+    try {
+      const res = await fetch(`/api/chapters/${chapter.id}/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rating: userRating,
+          feedback: userFeedback.trim() || null,
+        }),
+      });
+      if (!res.ok) throw new Error('提交失败');
+      const data = await res.json();
+      message.success(data.message || '反馈已保存');
+      setFeedbackSubmitted(true);
+    } catch (err) {
+      message.error('提交反馈失败');
+    } finally {
+      setFeedbackSaving(false);
+    }
+  }, [chapter?.id, userRating, userFeedback]);
 
   // 上一章
   const handlePrevious = useCallback(() => {
@@ -419,6 +479,55 @@ export default function ChapterReader({
           )}
           </div>
         </Spin>
+
+        {/* 章节评分反馈区 */}
+        {chapter.content && (
+          <div style={{
+            maxWidth: 1000,
+            margin: '0 auto',
+            padding: isMobile ? '0 16px 24px' : '0 60px 24px',
+            borderTop: `1px solid ${currentTheme.border}`,
+            marginTop: 24,
+            paddingTop: 20
+          }}>
+            <div style={{ marginBottom: 12, color: currentTheme.text, fontWeight: 500 }}>
+              {feedbackSubmitted ? '✅ 已反馈，你的评价会影响下一章的生成质量' : '给本章打分，帮助 AI 改进下一章'}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <Rate
+                value={userRating ?? 0}
+                onChange={(val) => {
+                  setUserRating(val);
+                  setFeedbackSubmitted(false);
+                }}
+                disabled={feedbackSaving}
+              />
+              <Input.TextArea
+                value={userFeedback}
+                onChange={(e) => setUserFeedback(e.target.value)}
+                placeholder="可选：写下你觉得哪里好/哪里需要改进（会直接告诉 AI）"
+                autoSize={{ minRows: 1, maxRows: 3 }}
+                maxLength={1000}
+                disabled={feedbackSaving}
+                style={{
+                  maxWidth: isMobile ? '100%' : 400,
+                  background: currentTheme.bg,
+                  color: currentTheme.text,
+                  borderColor: currentTheme.border
+                }}
+              />
+              <Button
+                type="primary"
+                size="small"
+                loading={feedbackSaving}
+                onClick={handleSubmitFeedback}
+                disabled={userRating === null}
+              >
+                {feedbackSubmitted ? '更新反馈' : '提交反馈'}
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 底部导航栏 */}

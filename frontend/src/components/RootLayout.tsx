@@ -9,6 +9,7 @@ import {
   SettingOutlined,
   MailOutlined,
   WalletOutlined,
+  QuestionCircleOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { authApi } from '../services/api';
@@ -18,6 +19,7 @@ import AppSidebar, { SidebarContent, EXPANDED_SIDER_WIDTH, COLLAPSED_SIDER_WIDTH
 import AppTopBar from './AppTopBar';
 import AppFooter from './AppFooter';
 import GlobalQuotaModal from './GlobalQuotaModal';
+import OnboardingGuide from './OnboardingGuide';
 import { getStoredSidebarCollapsed, setStoredSidebarCollapsed } from '../utils/sidebarState';
 
 /** 格式化字数（与原 ProjectList 一致） */
@@ -35,6 +37,7 @@ const PATH_TO_KEY: Record<string, string> = {
   '/book-import': 'book-import',
   '/mcp-plugins': 'mcp',
   '/prompt-templates': 'prompts',
+  '/help': 'help',
   '/settings': 'settings',
   '/system-settings': 'system-settings',
   '/account': 'account',
@@ -47,6 +50,7 @@ const PATH_TO_TITLE: Record<string, string> = {
   '/book-import': '拆书导入',
   '/mcp-plugins': 'MCP 插件',
   '/prompt-templates': '提示词管理',
+  '/help': '使用说明',
   '/settings': 'API 设置',
   '/system-settings': '系统设置',
   '/account': '个人中心',
@@ -58,6 +62,7 @@ const KEY_TO_PATH: Record<string, string> = {
   'book-import': '/book-import',
   mcp: '/mcp-plugins',
   prompts: '/prompt-templates',
+  help: '/help',
   settings: '/settings',
   'system-settings': '/system-settings',
   account: '/account',
@@ -69,6 +74,7 @@ const VIEW_TO_PATH: Record<string, string> = {
   'book-import': '/book-import',
   mcp: '/mcp-plugins',
   prompts: '/prompt-templates',
+  help: '/help',
   settings: '/settings',
   'system-settings': '/system-settings',
   account: '/account',
@@ -153,6 +159,7 @@ export default function RootLayout() {
           { key: 'book-import', icon: <UploadOutlined />, label: '拆书导入' },
           { key: 'mcp', icon: <ApiOutlined />, label: 'MCP 插件' },
           { key: 'prompts', icon: <FileSearchOutlined />, label: '提示词管理' },
+          { key: 'help', icon: <QuestionCircleOutlined />, label: '使用说明' },
         ],
       },
       {
@@ -175,6 +182,7 @@ export default function RootLayout() {
       { key: 'book-import', icon: <UploadOutlined />, label: '拆书导入' },
       { key: 'mcp', icon: <ApiOutlined />, label: 'MCP 插件' },
       { key: 'prompts', icon: <FileSearchOutlined />, label: '提示词管理' },
+      { key: 'help', icon: <QuestionCircleOutlined />, label: '使用说明' },
       { key: 'settings', icon: <SettingOutlined />, label: 'API 设置' },
       { key: 'account', icon: <WalletOutlined />, label: '个人中心' },
       ...(isAdmin ? [{ key: 'system-settings', icon: <MailOutlined />, label: '系统设置' }] : []),
@@ -360,6 +368,9 @@ export default function RootLayout() {
 
       {/* 全局额度不足 / 需要订阅 Modal */}
       <GlobalQuotaModal />
+
+      {/* 首次访问新人引导（透明蒙版多步骤浮窗） */}
+      <OnboardingGuide />
     </div>
   );
 }
