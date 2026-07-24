@@ -303,24 +303,41 @@ class BaseAIClient(ABC):
                         await asyncio.sleep(delay)
 
                     if stream:
-                        async with self.http_client.stream(method, url, headers=headers, json=payload) as response:
+                        # ⚠️ 不能用 `async with self.http_client.stream(...)` 后再 return：
+                        # 退出该上下文会调用 response.aclose() 关闭响应流，导致调用方
+                        # 迭代 aiter_lines() 时抛 "Attempted to read or stream content,
+                        # but the stream has been closed."。
+                        # 改用 build_request + send(stream=True)，让响应保持打开，
+                        # 由 _StreamResponseWrapper 在 __aexit__ 中负责关闭。
+                        request = self.http_client.build_request(method, url, headers=headers, json=payload)
+                        response = await self.http_client.send(request, stream=True)
+                        try:
+                            response.raise_for_status()
+                            return _StreamResponseWrapper(response)
+                        except httpx.HTTPStatusError:
+                            status_code = response.status_code
+                            # httpx 流式响应需先 aread 才能访问 .text（此时 stream 还活着）
+                            body_preview = None
                             try:
-                                response.raise_for_status()
-                                return _StreamResponseWrapper(response)
-                            except httpx.HTTPStatusError:
-                                status_code = response.status_code
-                                logger.error(
-                                    "AI HTTP 状态错误: method=%s endpoint=%s status=%s headers=%s",
-                                    method,
-                                    endpoint,
-                                    status_code,
-                                    _debug_response_headers(response),
-                                )
-                                if status_code in retry_cfg.non_retryable_status_codes:
-                                    raise
-                                if attempt == retry_cfg.max_retries - 1:
-                                    raise
-                                continue
+                                await response.aread()
+                                body_preview = safe_preview(response.text, 1000)
+                            except Exception as read_err:
+                                body_preview = f"<读取响应体失败: {read_err}>"
+                            logger.error(
+                                "AI HTTP 状态错误: method=%s endpoint=%s status=%s headers=%s body_preview=%s",
+                                method,
+                                endpoint,
+                                status_code,
+                                _debug_response_headers(response),
+                                body_preview,
+                            )
+                            # 重试或抛出前关闭响应，避免连接泄漏
+                            await response.aclose()
+                            if status_code in retry_cfg.non_retryable_status_codes:
+                                raise
+                            if attempt == retry_cfg.max_retries - 1:
+                                raise
+                            continue
 
                     response = await self.http_client.request(method, url, headers=headers, json=payload)
                     logger.debug(
@@ -356,13 +373,24 @@ class BaseAIClient(ABC):
 
                 except httpx.HTTPStatusError as e:
                     status_code = e.response.status_code if e.response is not None else None
+                    # 流式请求中 httpx 要求先 read 才能访问 .text/.content，
+                    # 否则在 async with stream(...) 上下文里会抛 ResponseNotRead，
+                    # 把真正的 HTTP 错误信息覆盖掉。这里做一次安全的 aread。
+                    body_preview = None
+                    if e.response is not None:
+                        try:
+                            if not e.response.is_stream_consumed:
+                                await e.response.aread()
+                            body_preview = safe_preview(e.response.text, 1000)
+                        except Exception as read_err:
+                            body_preview = f"<读取响应体失败: {read_err}>"
                     logger.error(
                         "AI HTTP 状态错误: method=%s endpoint=%s status=%s headers=%s body_preview=%s",
                         method,
                         endpoint,
                         status_code,
                         _debug_response_headers(e.response) if e.response is not None else {},
-                        safe_preview(e.response.text, 1000) if e.response is not None else None,
+                        body_preview,
                     )
                     if e.response is not None:
                         _log_raw_response_body(e.response, "http_status_error")

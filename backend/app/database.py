@@ -22,7 +22,8 @@ from app.models import (
     RelationshipType, CharacterRelationship, Organization, OrganizationMember,
     StoryMemory, PlotAnalysis, AnalysisTask, BatchGenerationTask,
     RegenerationTask, Career, CharacterCareer, User, MCPPlugin, PromptTemplate,
-    BackgroundTask, Announcement, UserSubscription
+    BackgroundTask, Announcement, UserSubscription,
+    PromptWorkshopItem, PromptSubmission, PromptWorkshopLike, Foreshadow
 )
 
 # 引擎缓存：每个用户一个引擎

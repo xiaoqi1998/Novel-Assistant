@@ -254,7 +254,7 @@ def _extract_information_rhythm(chapter: Chapter) -> Optional[str]:
                 timing = rp.get('timing', '未指定')
                 info = rp.get('info', '')
                 method = rp.get('method', '')
-                lines.append(f"  {timing}：透露"{info}"（方式：{method}）")
+                lines.append(f"  {timing}：透露'{info}'（方式：{method}）")
             lines.append("")
         if withhold_points:
             lines.append("【信息保留点 - 本章绝对不可透露】")
@@ -264,7 +264,7 @@ def _extract_information_rhythm(chapter: Chapter) -> Optional[str]:
                 info = wp.get('info', '')
                 reason = wp.get('reason', '')
                 hint = wp.get('hint_type', '')
-                lines.append(f"  保留"{info}"（原因：{reason}；暗示方式：{hint}）")
+                lines.append(f"  保留'{info}'（原因：{reason}；暗示方式：{hint}）")
             lines.append("")
         if info_gap:
             lines.append(f"【信息差设计】{info_gap}")

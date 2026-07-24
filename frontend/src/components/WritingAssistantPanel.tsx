@@ -24,7 +24,7 @@ import {
   ThunderboltOutlined,
 } from '@ant-design/icons';
 
-const { Text, Paragraph } = Typography;
+const { Text } = Typography;
 
 interface WritingAssistantPanelProps {
   chapterId: string;
@@ -402,20 +402,20 @@ export default function WritingAssistantPanel({ chapterId }: WritingAssistantPan
 
                 // 6. 信息节奏
                 plan?.information_rhythm && (
-                  plan.information_rhythm.reveal_points?.length ||
-                  plan.information_rhythm.withhold_points?.length ||
+                  (plan.information_rhythm.reveal_points && plan.information_rhythm.reveal_points.length > 0) ||
+                  (plan.information_rhythm.withhold_points && plan.information_rhythm.withhold_points.length > 0) ||
                   plan.information_rhythm.information_gap
                 ) ? {
                   key: 'rhythm',
                   label: (
                     <Space size={4}>
-                      <FieldTimeOutlined style={{ color: token.colorPurple }} />
+                      <FieldTimeOutlined style={{ color: token.colorPrimary }} />
                       <Text strong style={{ fontSize: 12 }}>信息节奏</Text>
                     </Space>
                   ),
                   children: (
                     <div style={{ fontSize: 11, lineHeight: 1.7 }}>
-                      {plan.information_rhythm.reveal_points?.length > 0 && (
+                      {plan.information_rhythm.reveal_points && plan.information_rhythm.reveal_points.length > 0 && (
                         <div style={{ marginBottom: 8 }}>
                           <Text type="secondary" style={{ fontSize: 11 }}>释放点：</Text>
                           {plan.information_rhythm.reveal_points.map((rp, i) => (
@@ -429,7 +429,7 @@ export default function WritingAssistantPanel({ chapterId }: WritingAssistantPan
                           ))}
                         </div>
                       )}
-                      {plan.information_rhythm.withhold_points?.length > 0 && (
+                      {plan.information_rhythm.withhold_points && plan.information_rhythm.withhold_points.length > 0 && (
                         <div style={{ marginBottom: 8 }}>
                           <Text type="secondary" style={{ fontSize: 11 }}>保留点：</Text>
                           {plan.information_rhythm.withhold_points.map((wp, i) => (
@@ -446,9 +446,9 @@ export default function WritingAssistantPanel({ chapterId }: WritingAssistantPan
                       {plan.information_rhythm.information_gap && (
                         <div style={{
                           padding: '6px 8px',
-                          background: alpha(token.colorPurpleBg, 0.4),
+                          background: alpha(token.colorInfoBg, 0.4),
                           borderRadius: 4,
-                          border: `1px solid ${alpha(token.colorPurpleBorder || token.colorBorder, 0.4)}`,
+                          border: `1px solid ${alpha(token.colorBorder, 0.4)}`,
                         }}>
                           <Text type="secondary" style={{ fontSize: 10 }}>信息差：</Text>
                           <span>{plan.information_rhythm.information_gap}</span>

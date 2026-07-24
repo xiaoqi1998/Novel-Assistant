@@ -163,7 +163,7 @@ export default function SettingsPage() {
         setIsDefaultSettings(true);
         form.setFieldsValue({
           api_provider: 'openai',
-          api_base_url: 'https://chuan.click/v1',
+          api_base_url: 'http://new-api:3000/v1',
           llm_model: 'deepseek-v4-pro',
           temperature: 0.7,
           max_tokens: 2000,

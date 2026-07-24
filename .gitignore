@@ -80,6 +80,7 @@ backend/data/*.db-wal
 backend/data/users.json
 backend/data/admins.json
 backend/storage/
+storage/
 
 # Temporary files
 *.bak
