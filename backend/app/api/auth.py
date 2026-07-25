@@ -217,7 +217,97 @@ async def _find_or_create_from_newapi(
     except Exception as e:
         logger.warning(f"[New API 登录] 为用户 {user_id} 生成 access_token 失败: {e}")
 
+    # 同步用户 Settings：将 api_key / api_base_url 指向 New API，
+    # 确保 AIService 使用 New API 中转网关而不是 .env 中的占位符配置。
+    # 仅当用户未自定义（占位符/空/默认 openai 地址）时覆盖，避免抹掉用户自定义配置。
+    try:
+        await _sync_settings_after_newapi_login(user_id=user_id)
+    except Exception as e:
+        logger.warning(f"[New API 登录] 同步用户 Settings 失败: {e}")
+
     return UserDTO(**user_dict)
+
+
+# 占位符 / 默认值识别：这些值视为"用户未自定义"，可被 New API 配置覆盖
+_PLACEHOLDER_API_KEYS = {
+    "",
+    "请在此填写你的API Key",
+    "your_openai_api_key_here",
+    "your-api-key-here",
+}
+_DEFAULT_OPENAI_BASE_URLS = {
+    "https://api.openai.com/v1",
+    "https://api.openai.com",
+}
+
+
+async def _sync_settings_after_newapi_login(user_id: str) -> None:
+    """登录后同步用户 Settings，确保 AI 调用走 New API 中转网关。
+
+    覆盖规则（保守，避免抹掉用户自定义）：
+    - api_provider: 强制设为 "openai"（New API 兼容 OpenAI 协议）
+    - api_key: 当当前值为空或占位符时，覆盖为用户的 newapi_key
+    - api_base_url: 当当前值为空或默认 openai 地址时，覆盖为 NEW_API_BASE_URL/v1
+    - llm_model: 当 Settings 为新建时，设为 NEW_API_DEFAULT_MODEL
+    其余字段（temperature/max_tokens/system_prompt/preferences）不动。
+    """
+    if not settings.NEW_API_ENABLED:
+        return
+
+    from app.models.settings import Settings as SettingsModel
+
+    expected_base_url = f"{settings.NEW_API_BASE_URL.rstrip('/')}/v1"
+
+    async with await _get_global_session() as session:
+        result = await session.execute(
+            select(SettingsModel).where(SettingsModel.user_id == user_id)
+        )
+        settings_row = result.scalar_one_or_none()
+
+        is_new = settings_row is None
+        if is_new:
+            settings_row = SettingsModel(
+                user_id=user_id,
+                preferences="{}",
+            )
+            session.add(settings_row)
+
+        # 读用户当前的 newapi_key
+        user_result = await session.execute(
+            select(UserModel).where(UserModel.user_id == user_id)
+        )
+        db_user = user_result.scalar_one_or_none()
+        newapi_key = db_user.newapi_key if db_user else None
+
+        changed = False
+
+        # api_provider：New API 走 OpenAI 兼容协议
+        if settings_row.api_provider != "openai":
+            settings_row.api_provider = "openai"
+            changed = True
+
+        # api_key：仅在未自定义时覆盖
+        current_key = (settings_row.api_key or "").strip()
+        if newapi_key and (current_key in _PLACEHOLDER_API_KEYS):
+            settings_row.api_key = newapi_key
+            changed = True
+
+        # api_base_url：仅在未自定义时覆盖
+        current_url = (settings_row.api_base_url or "").strip().rstrip("/")
+        if current_url in {"", *_DEFAULT_OPENAI_BASE_URLS} or current_url != expected_base_url:
+            # 若当前 URL 是空/默认 openai 地址，则指向 New API
+            if current_url in {"", *_DEFAULT_OPENAI_BASE_URLS}:
+                settings_row.api_base_url = expected_base_url
+                changed = True
+
+        # 新用户默认模型
+        if is_new:
+            settings_row.llm_model = settings.NEW_API_DEFAULT_MODEL
+            changed = True
+
+        if changed:
+            await session.commit()
+            logger.info(f"[New API 登录] Settings 已同步: user_id={user_id}, is_new={is_new}")
 
 
 # ==================== 路由：认证配置 ====================

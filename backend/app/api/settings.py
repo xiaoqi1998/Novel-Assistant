@@ -1061,7 +1061,13 @@ async def test_api_connection(data: ApiTestRequest):
         logger.info(f"  - 响应时间: {response_time}ms")
         
         # 安全地处理响应内容（确保是字符串）
-        response_str = str(response) if response else 'N/A'
+        # generate_text 返回 Dict（含 content/total_tokens），提取文本内容
+        if isinstance(response, dict):
+            response_str = response.get("content", "") or 'N/A'
+        elif isinstance(response, str):
+            response_str = response
+        else:
+            response_str = str(response) if response else 'N/A'
         logger.info(f"  - 响应内容长度: {len(response_str)}")
         
         return {

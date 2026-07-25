@@ -104,13 +104,15 @@ async def polish_text(
         logger.info(f"开始AI去味处理，原文长度: {len(request.original_text)}")
 
         # 调用AI进行去味处理
-        polished_text = await user_ai_service.generate_text(
+        # generate_text 返回 Dict（含 content/total_tokens 等），需提取文本内容
+        raw_result = await user_ai_service.generate_text(
             prompt=prompt,
             provider=request.provider,
             model=request.model,
             temperature=request.temperature,
             max_tokens=len(request.original_text) * 2  # 预留足够token
         )
+        polished_text = raw_result.get("content", "") if isinstance(raw_result, dict) else (raw_result or "")
 
         # 计算字数
         word_count_before = len(request.original_text)
@@ -183,11 +185,12 @@ async def polish_batch(
                 style_content=style_content
             )
 
-            polished_text = await user_ai_service.generate_text(
+            raw_result = await user_ai_service.generate_text(
                 prompt=prompt,
                 provider=provider,
                 model=model
             )
+            polished_text = raw_result.get("content", "") if isinstance(raw_result, dict) else (raw_result or "")
 
             results.append({
                 "index": idx,

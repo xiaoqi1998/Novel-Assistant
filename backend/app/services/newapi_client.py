@@ -38,8 +38,21 @@ class NewAPIClient:
 
     @property
     def enabled(self) -> bool:
-        """是否启用（配置了 Root Token 且 NEW_API_ENABLED=True）"""
+        """是否启用（配置了 Root Token 且 NEW_API_ENABLED=True）
+
+        仅用于判断管理员侧操作（创建用户、调整额度、设置分组等）是否可用。
+        用户侧操作（模型列表、余额查询、充值/订阅代理）请使用 user_enabled。
+        """
         return bool(settings.NEW_API_ENABLED and self._root_token)
+
+    @property
+    def user_enabled(self) -> bool:
+        """用户侧功能是否可用（仅需 NEW_API_ENABLED=True，无需 Root Token）
+
+        模型列表、余额查询等接口使用用户的 newapi_key / access_token 调用
+        New API，不依赖 Root Token。仅 NEW_API_ENABLED=True 即可对外提供。
+        """
+        return bool(settings.NEW_API_ENABLED)
 
     def _admin_headers(self) -> Dict[str, str]:
         """Admin API 请求头（Root Token）"""

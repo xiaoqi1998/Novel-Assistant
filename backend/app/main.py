@@ -172,7 +172,8 @@ from app.api import (
     auth, users, settings, writing_styles, memories,
     mcp_plugins, admin, inspiration, prompt_templates,
     careers, foreshadows, prompt_workshop, book_import,
-    project_covers, tasks, skills, announcements, full_review, newapi
+    project_covers, tasks, skills, announcements, full_review, newapi,
+    polish
 )
 
 app.include_router(auth.router, prefix="/api")
@@ -191,6 +192,7 @@ app.include_router(chapters.router, prefix="/api")
 app.include_router(relationships.router, prefix="/api")
 app.include_router(organizations.router, prefix="/api")
 app.include_router(writing_styles.router, prefix="/api")
+app.include_router(polish.router, prefix="/api")  # AI去味API
 app.include_router(memories.router)  # 记忆管理API (已包含/api前缀)
 app.include_router(foreshadows.router)  # 伏笔管理API (已包含/api前缀)
 app.include_router(mcp_plugins.router, prefix="/api")  # MCP插件管理API

@@ -135,7 +135,7 @@ def _estimate_words(balance_usd: float) -> int:
 @router.get("/balance", response_model=BalanceResponse)
 async def get_balance(user: User = Depends(require_login)):
     """查询当前用户余额（钱包 + 活跃订阅额度）"""
-    if not newapi_client.enabled:
+    if not newapi_client.user_enabled:
         return BalanceResponse(enabled=False, bound=False)
 
     # 用独立 session 读 User
@@ -200,7 +200,7 @@ async def get_balance(user: User = Depends(require_login)):
 @router.get("/status", response_model=StatusResponse)
 async def get_status(user: User = Depends(require_login), db: AsyncSession = Depends(get_db)):
     """查询 New API 绑定状态 + 订阅状态"""
-    if not newapi_client.enabled:
+    if not newapi_client.user_enabled:
         return StatusResponse(
             enabled=False, bound=False, is_subscribed=False,
             default_model=app_settings.NEW_API_DEFAULT_MODEL,
@@ -227,7 +227,7 @@ async def get_status(user: User = Depends(require_login), db: AsyncSession = Dep
 @router.get("/models", response_model=ModelsResponse)
 async def get_models(user: User = Depends(require_login), db: AsyncSession = Depends(get_db)):
     """获取可用模型列表（含价格）"""
-    if not newapi_client.enabled:
+    if not newapi_client.user_enabled:
         return ModelsResponse(
             enabled=False, models=[], is_subscribed=False,
             current_model=app_settings.NEW_API_DEFAULT_MODEL,
@@ -273,7 +273,7 @@ async def switch_model(
     db: AsyncSession = Depends(get_db),
 ):
     """切换当前用户模型（仅订阅用户可用）"""
-    if not newapi_client.enabled:
+    if not newapi_client.user_enabled:
         raise HTTPException(status_code=503, detail="New API 未启用")
 
     is_subscribed = await _is_user_subscribed(db, user.user_id)
@@ -322,7 +322,7 @@ async def _get_user_creds(db: AsyncSession, user_id: str):
 @router.get("/topup/info")
 async def get_topup_info(user: User = Depends(require_login), db: AsyncSession = Depends(get_db)):
     """获取充值信息（支付方式、金额档位、最低充值等）—— 代理 New API"""
-    if not newapi_client.enabled:
+    if not newapi_client.user_enabled:
         raise HTTPException(status_code=503, detail="New API 未启用")
     access_token, newapi_user_id = await _get_user_creds(db, user.user_id)
     try:
@@ -335,7 +335,7 @@ async def get_topup_info(user: User = Depends(require_login), db: AsyncSession =
 @router.get("/subscription/plans")
 async def get_subscription_plans(user: User = Depends(require_login), db: AsyncSession = Depends(get_db)):
     """获取订阅套餐列表 —— 代理 New API"""
-    if not newapi_client.enabled:
+    if not newapi_client.user_enabled:
         raise HTTPException(status_code=503, detail="New API 未启用")
     access_token, newapi_user_id = await _get_user_creds(db, user.user_id)
     try:
@@ -348,7 +348,7 @@ async def get_subscription_plans(user: User = Depends(require_login), db: AsyncS
 @router.get("/subscription/self")
 async def get_subscription_self(user: User = Depends(require_login), db: AsyncSession = Depends(get_db)):
     """获取当前用户的订阅状态 —— 代理 New API"""
-    if not newapi_client.enabled:
+    if not newapi_client.user_enabled:
         raise HTTPException(status_code=503, detail="New API 未启用")
     access_token, newapi_user_id = await _get_user_creds(db, user.user_id)
     try:
@@ -361,7 +361,7 @@ async def get_subscription_self(user: User = Depends(require_login), db: AsyncSe
 @router.get("/topup/history")
 async def get_topup_history(user: User = Depends(require_login), db: AsyncSession = Depends(get_db)):
     """获取充值历史 —— 代理 New API"""
-    if not newapi_client.enabled:
+    if not newapi_client.user_enabled:
         raise HTTPException(status_code=503, detail="New API 未启用")
     access_token, newapi_user_id = await _get_user_creds(db, user.user_id)
     try:
@@ -383,7 +383,7 @@ async def create_topup(
     db: AsyncSession = Depends(get_db),
 ):
     """发起充值 —— 代理 New API（返回支付链接）"""
-    if not newapi_client.enabled:
+    if not newapi_client.user_enabled:
         raise HTTPException(status_code=503, detail="New API 未启用")
     access_token, newapi_user_id = await _get_user_creds(db, user.user_id)
     try:
@@ -413,7 +413,7 @@ async def create_subscription(
 
     订阅成功后同步回写本地 UserSubscription 表，使个人中心状态立即生效。
     """
-    if not newapi_client.enabled:
+    if not newapi_client.user_enabled:
         raise HTTPException(status_code=503, detail="New API 未启用")
     access_token, newapi_user_id = await _get_user_creds(db, user.user_id)
     try:
@@ -533,7 +533,7 @@ async def list_subscriptions(user: User = Depends(require_login), db: AsyncSessi
 @router.post("/activate")
 async def activate_self(user: User = Depends(require_login)):
     """当前用户自助激活 New API 服务（补签）"""
-    if not newapi_client.enabled:
+    if not newapi_client.user_enabled:
         raise HTTPException(status_code=503, detail="New API 未启用")
 
     engine = await get_engine("_global_users_")

@@ -608,13 +608,16 @@ async def extract_writing_style(
 
     # 调用 AI 生成文风档案
     try:
-        raw_result = await user_ai_service.generate_text(
+        gen_response = await user_ai_service.generate_text(
             prompt=prompt,
             temperature=0.3,  # 低温度保证分析稳定性
         )
     except Exception as e:
         logger.error(f"文风提取 AI 调用失败: {e}")
         raise HTTPException(status_code=500, detail=f"文风提取失败: {str(e)}")
+
+    # generate_text 返回 Dict（含 content/total_tokens），提取文本内容
+    raw_result = gen_response.get("content", "") if isinstance(gen_response, dict) else (gen_response or "")
 
     # 解析 JSON 结果
     try:

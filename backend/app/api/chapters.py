@@ -1469,6 +1469,9 @@ async def generate_chapter_content_stream(
         break
     
     async def event_generator():
+        # 声明 nonlocal：event_generator 内部会为 skill_key 赋默认值（line ~1759），
+        # 若不声明 nonlocal，Python 会将其视为局部变量，导致读取时 UnboundLocalError
+        nonlocal skill_key
         # 在生成器内部创建独立的数据库会话
         db_session = None
         db_committed = False
