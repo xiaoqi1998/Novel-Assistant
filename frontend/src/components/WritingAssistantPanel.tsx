@@ -409,7 +409,7 @@ export default function WritingAssistantPanel({ chapterId }: WritingAssistantPan
                   key: 'rhythm',
                   label: (
                     <Space size={4}>
-                      <FieldTimeOutlined style={{ color: token.colorPrimary }} />
+                      <FieldTimeOutlined style={{ color: token.colorLink }} />
                       <Text strong style={{ fontSize: 12 }}>信息节奏</Text>
                     </Space>
                   ),
@@ -446,7 +446,7 @@ export default function WritingAssistantPanel({ chapterId }: WritingAssistantPan
                       {plan.information_rhythm.information_gap && (
                         <div style={{
                           padding: '6px 8px',
-                          background: alpha(token.colorInfoBg, 0.4),
+                          background: alpha(token.colorPrimaryBg, 0.4),
                           borderRadius: 4,
                           border: `1px solid ${alpha(token.colorBorder, 0.4)}`,
                         }}>
