@@ -15,6 +15,7 @@ import time
 from app.database import get_db
 from app.models.settings import Settings
 from app.models.user_subscription import UserSubscription
+from app.models.user import User as UserModel
 from app.services.cover_generation_service import cover_generation_service
 from app.schemas.settings import (
     SettingsCreate, SettingsUpdate, SettingsResponse,
@@ -655,16 +656,20 @@ async def get_available_models(
     api_key: Optional[str] = "",
     api_base_url: Optional[str] = "",
     provider: str = "openai",
-    user: User = Depends(require_login)
+    user: User = Depends(require_login),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     从配置的 API 获取可用的模型列表
-    
+
+    当 New API 启用且当前配置指向 New API 时，优先使用 New API 的模型列表
+    （与 /api/newapi/models 一致），避免直接请求上游 /models 返回空或 404。
+
     Args:
         api_key: API 密钥
         api_base_url: API 基础 URL
         provider: API 提供商 (openai, anthropic, azure, custom)
-    
+
     Returns:
         模型列表
     """
@@ -674,6 +679,43 @@ async def get_available_models(
         provider = resolved_config["api_provider"]
         api_key = resolved_config["api_key"]
         api_base_url = validate_public_http_url(resolved_config["api_base_url"])
+
+        # New API 场景：如果启用且 base_url 指向 New API，复用 New API 的模型列表
+        if app_settings.NEW_API_ENABLED and api_base_url:
+            expected_newapi_base = f"{app_settings.NEW_API_BASE_URL.rstrip('/')}/v1"
+            current_base = api_base_url.rstrip("/")
+            if current_base == expected_newapi_base:
+                from app.services.newapi_client import newapi_client
+
+                # 读用户 newapi_key
+                result = await db.execute(
+                    select(UserModel).where(UserModel.user_id == user.user_id)
+                )
+                db_user = result.scalar_one_or_none()
+                user_api_key = db_user.newapi_key if db_user else None
+
+                if user_api_key:
+                    try:
+                        models = await newapi_client.list_models(user_api_key)
+                        # 应用白名单过滤（与 /api/newapi/models 保持一致）
+                        whitelist = app_settings.NEW_API_SUBSCRIPTION_MODELS or []
+                        if whitelist:
+                            models = [m for m in models if m["id"] in whitelist]
+                        return {
+                            "provider": provider,
+                            "models": [
+                                {
+                                    "value": m["id"],
+                                    "label": m.get("name") or m["id"],
+                                    "description": f"输入: {m.get('pricing', {}).get('input', '-')} / 输出: {m.get('pricing', {}).get('output', '-')}"
+                                }
+                                for m in models
+                            ],
+                            "count": len(models)
+                        }
+                    except Exception as e:
+                        logger.warning(f"从 New API 获取模型列表失败，降级到上游 /models: {e}")
+
         async with httpx.AsyncClient(timeout=10.0) as client:
             if provider == "openai" or provider == "azure" or provider == "custom":
                 # OpenAI 兼容接口获取模型列表
