@@ -7,6 +7,8 @@ import { getProjectTasks, type TaskStatus } from '../services/backgroundTaskServ
 import { useOutlineSync } from '../store/hooks';
 import { generateOutlineBackground } from '../services/backgroundTaskService';
 import { outlineApi, chapterApi, projectApi, characterApi } from '../services/api';
+import { showErrorToast } from '../utils/errorHandler';
+import { alphaColor } from '../utils/color';
 import type { ApiError, Character } from '../types';
 
 // 大纲生成请求数据类型
@@ -118,8 +120,6 @@ export default function Outline() {
   const [isExpanding, setIsExpanding] = useState(false);
   const [projectCharacters, setProjectCharacters] = useState<Array<{ label: string; value: string }>>([]);
   const { token } = theme.useToken();
-  const alphaColor = (color: string, alpha: number) =>
-    `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
 
   // ✅ 新增：记录大纲卡片内容的展开/折叠状态（默认折叠）
   const [outlineContentExpandStatus, setOutlineContentExpandStatus] = useState<Record<string, boolean>>({});
@@ -128,12 +128,19 @@ export default function Outline() {
   const [scenesExpandStatus, setScenesExpandStatus] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
+    let timeoutId: number | undefined;
     const handleResize = () => {
-      setIsMobile(window.innerWidth <= 768);
+      if (timeoutId) window.clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(() => {
+        setIsMobile(window.innerWidth <= 768);
+      }, 150);
     };
 
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      if (timeoutId) window.clearTimeout(timeoutId);
+    };
   }, []);
 
   // 大纲查询与分页状态
@@ -206,6 +213,22 @@ export default function Outline() {
       parsedMap[outline.id] = parseOutlineStructure(outline.structure);
     });
     return parsedMap;
+  }, [outlines]);
+
+  // 默认展开第一个大纲项：加载大纲数据后，仅当尚未设置过展开状态时初始化
+  useEffect(() => {
+    if (outlines.length > 0) {
+      setOutlineContentExpandStatus((prev) => {
+        // 仅在初始（空对象）时设置，避免覆盖用户后续操作
+        if (Object.keys(prev).length === 0) {
+          const firstOutline = [...outlines].sort(
+            (a, b) => a.order_index - b.order_index
+          )[0];
+          return { [firstOutline.id]: true };
+        }
+        return prev;
+      });
+    }
   }, [outlines]);
 
   // 当角色确认数据变化时，初始化选中状态（默认全选）
@@ -502,8 +525,8 @@ export default function Outline() {
         const updatedProject = await projectApi.getProject(currentProject.id);
         setCurrentProject(updatedProject);
       }
-    } catch {
-      message.error('删除失败');
+    } catch (error) {
+      showErrorToast(error, '删除失败');
     }
   };
 
@@ -1525,7 +1548,9 @@ export default function Outline() {
         {/* 可滚动内容区域 */}
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {outlines.length === 0 ? (
-            <Empty description="还没有大纲，开始创建吧！" />
+            <Empty description="暂无大纲，开始创建吧">
+              <Button type="primary" icon={<PlusOutlined />} onClick={showManualCreateOutlineModal}>创建大纲</Button>
+            </Empty>
           ) : filteredOutlines.length === 0 ? (
             <Empty description="未找到匹配大纲" />
           ) : (
@@ -1654,607 +1679,656 @@ export default function Outline() {
                               </div>
 
                               {isOutlineExpanded && (
-                                <>
-                              {/* ✨ 涉及角色展示 - 优化版（支持角色/组织分类显示） */}
-                              {characterNames.length > 0 && (
-                                <div style={{
-                                  marginTop: isMobile ? 10 : 12,
-                                  padding: isMobile ? '8px 10px' : '10px 12px',
-                                  background: token.colorPrimaryBg,
-                                  borderLeft: `3px solid ${token.colorPrimary}`,
-                                  borderRadius: token.borderRadius
-                                }}>
-                                  <div style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: isMobile ? 6 : 8,
-                                    marginBottom: isMobile ? 6 : 8
-                                  }}>
-                                    <span style={{
-                                      fontSize: isMobile ? 12 : 13,
-                                      fontWeight: 600,
-                                      color: token.colorPrimary,
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      gap: 4
-                                    }}>
-                                      👥 涉及角色
-                                      <Tag
-                                        color="purple"
-                                        style={{
-                                          margin: 0,
-                                          fontSize: 10,
-                                          borderRadius: 10,
-                                          padding: '0 6px'
-                                        }}
-                                      >
-                                        {characterNames.length}
-                                      </Tag>
-                                    </span>
-                                  </div>
-                                  <Space wrap size={[4, 4]}>
-                                    {characterNames.map((name, idx) => (
-                                      <Tag
-                                        key={idx}
-                                        color="purple"
-                                        style={{
-                                          margin: 0,
-                                          borderRadius: 4,
-                                          padding: isMobile ? '2px 8px' : '3px 10px',
-                                          fontSize: isMobile ? 11 : 12,
-                                          fontWeight: 500,
-                                          border: `1px solid ${token.colorPrimaryBorder}`,
-                                          background: token.colorBgContainer,
-                                          color: token.colorPrimary,
-                                          whiteSpace: 'normal',
-                                          wordBreak: 'break-word',
-                                          height: 'auto',
-                                          lineHeight: '1.5'
-                                        }}
-                                      >
-                                        {name}
-                                      </Tag>
-                                    ))}
-                                  </Space>
-                                </div>
-                              )}
-                              
-                              {/* 🏛️ 涉及组织展示 */}
-                              {organizationNames.length > 0 && (
-                                <div style={{
-                                  marginTop: isMobile ? 10 : 12,
-                                  padding: isMobile ? '8px 10px' : '10px 12px',
-                                  background: token.colorWarningBg,
-                                  borderLeft: `3px solid ${token.colorWarning}`,
-                                  borderRadius: token.borderRadius
-                                }}>
-                                  <div style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: isMobile ? 6 : 8,
-                                    marginBottom: isMobile ? 6 : 8
-                                  }}>
-                                    <span style={{
-                                      fontSize: isMobile ? 12 : 13,
-                                      fontWeight: 600,
-                                      color: token.colorWarning,
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      gap: 4
-                                    }}>
-                                      🏛️ 涉及组织
-                                      <Tag
-                                        color="orange"
-                                        style={{
-                                          margin: 0,
-                                          fontSize: 10,
-                                          borderRadius: 10,
-                                          padding: '0 6px'
-                                        }}
-                                      >
-                                        {organizationNames.length}
-                                      </Tag>
-                                    </span>
-                                  </div>
-                                  <Space wrap size={[4, 4]}>
-                                    {organizationNames.map((name, idx) => (
-                                      <Tag
-                                        key={idx}
-                                        color="orange"
-                                        style={{
-                                          margin: 0,
-                                          borderRadius: 4,
-                                          padding: isMobile ? '2px 8px' : '3px 10px',
-                                          fontSize: isMobile ? 11 : 12,
-                                          fontWeight: 500,
-                                          border: `1px solid ${token.colorWarningBorder}`,
-                                          background: token.colorBgContainer,
-                                          color: token.colorWarning,
-                                          whiteSpace: 'normal',
-                                          wordBreak: 'break-word',
-                                          height: 'auto',
-                                          lineHeight: '1.5'
-                                        }}
-                                      >
-                                        {name}
-                                      </Tag>
-                                    ))}
-                                  </Space>
-                                </div>
-                              )}
-                              
-                              {/* ✨ 场景信息展示 - 优化版（支持折叠，最多显示3个） */}
-                              {structureData.scenes && structureData.scenes.length > 0 ? (() => {
-                                const isExpanded = scenesExpandStatus[item.id] || false;
-                                const maxVisibleScenes = 4;
-                                const hasMoreScenes = structureData.scenes!.length > maxVisibleScenes;
-                                const visibleScenes = isExpanded ? structureData.scenes : structureData.scenes!.slice(0, maxVisibleScenes);
-                                
-                                return (
-                                  <div style={{
-                                    marginTop: isMobile ? 10 : 12,
-                                    padding: isMobile ? '8px 10px' : '10px 12px',
-                                    background: token.colorInfoBg,
-                                    borderLeft: `3px solid ${token.colorInfo}`,
-                                    borderRadius: token.borderRadius
-                                  }}>
-                                    <div style={{
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'space-between',
-                                      marginBottom: isMobile ? 6 : 8,
-                                      flexWrap: isMobile ? 'wrap' : 'nowrap',
-                                      gap: isMobile ? 4 : 0
-                                    }}>
-                                      <span style={{
-                                        fontSize: isMobile ? 12 : 13,
-                                        fontWeight: 600,
-                                        color: token.colorInfo,
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: 4
-                                      }}>
-                                        🎬 场景设定
-                                        <Tag
-                                          color="cyan"
-                                          style={{
-                                            margin: 0,
-                                            fontSize: 10,
-                                            borderRadius: 10,
-                                            padding: '0 6px'
-                                          }}
-                                        >
-                                          {structureData.scenes!.length}
-                                        </Tag>
-                                      </span>
-                                      {hasMoreScenes && (
-                                        <Button
-                                          type="text"
-                                          size="small"
-                                          onClick={() => setScenesExpandStatus(prev => ({
-                                            ...prev,
-                                            [item.id]: !isExpanded
-                                          }))}
-                                          style={{
-                                            fontSize: isMobile ? 10 : 11,
-                                            height: isMobile ? 20 : 22,
-                                            padding: isMobile ? '0 6px' : '0 8px',
-                                            color: token.colorInfo
-                                          }}
-                                        >
-                                          {isExpanded ? '收起 ▲' : `展开 (${structureData.scenes!.length - maxVisibleScenes}+) ▼`}
-                                        </Button>
-                                      )}
-                                    </div>
-                                    {/* 使用grid布局，移动端一列，桌面端两列 */}
-                                    <div style={{
-                                      display: 'grid',
-                                      gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(280px, 1fr))',
-                                      gap: isMobile ? 6 : 8,
-                                      width: '100%',
-                                      minWidth: 0  // 防止grid子元素溢出
-                                    }}>
-                                      {visibleScenes!.map((scene, idx) => {
-                                      // 判断是字符串还是对象
-                                      if (typeof scene === 'string') {
-                                        // 字符串格式：简洁卡片
-                                        return (
-                                          <div
-                                            key={idx}
-                                            style={{
-                                              padding: isMobile ? '6px 8px' : '8px 10px',
-                                              background: token.colorBgContainer,
-                                              border: `1px solid ${token.colorInfoBorder}`,
-                                              borderRadius: token.borderRadius,
-                                              fontSize: isMobile ? 11 : 12,
-                                              color: token.colorText,
-                                              display: 'flex',
-                                              alignItems: 'flex-start',
-                                              gap: isMobile ? 6 : 8,
-                                              transition: 'all 0.2s ease',
-                                              cursor: 'default',
-                                              width: '100%',
-                                              minWidth: 0,
-                                              boxSizing: 'border-box'
-                                            }}
-                                            onMouseEnter={(e) => {
-                                              if (!isMobile) {
-                                                e.currentTarget.style.borderColor = token.colorInfo;
-                                                e.currentTarget.style.boxShadow = `0 2px 8px ${alphaColor(token.colorInfo, 0.25)}`;
-                                              }
-                                            }}
-                                            onMouseLeave={(e) => {
-                                              if (!isMobile) {
-                                                e.currentTarget.style.borderColor = token.colorInfoBorder;
-                                                e.currentTarget.style.boxShadow = 'none';
-                                              }
-                                            }}
-                                          >
-                                            <Tag
-                                              color="cyan"
-                                              style={{
-                                                margin: 0,
-                                                fontSize: 10,
-                                                borderRadius: 4,
-                                                flexShrink: 0
-                                              }}
-                                            >
-                                              {idx + 1}
-                                            </Tag>
-                                            <span style={{
-                                              flex: 1,
-                                              lineHeight: '1.6',
-                                              overflow: 'hidden',
-                                              textOverflow: 'ellipsis',
-                                              whiteSpace: 'nowrap'
-                                            }}>{scene}</span>
-                                          </div>
-                                        );
-                                      } else {
-                                        // 对象格式：详细卡片
-                                        return (
-                                          <div
-                                            key={idx}
-                                            style={{
-                                              padding: isMobile ? '8px 10px' : '10px 12px',
-                                              background: token.colorBgContainer,
-                                              border: `1px solid ${token.colorInfoBorder}`,
-                                              borderRadius: token.borderRadius,
-                                              fontSize: isMobile ? 11 : 12,
-                                              transition: 'all 0.2s ease',
-                                              cursor: 'default',
-                                              width: '100%',
-                                              minWidth: 0,
-                                              boxSizing: 'border-box'
-                                            }}
-                                            onMouseEnter={(e) => {
-                                              if (!isMobile) {
-                                                e.currentTarget.style.borderColor = token.colorInfo;
-                                                e.currentTarget.style.boxShadow = `0 2px 8px ${alphaColor(token.colorInfo, 0.25)}`;
-                                              }
-                                            }}
-                                            onMouseLeave={(e) => {
-                                              if (!isMobile) {
-                                                e.currentTarget.style.borderColor = token.colorInfoBorder;
-                                                e.currentTarget.style.boxShadow = 'none';
-                                              }
-                                            }}
-                                          >
+                                <Tabs
+                                  defaultActiveKey="basic"
+                                  size="small"
+                                  style={{ marginTop: 12 }}
+                                  items={[
+                                    {
+                                      key: 'basic',
+                                      label: '基本信息',
+                                      children: (
+                                        <>
+                                          {/* ✨ 情感基调展示 (emotion) */}
+                                          {structureData.emotion && (
                                             <div style={{
+                                              marginTop: 12,
+                                              padding: '10px 12px',
+                                              background: token.colorWarningBg,
+                                              borderLeft: `3px solid ${token.colorWarning}`,
+                                              borderRadius: token.borderRadius,
                                               display: 'flex',
                                               alignItems: 'center',
-                                              gap: isMobile ? 6 : 8,
-                                              marginBottom: isMobile ? 4 : 6,
-                                              flexWrap: 'wrap'
+                                              gap: 8
                                             }}>
+                                              <span style={{
+                                                fontSize: 13,
+                                                fontWeight: 600,
+                                                color: token.colorWarning
+                                              }}>
+                                                💫 情感基调：
+                                              </span>
                                               <Tag
-                                                color="cyan"
+                                                color="gold"
                                                 style={{
                                                   margin: 0,
-                                                  fontSize: 10,
-                                                  borderRadius: 4
+                                                  fontSize: 12,
+                                                  padding: '2px 12px',
+                                                  borderRadius: 12,
+                                                  background: token.colorBgContainer,
+                                                  border: `1px solid ${token.colorWarningBorder}`,
+                                                  color: token.colorWarningText
                                                 }}
                                               >
-                                                场景{idx + 1}
+                                                {structureData.emotion}
                                               </Tag>
-                                              <span style={{
-                                                fontWeight: 600,
-                                                color: token.colorText,
-                                                fontSize: isMobile ? 12 : 13,
-                                                flex: 1,
-                                                overflow: 'hidden',
-                                                textOverflow: 'ellipsis',
-                                                whiteSpace: 'nowrap'
-                                              }}>
-                                                📍 {scene.location}
-                                              </span>
                                             </div>
-                                            {scene.characters && scene.characters.length > 0 && (
+                                          )}
+
+                                          {/* ✨ 叙事目标展示 (goal) */}
+                                          {structureData.goal && (
+                                            <div style={{
+                                              marginTop: 12,
+                                              padding: '10px 12px',
+                                              background: token.colorInfoBg,
+                                              borderLeft: `3px solid ${token.colorInfo}`,
+                                              borderRadius: token.borderRadius
+                                            }}>
                                               <div style={{
-                                                fontSize: isMobile ? 10 : 11,
-                                                color: token.colorTextSecondary,
-                                                marginBottom: 4,
-                                                paddingLeft: isMobile ? 2 : 4,
+                                                fontSize: 13,
+                                                fontWeight: 600,
+                                                color: token.colorInfo,
+                                                marginBottom: 6
+                                              }}>
+                                                🎯 叙事目标
+                                              </div>
+                                              <div style={{
+                                                fontSize: 12,
+                                                color: token.colorText,
+                                                lineHeight: '1.6',
+                                                padding: '6px 10px',
+                                                background: token.colorBgContainer,
+                                                border: `1px solid ${token.colorInfoBorder}`,
+                                                borderRadius: token.borderRadiusSM,
                                                 overflow: 'hidden',
                                                 textOverflow: 'ellipsis',
                                                 whiteSpace: 'nowrap'
                                               }}>
-                                                <span style={{ fontWeight: 500 }}>👤 角色：</span>
-                                                {scene.characters.join(' · ')}
+                                                {structureData.goal}
                                               </div>
-                                            )}
-                                            {scene.purpose && (
+                                            </div>
+                                          )}
+
+                                          {!structureData.emotion && !structureData.goal && (
+                                            <Empty description="暂无基本信息" style={{ margin: '12px 0' }} />
+                                          )}
+                                        </>
+                                      ),
+                                    },
+                                    {
+                                      key: 'characters',
+                                      label: '角色',
+                                      children: (
+                                        <>
+                                          {/* ✨ 涉及角色展示 - 优化版（支持角色/组织分类显示） */}
+                                          {characterNames.length > 0 && (
+                                            <div style={{
+                                              marginTop: isMobile ? 10 : 12,
+                                              padding: isMobile ? '8px 10px' : '10px 12px',
+                                              background: token.colorPrimaryBg,
+                                              borderLeft: `3px solid ${token.colorPrimary}`,
+                                              borderRadius: token.borderRadius
+                                            }}>
                                               <div style={{
-                                                fontSize: isMobile ? 10 : 11,
-                                                color: token.colorTextSecondary,
-                                                paddingLeft: isMobile ? 2 : 4,
-                                                lineHeight: '1.5',
-                                                overflow: 'hidden',
-                                                textOverflow: 'ellipsis',
-                                                whiteSpace: 'nowrap'
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: isMobile ? 6 : 8,
+                                                marginBottom: isMobile ? 6 : 8
                                               }}>
-                                                <span style={{ fontWeight: 500 }}>🎯 目的：</span>
-                                                {scene.purpose}
+                                                <span style={{
+                                                  fontSize: isMobile ? 12 : 13,
+                                                  fontWeight: 600,
+                                                  color: token.colorPrimary,
+                                                  display: 'flex',
+                                                  alignItems: 'center',
+                                                  gap: 4
+                                                }}>
+                                                  👥 涉及角色
+                                                  <Tag
+                                                    color="purple"
+                                                    style={{
+                                                      margin: 0,
+                                                      fontSize: 10,
+                                                      borderRadius: 10,
+                                                      padding: '0 6px'
+                                                    }}
+                                                  >
+                                                    {characterNames.length}
+                                                  </Tag>
+                                                </span>
                                               </div>
-                                            )}
-                                          </div>
-                                        );
-                                      }
-                                      })}
-                                    </div>
-                                  </div>
-                                );
-                              })() : null}
-                            
-                            {/* ✨ 关键事件展示 */}
-                            {structureData.key_events && structureData.key_events.length > 0 && (
-                              <div style={{
-                                marginTop: 12,
-                                padding: '10px 12px',
-                                background: token.colorWarningBg,
-                                borderLeft: `3px solid ${token.colorWarning}`,
-                                borderRadius: token.borderRadius
-                              }}>
-                                <div style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: 8,
-                                  marginBottom: 8
-                                }}>
-                                  <span style={{
-                                    fontSize: 13,
-                                    fontWeight: 600,
-                                    color: token.colorWarning,
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: 4
-                                  }}>
-                                    ⚡ 关键事件
-                                    <Tag
-                                      color="orange"
-                                      style={{
-                                        margin: 0,
-                                        fontSize: 11,
-                                        borderRadius: 10,
-                                        padding: '0 6px'
-                                      }}
-                                    >
-                                      {structureData.key_events.length}
-                                    </Tag>
-                                  </span>
-                                </div>
-                                <Space direction="vertical" size={6} style={{ width: '100%' }}>
-                                  {structureData.key_events.map((event, idx) => (
-                                    <div
-                                      key={idx}
-                                      style={{
-                                        padding: '6px 10px',
-                                        background: token.colorBgContainer,
-                                        border: `1px solid ${token.colorWarningBorder}`,
-                                        borderRadius: token.borderRadiusSM,
-                                        fontSize: 12,
-                                        color: token.colorWarningText,
-                                        display: 'flex',
-                                        alignItems: 'flex-start',
-                                        gap: 8
-                                      }}
-                                    >
-                                      <Tag
-                                        color="orange"
-                                        style={{
-                                          margin: 0,
-                                          fontSize: 11,
-                                          borderRadius: 4,
-                                          flexShrink: 0
-                                        }}
-                                      >
-                                        {idx + 1}
-                                      </Tag>
-                                      <span style={{
-                                        flex: 1,
-                                        lineHeight: '1.6',
-                                        overflow: 'hidden',
-                                        textOverflow: 'ellipsis',
-                                        whiteSpace: 'nowrap'
-                                      }}>{event}</span>
-                                    </div>
-                                  ))}
-                                </Space>
-                              </div>
-                            )}
-                            
-                            {/* ✨ 情节要点展示 (key_points) */}
-                            {structureData.key_points && structureData.key_points.length > 0 && (
-                              <div style={{
-                                marginTop: 12,
-                                padding: '10px 12px',
-                                background: token.colorSuccessBg,
-                                borderLeft: `3px solid ${token.colorSuccess}`,
-                                borderRadius: token.borderRadius
-                              }}>
-                                <div style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: 8,
-                                  marginBottom: 8
-                                }}>
-                                  <span style={{
-                                    fontSize: 13,
-                                    fontWeight: 600,
-                                    color: token.colorSuccess,
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: 4
-                                  }}>
-                                    💡 情节要点
-                                    <Tag
-                                      color="green"
-                                      style={{
-                                        margin: 0,
-                                        fontSize: 11,
-                                        borderRadius: 10,
-                                        padding: '0 6px'
-                                      }}
-                                    >
-                                      {structureData.key_points.length}
-                                    </Tag>
-                                  </span>
-                                </div>
-                                {/* 使用grid布局，移动端一列，桌面端两列 */}
-                                <div style={{
-                                  display: 'grid',
-                                  gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(280px, 1fr))',
-                                  gap: isMobile ? 6 : 8,
-                                  width: '100%',
-                                  minWidth: 0
-                                }}>
-                                  {structureData.key_points.map((point, idx) => (
-                                    <div
-                                      key={idx}
-                                      style={{
-                                        padding: isMobile ? '6px 8px' : '8px 10px',
-                                        background: token.colorBgContainer,
-                                        border: `1px solid ${token.colorSuccessBorder}`,
-                                        borderRadius: token.borderRadius,
-                                        fontSize: isMobile ? 11 : 12,
-                                        color: token.colorText,
-                                        display: 'flex',
-                                        alignItems: 'flex-start',
-                                        gap: isMobile ? 6 : 8,
-                                        transition: 'all 0.2s ease',
-                                        cursor: 'default',
-                                        width: '100%',
-                                        minWidth: 0,
-                                        boxSizing: 'border-box'
-                                      }}
-                                      onMouseEnter={(e) => {
-                                        if (!isMobile) {
-                                          e.currentTarget.style.borderColor = token.colorSuccess;
-                                          e.currentTarget.style.boxShadow = `0 2px 8px ${alphaColor(token.colorSuccess, 0.25)}`;
-                                        }
-                                      }}
-                                      onMouseLeave={(e) => {
-                                        if (!isMobile) {
-                                          e.currentTarget.style.borderColor = token.colorSuccessBorder;
-                                          e.currentTarget.style.boxShadow = 'none';
-                                        }
-                                      }}
-                                    >
-                                      <Tag
-                                        color="green"
-                                        style={{
-                                          margin: 0,
-                                          fontSize: 10,
-                                          borderRadius: 4,
-                                          flexShrink: 0
-                                        }}
-                                      >
-                                        {idx + 1}
-                                      </Tag>
-                                      <span style={{
-                                        flex: 1,
-                                        lineHeight: '1.6',
-                                        overflow: 'hidden',
-                                        textOverflow: 'ellipsis',
-                                        whiteSpace: 'nowrap'
-                                      }}>{point}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                            
-                            {/* ✨ 情感基调展示 (emotion) */}
-                            {structureData.emotion && (
-                              <div style={{
-                                marginTop: 12,
-                                padding: '10px 12px',
-                                background: token.colorWarningBg,
-                                borderLeft: `3px solid ${token.colorWarning}`,
-                                borderRadius: token.borderRadius,
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 8
-                              }}>
-                                <span style={{
-                                  fontSize: 13,
-                                  fontWeight: 600,
-                                  color: token.colorWarning
-                                }}>
-                                  💫 情感基调：
-                                </span>
-                                <Tag
-                                  color="gold"
-                                  style={{
-                                    margin: 0,
-                                    fontSize: 12,
-                                    padding: '2px 12px',
-                                    borderRadius: 12,
-                                    background: token.colorBgContainer,
-                                    border: `1px solid ${token.colorWarningBorder}`,
-                                    color: token.colorWarningText
-                                  }}
-                                >
-                                  {structureData.emotion}
-                                </Tag>
-                              </div>
-                            )}
-                            
-                            {/* ✨ 叙事目标展示 (goal) */}
-                            {structureData.goal && (
-                              <div style={{
-                                marginTop: 12,
-                                padding: '10px 12px',
-                                background: token.colorInfoBg,
-                                borderLeft: `3px solid ${token.colorInfo}`,
-                                borderRadius: token.borderRadius
-                              }}>
-                                <div style={{
-                                  fontSize: 13,
-                                  fontWeight: 600,
-                                  color: token.colorInfo,
-                                  marginBottom: 6
-                                }}>
-                                  🎯 叙事目标
-                                </div>
-                                <div style={{
-                                  fontSize: 12,
-                                  color: token.colorText,
-                                  lineHeight: '1.6',
-                                  padding: '6px 10px',
-                                  background: token.colorBgContainer,
-                                  border: `1px solid ${token.colorInfoBorder}`,
-                                  borderRadius: token.borderRadiusSM,
-                                  overflow: 'hidden',
-                                  textOverflow: 'ellipsis',
-                                  whiteSpace: 'nowrap'
-                                }}>
-                                  {structureData.goal}
-                                </div>
-                              </div>
-                            )}
-                              </>
-                            )}
+                                              <Space wrap size={[4, 4]}>
+                                                {characterNames.map((name, idx) => (
+                                                  <Tag
+                                                    key={idx}
+                                                    color="purple"
+                                                    style={{
+                                                      margin: 0,
+                                                      borderRadius: 4,
+                                                      padding: isMobile ? '2px 8px' : '3px 10px',
+                                                      fontSize: isMobile ? 11 : 12,
+                                                      fontWeight: 500,
+                                                      border: `1px solid ${token.colorPrimaryBorder}`,
+                                                      background: token.colorBgContainer,
+                                                      color: token.colorPrimary,
+                                                      whiteSpace: 'normal',
+                                                      wordBreak: 'break-word',
+                                                      height: 'auto',
+                                                      lineHeight: '1.5'
+                                                    }}
+                                                  >
+                                                    {name}
+                                                  </Tag>
+                                                ))}
+                                              </Space>
+                                            </div>
+                                          )}
+
+                                          {/* 🏛️ 涉及组织展示 */}
+                                          {organizationNames.length > 0 && (
+                                            <div style={{
+                                              marginTop: isMobile ? 10 : 12,
+                                              padding: isMobile ? '8px 10px' : '10px 12px',
+                                              background: token.colorWarningBg,
+                                              borderLeft: `3px solid ${token.colorWarning}`,
+                                              borderRadius: token.borderRadius
+                                            }}>
+                                              <div style={{
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: isMobile ? 6 : 8,
+                                                marginBottom: isMobile ? 6 : 8
+                                              }}>
+                                                <span style={{
+                                                  fontSize: isMobile ? 12 : 13,
+                                                  fontWeight: 600,
+                                                  color: token.colorWarning,
+                                                  display: 'flex',
+                                                  alignItems: 'center',
+                                                  gap: 4
+                                                }}>
+                                                  🏛️ 涉及组织
+                                                  <Tag
+                                                    color="orange"
+                                                    style={{
+                                                      margin: 0,
+                                                      fontSize: 10,
+                                                      borderRadius: 10,
+                                                      padding: '0 6px'
+                                                    }}
+                                                  >
+                                                    {organizationNames.length}
+                                                  </Tag>
+                                                </span>
+                                              </div>
+                                              <Space wrap size={[4, 4]}>
+                                                {organizationNames.map((name, idx) => (
+                                                  <Tag
+                                                    key={idx}
+                                                    color="orange"
+                                                    style={{
+                                                      margin: 0,
+                                                      borderRadius: 4,
+                                                      padding: isMobile ? '2px 8px' : '3px 10px',
+                                                      fontSize: isMobile ? 11 : 12,
+                                                      fontWeight: 500,
+                                                      border: `1px solid ${token.colorWarningBorder}`,
+                                                      background: token.colorBgContainer,
+                                                      color: token.colorWarning,
+                                                      whiteSpace: 'normal',
+                                                      wordBreak: 'break-word',
+                                                      height: 'auto',
+                                                      lineHeight: '1.5'
+                                                    }}
+                                                  >
+                                                    {name}
+                                                  </Tag>
+                                                ))}
+                                              </Space>
+                                            </div>
+                                          )}
+
+                                          {characterNames.length === 0 && organizationNames.length === 0 && (
+                                            <Empty description="暂无角色信息" style={{ margin: '12px 0' }} />
+                                          )}
+                                        </>
+                                      ),
+                                    },
+                                    {
+                                      key: 'scenes',
+                                      label: '场景',
+                                      children: (
+                                        <>
+                                          {/* ✨ 场景信息展示 - 优化版（支持折叠，最多显示3个） */}
+                                          {structureData.scenes && structureData.scenes.length > 0 ? (() => {
+                                            const isExpanded = scenesExpandStatus[item.id] || false;
+                                            const maxVisibleScenes = 4;
+                                            const hasMoreScenes = structureData.scenes!.length > maxVisibleScenes;
+                                            const visibleScenes = isExpanded ? structureData.scenes : structureData.scenes!.slice(0, maxVisibleScenes);
+
+                                            return (
+                                              <div style={{
+                                                marginTop: isMobile ? 10 : 12,
+                                                padding: isMobile ? '8px 10px' : '10px 12px',
+                                                background: token.colorInfoBg,
+                                                borderLeft: `3px solid ${token.colorInfo}`,
+                                                borderRadius: token.borderRadius
+                                              }}>
+                                                <div style={{
+                                                  display: 'flex',
+                                                  alignItems: 'center',
+                                                  justifyContent: 'space-between',
+                                                  marginBottom: isMobile ? 6 : 8,
+                                                  flexWrap: isMobile ? 'wrap' : 'nowrap',
+                                                  gap: isMobile ? 4 : 0
+                                                }}>
+                                                  <span style={{
+                                                    fontSize: isMobile ? 12 : 13,
+                                                    fontWeight: 600,
+                                                    color: token.colorInfo,
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: 4
+                                                  }}>
+                                                    🎬 场景设定
+                                                    <Tag
+                                                      color="cyan"
+                                                      style={{
+                                                        margin: 0,
+                                                        fontSize: 10,
+                                                        borderRadius: 10,
+                                                        padding: '0 6px'
+                                                      }}
+                                                    >
+                                                      {structureData.scenes!.length}
+                                                    </Tag>
+                                                  </span>
+                                                  {hasMoreScenes && (
+                                                    <Button
+                                                      type="text"
+                                                      size="small"
+                                                      onClick={() => setScenesExpandStatus(prev => ({
+                                                        ...prev,
+                                                        [item.id]: !isExpanded
+                                                      }))}
+                                                      style={{
+                                                        fontSize: isMobile ? 10 : 11,
+                                                        height: isMobile ? 20 : 22,
+                                                        padding: isMobile ? '0 6px' : '0 8px',
+                                                        color: token.colorInfo
+                                                      }}
+                                                    >
+                                                      {isExpanded ? '收起 ▲' : `展开 (${structureData.scenes!.length - maxVisibleScenes}+) ▼`}
+                                                    </Button>
+                                                  )}
+                                                </div>
+                                                {/* 使用grid布局，移动端一列，桌面端两列 */}
+                                                <div style={{
+                                                  display: 'grid',
+                                                  gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(280px, 1fr))',
+                                                  gap: isMobile ? 6 : 8,
+                                                  width: '100%',
+                                                  minWidth: 0  // 防止grid子元素溢出
+                                                }}>
+                                                  {visibleScenes!.map((scene, idx) => {
+                                                  // 判断是字符串还是对象
+                                                  if (typeof scene === 'string') {
+                                                    // 字符串格式：简洁卡片
+                                                    return (
+                                                      <div
+                                                        key={idx}
+                                                        style={{
+                                                          padding: isMobile ? '6px 8px' : '8px 10px',
+                                                          background: token.colorBgContainer,
+                                                          border: `1px solid ${token.colorInfoBorder}`,
+                                                          borderRadius: token.borderRadius,
+                                                          fontSize: isMobile ? 11 : 12,
+                                                          color: token.colorText,
+                                                          display: 'flex',
+                                                          alignItems: 'flex-start',
+                                                          gap: isMobile ? 6 : 8,
+                                                          transition: 'all 0.2s ease',
+                                                          cursor: 'default',
+                                                          width: '100%',
+                                                          minWidth: 0,
+                                                          boxSizing: 'border-box'
+                                                        }}
+                                                        onMouseEnter={(e) => {
+                                                          if (!isMobile) {
+                                                            e.currentTarget.style.borderColor = token.colorInfo;
+                                                            e.currentTarget.style.boxShadow = `0 2px 8px ${alphaColor(token.colorInfo, 0.25)}`;
+                                                          }
+                                                        }}
+                                                        onMouseLeave={(e) => {
+                                                          if (!isMobile) {
+                                                            e.currentTarget.style.borderColor = token.colorInfoBorder;
+                                                            e.currentTarget.style.boxShadow = 'none';
+                                                          }
+                                                        }}
+                                                      >
+                                                        <Tag
+                                                          color="cyan"
+                                                          style={{
+                                                            margin: 0,
+                                                            fontSize: 10,
+                                                            borderRadius: 4,
+                                                            flexShrink: 0
+                                                          }}
+                                                        >
+                                                          {idx + 1}
+                                                        </Tag>
+                                                        <span style={{
+                                                          flex: 1,
+                                                          lineHeight: '1.6',
+                                                          overflow: 'hidden',
+                                                          textOverflow: 'ellipsis',
+                                                          whiteSpace: 'nowrap'
+                                                        }}>{scene}</span>
+                                                      </div>
+                                                    );
+                                                  } else {
+                                                    // 对象格式：详细卡片
+                                                    return (
+                                                      <div
+                                                        key={idx}
+                                                        style={{
+                                                          padding: isMobile ? '8px 10px' : '10px 12px',
+                                                          background: token.colorBgContainer,
+                                                          border: `1px solid ${token.colorInfoBorder}`,
+                                                          borderRadius: token.borderRadius,
+                                                          fontSize: isMobile ? 11 : 12,
+                                                          transition: 'all 0.2s ease',
+                                                          cursor: 'default',
+                                                          width: '100%',
+                                                          minWidth: 0,
+                                                          boxSizing: 'border-box'
+                                                        }}
+                                                        onMouseEnter={(e) => {
+                                                          if (!isMobile) {
+                                                            e.currentTarget.style.borderColor = token.colorInfo;
+                                                            e.currentTarget.style.boxShadow = `0 2px 8px ${alphaColor(token.colorInfo, 0.25)}`;
+                                                          }
+                                                        }}
+                                                        onMouseLeave={(e) => {
+                                                          if (!isMobile) {
+                                                            e.currentTarget.style.borderColor = token.colorInfoBorder;
+                                                            e.currentTarget.style.boxShadow = 'none';
+                                                          }
+                                                        }}
+                                                      >
+                                                        <div style={{
+                                                          display: 'flex',
+                                                          alignItems: 'center',
+                                                          gap: isMobile ? 6 : 8,
+                                                          marginBottom: isMobile ? 4 : 6,
+                                                          flexWrap: 'wrap'
+                                                        }}>
+                                                          <Tag
+                                                            color="cyan"
+                                                            style={{
+                                                              margin: 0,
+                                                              fontSize: 10,
+                                                              borderRadius: 4
+                                                            }}
+                                                          >
+                                                            场景{idx + 1}
+                                                          </Tag>
+                                                          <span style={{
+                                                            fontWeight: 600,
+                                                            color: token.colorText,
+                                                            fontSize: isMobile ? 12 : 13,
+                                                            flex: 1,
+                                                            overflow: 'hidden',
+                                                            textOverflow: 'ellipsis',
+                                                            whiteSpace: 'nowrap'
+                                                          }}>
+                                                            📍 {scene.location}
+                                                          </span>
+                                                        </div>
+                                                        {scene.characters && scene.characters.length > 0 && (
+                                                          <div style={{
+                                                            fontSize: isMobile ? 10 : 11,
+                                                            color: token.colorTextSecondary,
+                                                            marginBottom: 4,
+                                                            paddingLeft: isMobile ? 2 : 4,
+                                                            overflow: 'hidden',
+                                                            textOverflow: 'ellipsis',
+                                                            whiteSpace: 'nowrap'
+                                                          }}>
+                                                            <span style={{ fontWeight: 500 }}>👤 角色：</span>
+                                                            {scene.characters.join(' · ')}
+                                                          </div>
+                                                        )}
+                                                        {scene.purpose && (
+                                                          <div style={{
+                                                            fontSize: isMobile ? 10 : 11,
+                                                            color: token.colorTextSecondary,
+                                                            paddingLeft: isMobile ? 2 : 4,
+                                                            lineHeight: '1.5',
+                                                            overflow: 'hidden',
+                                                            textOverflow: 'ellipsis',
+                                                            whiteSpace: 'nowrap'
+                                                          }}>
+                                                            <span style={{ fontWeight: 500 }}>🎯 目的：</span>
+                                                            {scene.purpose}
+                                                          </div>
+                                                        )}
+                                                      </div>
+                                                    );
+                                                  }
+                                                  })}
+                                                </div>
+                                              </div>
+                                            );
+                                          })() : (
+                                            <Empty description="暂无场景信息" style={{ margin: '12px 0' }} />
+                                          )}
+                                        </>
+                                      ),
+                                    },
+                                    {
+                                      key: 'plot',
+                                      label: '情节',
+                                      children: (
+                                        <>
+                                          {/* ✨ 关键事件展示 */}
+                                          {structureData.key_events && structureData.key_events.length > 0 && (
+                                            <div style={{
+                                              marginTop: 12,
+                                              padding: '10px 12px',
+                                              background: token.colorWarningBg,
+                                              borderLeft: `3px solid ${token.colorWarning}`,
+                                              borderRadius: token.borderRadius
+                                            }}>
+                                              <div style={{
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: 8,
+                                                marginBottom: 8
+                                              }}>
+                                                <span style={{
+                                                  fontSize: 13,
+                                                  fontWeight: 600,
+                                                  color: token.colorWarning,
+                                                  display: 'flex',
+                                                  alignItems: 'center',
+                                                  gap: 4
+                                                }}>
+                                                  ⚡ 关键事件
+                                                  <Tag
+                                                    color="orange"
+                                                    style={{
+                                                      margin: 0,
+                                                      fontSize: 11,
+                                                      borderRadius: 10,
+                                                      padding: '0 6px'
+                                                    }}
+                                                  >
+                                                    {structureData.key_events.length}
+                                                  </Tag>
+                                                </span>
+                                              </div>
+                                              <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                                                {structureData.key_events.map((event, idx) => (
+                                                  <div
+                                                    key={idx}
+                                                    style={{
+                                                      padding: '6px 10px',
+                                                      background: token.colorBgContainer,
+                                                      border: `1px solid ${token.colorWarningBorder}`,
+                                                      borderRadius: token.borderRadiusSM,
+                                                      fontSize: 12,
+                                                      color: token.colorWarningText,
+                                                      display: 'flex',
+                                                      alignItems: 'flex-start',
+                                                      gap: 8
+                                                    }}
+                                                  >
+                                                    <Tag
+                                                      color="orange"
+                                                      style={{
+                                                        margin: 0,
+                                                        fontSize: 11,
+                                                        borderRadius: 4,
+                                                        flexShrink: 0
+                                                      }}
+                                                    >
+                                                      {idx + 1}
+                                                    </Tag>
+                                                    <span style={{
+                                                      flex: 1,
+                                                      lineHeight: '1.6',
+                                                      overflow: 'hidden',
+                                                      textOverflow: 'ellipsis',
+                                                      whiteSpace: 'nowrap'
+                                                    }}>{event}</span>
+                                                  </div>
+                                                ))}
+                                              </Space>
+                                            </div>
+                                          )}
+
+                                          {/* ✨ 情节要点展示 (key_points) */}
+                                          {structureData.key_points && structureData.key_points.length > 0 && (
+                                            <div style={{
+                                              marginTop: 12,
+                                              padding: '10px 12px',
+                                              background: token.colorSuccessBg,
+                                              borderLeft: `3px solid ${token.colorSuccess}`,
+                                              borderRadius: token.borderRadius
+                                            }}>
+                                              <div style={{
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: 8,
+                                                marginBottom: 8
+                                              }}>
+                                                <span style={{
+                                                  fontSize: 13,
+                                                  fontWeight: 600,
+                                                  color: token.colorSuccess,
+                                                  display: 'flex',
+                                                  alignItems: 'center',
+                                                  gap: 4
+                                                }}>
+                                                  💡 情节要点
+                                                  <Tag
+                                                    color="green"
+                                                    style={{
+                                                      margin: 0,
+                                                      fontSize: 11,
+                                                      borderRadius: 10,
+                                                      padding: '0 6px'
+                                                    }}
+                                                  >
+                                                    {structureData.key_points.length}
+                                                  </Tag>
+                                                </span>
+                                              </div>
+                                              {/* 使用grid布局，移动端一列，桌面端两列 */}
+                                              <div style={{
+                                                display: 'grid',
+                                                gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(280px, 1fr))',
+                                                gap: isMobile ? 6 : 8,
+                                                width: '100%',
+                                                minWidth: 0
+                                              }}>
+                                                {structureData.key_points.map((point, idx) => (
+                                                  <div
+                                                    key={idx}
+                                                    style={{
+                                                      padding: isMobile ? '6px 8px' : '8px 10px',
+                                                      background: token.colorBgContainer,
+                                                      border: `1px solid ${token.colorSuccessBorder}`,
+                                                      borderRadius: token.borderRadius,
+                                                      fontSize: isMobile ? 11 : 12,
+                                                      color: token.colorText,
+                                                      display: 'flex',
+                                                      alignItems: 'flex-start',
+                                                      gap: isMobile ? 6 : 8,
+                                                      transition: 'all 0.2s ease',
+                                                      cursor: 'default',
+                                                      width: '100%',
+                                                      minWidth: 0,
+                                                      boxSizing: 'border-box'
+                                                    }}
+                                                    onMouseEnter={(e) => {
+                                                      if (!isMobile) {
+                                                        e.currentTarget.style.borderColor = token.colorSuccess;
+                                                        e.currentTarget.style.boxShadow = `0 2px 8px ${alphaColor(token.colorSuccess, 0.25)}`;
+                                                      }
+                                                    }}
+                                                    onMouseLeave={(e) => {
+                                                      if (!isMobile) {
+                                                        e.currentTarget.style.borderColor = token.colorSuccessBorder;
+                                                        e.currentTarget.style.boxShadow = 'none';
+                                                      }
+                                                    }}
+                                                  >
+                                                    <Tag
+                                                      color="green"
+                                                      style={{
+                                                        margin: 0,
+                                                        fontSize: 10,
+                                                        borderRadius: 4,
+                                                        flexShrink: 0
+                                                      }}
+                                                    >
+                                                      {idx + 1}
+                                                    </Tag>
+                                                    <span style={{
+                                                      flex: 1,
+                                                      lineHeight: '1.6',
+                                                      overflow: 'hidden',
+                                                      textOverflow: 'ellipsis',
+                                                      whiteSpace: 'nowrap'
+                                                    }}>{point}</span>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          )}
+
+                                          {(!structureData.key_events || structureData.key_events.length === 0) &&
+                                           (!structureData.key_points || structureData.key_points.length === 0) && (
+                                            <Empty description="暂无情节信息" style={{ margin: '12px 0' }} />
+                                          )}
+                                        </>
+                                      ),
+                                    },
+                                  ]}
+                                />
+                              )}
                           </div>
                         }
                       />
@@ -2286,10 +2360,12 @@ export default function Outline() {
                             编辑
                           </Button>
                           <Popconfirm
-                            title="确定删除这条大纲吗？"
+                            title="确认删除大纲？"
+                            description="删除后将无法恢复，关联的章节展开信息也将被清除。"
                             onConfirm={() => handleDeleteOutline(item.id)}
                             okText="确定"
                             cancelText="取消"
+                            okButtonProps={{ danger: true }}
                           >
                             <Button
                               danger

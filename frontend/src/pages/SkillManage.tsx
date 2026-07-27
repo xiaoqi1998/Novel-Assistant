@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react';
-import { Button, Table, Modal, Form, Input, Tag, Space, message, Popconfirm, Card, theme, Empty, Badge, Tooltip, Select } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined, ThunderboltOutlined, FileTextOutlined } from '@ant-design/icons';
+import { useState, useEffect, useMemo } from 'react';
+import { Button, Table, Modal, Form, Input, Tag, Space, message, Popconfirm, Card, theme, Empty, Badge, Tooltip, Select, Switch, Typography } from 'antd';
+import type { FormInstance } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined, ThunderboltOutlined, FileTextOutlined, SearchOutlined, InfoCircleOutlined } from '@ant-design/icons';
 
 const { TextArea } = Input;
+const { Text } = Typography;
 
 interface SkillItem {
   template_key: string;
@@ -49,10 +51,158 @@ const normalizeCategory = (value: string | string[]) => (
   Array.isArray(value) ? (value[0] || '').trim() : (value || '').trim()
 );
 
+// 参考资料编辑器：表单模式 + 高级 JSON 模式
+interface ReferencesEditorProps {
+  form: FormInstance;
+  tooltip?: string;
+}
+
+function ReferencesEditor({ form, tooltip }: ReferencesEditorProps) {
+  const { token } = theme.useToken();
+  const referencesJson = Form.useWatch('references', form) as string | undefined;
+  const [advanced, setAdvanced] = useState(false);
+  const [newRefName, setNewRefName] = useState('');
+  const [newRefContent, setNewRefContent] = useState('');
+
+  const refs = useMemo<Record<string, string>>(() => {
+    if (!referencesJson || !referencesJson.trim()) return {};
+    try {
+      const parsed = JSON.parse(referencesJson);
+      return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+        ? (parsed as Record<string, string>)
+        : {};
+    } catch {
+      return {};
+    }
+  }, [referencesJson]);
+
+  const commitRefs = (next: Record<string, string>) => {
+    form.setFieldValue('references', Object.keys(next).length ? JSON.stringify(next, null, 2) : '');
+  };
+
+  const handleAdd = () => {
+    const name = newRefName.trim();
+    if (!name) {
+      message.warning('请输入文件名');
+      return;
+    }
+    if (!newRefContent.trim()) {
+      message.warning('请输入内容');
+      return;
+    }
+    const next = { ...refs, [name]: newRefContent };
+    commitRefs(next);
+    setNewRefName('');
+    setNewRefContent('');
+    message.success(`参考文件 "${name}" 已添加`);
+  };
+
+  const handleRemove = (name: string) => {
+    const next = { ...refs };
+    delete next[name];
+    commitRefs(next);
+  };
+
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <Space>
+          <Text strong>参考资料</Text>
+          <Tooltip title={tooltip || '格式：{"文件名": "内容"}。表单模式便于快速添加，高级模式可直接编辑原始 JSON'}>
+            <InfoCircleOutlined style={{ color: token.colorTextSecondary, fontSize: 12 }} />
+          </Tooltip>
+        </Space>
+        <Space size={4}>
+          <Text type="secondary" style={{ fontSize: 12 }}>高级模式</Text>
+          <Switch size="small" checked={advanced} onChange={setAdvanced} />
+        </Space>
+      </div>
+
+      {advanced ? (
+        <Form.Item name="references" style={{ marginBottom: 0 }}>
+          <TextArea
+            rows={8}
+            placeholder='{"anti-ai-tips": "去AI味的技巧...", "quality-check": "质量检查清单..."}'
+            style={{ fontFamily: 'monospace', fontSize: 12 }}
+          />
+        </Form.Item>
+      ) : (
+        <div>
+          {Object.keys(refs).length > 0 && (
+            <div style={{ marginBottom: 8 }}>
+              {Object.entries(refs).map(([name, content]) => (
+                <Card
+                  key={name}
+                  size="small"
+                  style={{ marginBottom: 8 }}
+                  title={
+                    <Space>
+                      <FileTextOutlined />
+                      <Text strong>{name}</Text>
+                    </Space>
+                  }
+                  extra={
+                    <Button
+                      type="text"
+                      danger
+                      size="small"
+                      icon={<DeleteOutlined />}
+                      onClick={() => handleRemove(name)}
+                    />
+                  }
+                >
+                  <Text
+                    type="secondary"
+                    style={{
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      fontSize: 12,
+                      display: 'block',
+                      maxHeight: 100,
+                      overflow: 'hidden',
+                    }}
+                  >
+                    {content}
+                  </Text>
+                </Card>
+              ))}
+            </div>
+          )}
+
+          <Card size="small" type="inner" title="添加参考文件">
+            <div style={{ marginBottom: 8 }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>文件名</Text>
+              <Input
+                placeholder="例如：anti-ai-tips"
+                value={newRefName}
+                onChange={(e) => setNewRefName(e.target.value)}
+                style={{ marginTop: 4 }}
+              />
+            </div>
+            <div style={{ marginBottom: 8 }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>内容</Text>
+              <TextArea
+                rows={4}
+                placeholder="参考文件内容..."
+                value={newRefContent}
+                onChange={(e) => setNewRefContent(e.target.value)}
+                style={{ marginTop: 4 }}
+              />
+            </div>
+            <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>添加参考文件</Button>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SkillManage() {
   const { token } = theme.useToken();
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [editingSkill, setEditingSkill] = useState<SkillDetail | null>(null);
@@ -255,6 +405,28 @@ export default function SkillManage() {
     }
   };
 
+  const filteredSkills = useMemo(() => {
+    let list = skills;
+
+    // 按 name 搜索（含 display_name / template_key）
+    if (searchTerm.trim()) {
+      const term = searchTerm.trim().toLowerCase();
+      list = list.filter((s) => {
+        const nameMatch = s.name?.toLowerCase().includes(term);
+        const displayMatch = s.display_name?.toLowerCase().includes(term);
+        const keyMatch = s.template_key?.toLowerCase().includes(term);
+        return nameMatch || displayMatch || keyMatch;
+      });
+    }
+
+    // 按分类筛选
+    if (categoryFilter !== 'all') {
+      list = list.filter((s) => s.category === categoryFilter);
+    }
+
+    return list;
+  }, [skills, searchTerm, categoryFilter]);
+
   const columns = [
     {
       title: '名称',
@@ -410,6 +582,35 @@ export default function SkillManage() {
         </Space>
       </div>
 
+      {/* 搜索与筛选 */}
+      {skills.length > 0 && (
+        <div style={{
+          display: 'flex',
+          gap: 12,
+          marginBottom: 16,
+          flexWrap: 'wrap',
+          alignItems: 'center',
+        }}>
+          <Input
+            prefix={<SearchOutlined style={{ color: token.colorTextQuaternary }} />}
+            placeholder="按名称搜索 Skill..."
+            allowClear
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            style={{ flex: 1, minWidth: 220, maxWidth: 360 }}
+          />
+          <Select
+            value={categoryFilter}
+            onChange={setCategoryFilter}
+            style={{ minWidth: 140 }}
+            options={[
+              { value: 'all', label: '全部分类' },
+              ...SKILL_CATEGORY_OPTIONS,
+            ]}
+          />
+        </div>
+      )}
+
       {/* Skill 列表 */}
       {skills.length === 0 && !loading ? (
         <Card>
@@ -422,11 +623,11 @@ export default function SkillManage() {
       ) : (
         <div style={{ flex: 1, overflowY: 'auto' }}>
           <Table
-            dataSource={skills}
+            dataSource={filteredSkills}
             columns={columns}
             rowKey="template_key"
             loading={loading}
-            pagination={false}
+            pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `共 ${total} 个 Skill` }}
             size="middle"
             style={{ background: token.colorBgContainer }}
           />
@@ -501,10 +702,7 @@ export default function SkillManage() {
             tooltip="SKILL.md 中 YAML frontmatter 之后的 Markdown 正文">
             <TextArea rows={15} placeholder="输入 Skill 的完整工作流指令..." style={{ fontFamily: 'monospace', fontSize: 13 }} />
           </Form.Item>
-          <Form.Item label="参考资料 (JSON)" name="references"
-            tooltip='格式：{"文件名": "内容"}。留空则保留原有参考资料'>
-            <TextArea rows={8} placeholder='{"anti-ai-tips": "去AI味的技巧...", "quality-check": "质量检查清单..."}' style={{ fontFamily: 'monospace', fontSize: 12 }} />
-          </Form.Item>
+          <ReferencesEditor form={editForm} tooltip='格式：{"文件名": "内容"}。留空则保留原有参考资料。表单模式便于快速添加，高级模式可直接编辑原始 JSON' />
         </Form>
       </Modal>
 
@@ -555,10 +753,7 @@ export default function SkillManage() {
             tooltip="Skill 的核心 Markdown 内容">
             <TextArea rows={15} placeholder={"# my-new-skill：Skill 标题\n\n你是 xxx 专家。你的任务是帮用户完成 xxx。\n\n## 核心原则\n\n- 原则1...\n\n## 工作流程\n\n### Phase 1：需求确认\n..."} style={{ fontFamily: 'monospace', fontSize: 13 }} />
           </Form.Item>
-          <Form.Item label="参考资料 (JSON，可选)" name="references"
-            tooltip='格式：{"文件名": "内容"}'>
-            <TextArea rows={8} placeholder='{"tips": "参考技巧...", "examples": "示例..."}' style={{ fontFamily: 'monospace', fontSize: 12 }} />
-          </Form.Item>
+          <ReferencesEditor form={createForm} tooltip='格式：{"文件名": "内容"}。表单模式便于快速添加，高级模式可直接编辑原始 JSON' />
         </Form>
       </Modal>
     </div>

@@ -51,12 +51,19 @@ export default function Relationships() {
   const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
+    let timeoutId: number | undefined;
     const handleResize = () => {
-      setIsMobile(window.innerWidth <= 768);
+      if (timeoutId) window.clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(() => {
+        setIsMobile(window.innerWidth <= 768);
+      }, 150);
     };
 
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      if (timeoutId) window.clearTimeout(timeoutId);
+    };
   }, []);
 
   useEffect(() => {

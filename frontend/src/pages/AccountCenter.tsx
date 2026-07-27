@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Button, Card, Col, List, Row, Space, Statistic, Tag, message } from 'antd';
+import { Alert, Button, Card, Col, List, Modal, Radio, Row, Space, Statistic, Tag, Tooltip, message } from 'antd';
 import {
   WalletOutlined,
   ThunderboltOutlined,
@@ -7,6 +7,7 @@ import {
   HistoryOutlined,
   ReloadOutlined,
   RocketOutlined,
+  QuestionCircleOutlined,
 } from '@ant-design/icons';
 import { newApi } from '../services/api';
 import './AccountCenter.css';
@@ -95,6 +96,9 @@ export default function AccountCenter() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [recharging, setRecharging] = useState(false);
+  const [rechargeModalOpen, setRechargeModalOpen] = useState(false);
+  const [selectedRechargeAmount, setSelectedRechargeAmount] = useState<number | null>(null);
+  const [selectedPayMethod, setSelectedPayMethod] = useState<string>('');
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -161,6 +165,23 @@ export default function AccountCenter() {
     } finally {
       setRecharging(false);
     }
+  };
+
+  // 打开充值确认弹窗，预置金额与默认支付方式
+  const openRechargeModal = (amount: number) => {
+    setSelectedRechargeAmount(amount);
+    setSelectedPayMethod(topupInfo?.pay_methods[0]?.type || '');
+    setRechargeModalOpen(true);
+  };
+
+  // 确认充值：关闭弹窗后调用 handleRecharge
+  const confirmRecharge = () => {
+    if (selectedRechargeAmount == null || !selectedPayMethod) {
+      message.error('请选择支付方式');
+      return;
+    }
+    setRechargeModalOpen(false);
+    handleRecharge(selectedRechargeAmount, selectedPayMethod);
   };
 
   // 订阅：用余额支付购买订阅套餐
@@ -232,7 +253,14 @@ export default function AccountCenter() {
         <Col xs={24} md={8}>
           <Card loading={loading}>
             <Statistic
-              title="剩余额度"
+              title={
+                <Space size={4}>
+                  <span>剩余额度</span>
+                  <Tooltip title="1 额度 ≈ 1000 字符（根据模型不同可能略有差异）">
+                    <QuestionCircleOutlined style={{ color: '#888', fontSize: 12 }} />
+                  </Tooltip>
+                </Space>
+              }
               value={balance?.remaining_quota ?? 0}
               precision={2}
               prefix={<WalletOutlined />}
@@ -287,16 +315,20 @@ export default function AccountCenter() {
             {topupInfo.amount_options.map((amount) => (
               <Card
                 key={amount}
-                hoverable
                 size="small"
                 style={{ width: 140, textAlign: 'center' }}
-                onClick={() => handleRecharge(amount, topupInfo.pay_methods[0]?.type || 'waffo_pancake')}
               >
                 <div style={{ fontSize: 20, fontWeight: 600 }}>+${amount}</div>
                 <div style={{ color: '#888', marginTop: 4, fontSize: 12 }}>
-                  {topupInfo.pay_methods[0]?.name || '在线支付'}
+                  {topupInfo.pay_methods.map((m) => m.name).join(' / ') || '在线支付'}
                 </div>
-                <Button type="primary" size="small" style={{ marginTop: 8 }} loading={recharging}>
+                <Button
+                  type="primary"
+                  size="small"
+                  style={{ marginTop: 8 }}
+                  loading={recharging}
+                  onClick={() => openRechargeModal(amount)}
+                >
                   充值
                 </Button>
               </Card>
@@ -386,6 +418,33 @@ export default function AccountCenter() {
           )}
         />
       </Card>
+
+      {/* 充值二次确认弹窗 */}
+      <Modal
+        open={rechargeModalOpen}
+        title={selectedRechargeAmount != null ? `确认充值 $${selectedRechargeAmount}` : '确认充值'}
+        okText="确认充值"
+        cancelText="取消"
+        confirmLoading={recharging}
+        onCancel={() => setRechargeModalOpen(false)}
+        onOk={confirmRecharge}
+      >
+        <div style={{ marginBottom: 12 }}>请选择支付方式：</div>
+        <Radio.Group
+          value={selectedPayMethod}
+          onChange={(e) => setSelectedPayMethod(e.target.value)}
+          style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}
+        >
+          {topupInfo?.pay_methods.map((m) => (
+            <Radio.Button key={m.type} value={m.type}>
+              {m.name}
+            </Radio.Button>
+          ))}
+        </Radio.Group>
+        <div style={{ marginTop: 12, color: '#888', fontSize: 12 }}>
+          点击确认后将跳转支付页面
+        </div>
+      </Modal>
     </div>
   );
 }

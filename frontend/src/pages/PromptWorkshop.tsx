@@ -21,6 +21,7 @@ import {
   Alert,
   Statistic,
   theme,
+  Popconfirm,
 } from 'antd';
 import {
   SearchOutlined,
@@ -48,6 +49,7 @@ import type {
   User,
 } from '../types';
 import { PROMPT_CATEGORIES } from '../types';
+import { useIsMobile } from '../utils/useIsMobile';
 
 const { TextArea } = Input;
 const { Text, Paragraph } = Typography;
@@ -120,7 +122,7 @@ export default function PromptWorkshop() {
   // 当前活动的 Tab
   const [activeTab, setActiveTab] = useState<string>('browse');
   
-  const isMobile = window.innerWidth <= 768;
+  const isMobile = useIsMobile();
   const { token } = theme.useToken();
   
   // 判断是否为服务端管理员
@@ -618,15 +620,22 @@ export default function PromptWorkshop() {
                     
                     <Space>
                       {sub.status === 'pending' && (
-                        <Button
-                          type="link"
-                          danger
-                          size="small"
-                          icon={<DeleteOutlined />}
-                          onClick={() => handleWithdraw(sub.id)}
+                        <Popconfirm
+                          title="撤回后该提交将不再生效，确认撤回？"
+                          okText="确认撤回"
+                          cancelText="取消"
+                          okType="danger"
+                          onConfirm={() => handleWithdraw(sub.id)}
                         >
-                          撤回
-                        </Button>
+                          <Button
+                            type="link"
+                            danger
+                            size="small"
+                            icon={<DeleteOutlined />}
+                          >
+                            撤回
+                          </Button>
+                        </Popconfirm>
                       )}
                       {sub.status !== 'pending' && (
                         <Button

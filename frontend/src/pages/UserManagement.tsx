@@ -36,6 +36,7 @@ import {
 import { adminApi } from '../services/api';
 import type { User } from '../types';
 import UserMenu from '../components/UserMenu';
+import { alphaColor } from '../utils/color';
 
 const { Title, Text } = Typography;
 
@@ -71,7 +72,6 @@ export default function UserManagement() {
   const [editForm] = Form.useForm();
   const [modal, contextHolder] = Modal.useModal();
   const { token } = theme.useToken();
-  const alphaColor = (color: string, alpha: number) => `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
 
   // 过滤用户列表
   const filteredUsers = users.filter(user => {

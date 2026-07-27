@@ -21,7 +21,7 @@ import {
   CloseCircleOutlined
 } from '@ant-design/icons';
 import { ssePost } from '../utils/sseClient';
-import { SSEProgressModal } from './SSEProgressModal';
+import { SSELoadingOverlay } from './SSELoadingOverlay';
 
 const { TextArea } = Input;
 const { Panel } = Collapse;
@@ -400,7 +400,8 @@ const ChapterRegenerationModal: React.FC<ChapterRegenerationModalProps> = ({
       </Form>
 
       {/* 使用统一的进度显示组件 */}
-      <SSEProgressModal
+      <SSELoadingOverlay
+        variant="modal"
         visible={status === 'generating'}
         progress={progress}
         message={`正在重新生成中... (已生成 ${wordCount} 字)`}

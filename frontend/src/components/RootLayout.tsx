@@ -10,25 +10,19 @@ import {
   MailOutlined,
   WalletOutlined,
   QuestionCircleOutlined,
+  TeamOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
-import { authApi } from '../services/api';
 import { useStore } from '../store';
-import type { User } from '../types';
 import AppSidebar, { SidebarContent, EXPANDED_SIDER_WIDTH, COLLAPSED_SIDER_WIDTH, HEADER_HEIGHT } from './AppSidebar';
 import AppTopBar from './AppTopBar';
 import AppFooter from './AppFooter';
 import GlobalQuotaModal from './GlobalQuotaModal';
 import OnboardingGuide from './OnboardingGuide';
 import { getStoredSidebarCollapsed, setStoredSidebarCollapsed } from '../utils/sidebarState';
-
-/** 格式化字数（与原 ProjectList 一致） */
-const formatWordCount = (count: number): string => {
-  if (count < 1000) return count.toString();
-  if (count < 10000) return (count / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
-  if (count < 1000000) return (count / 10000).toFixed(1).replace(/\.0$/, '') + 'W';
-  return (count / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
-};
+import useIsMobile from '../utils/useIsMobile';
+import { alphaColor } from '../utils/color';
+import { formatWordCount } from '../utils/format';
 
 /** 路由 → 菜单 key 映射 */
 const PATH_TO_KEY: Record<string, string> = {
@@ -40,6 +34,7 @@ const PATH_TO_KEY: Record<string, string> = {
   '/help': 'help',
   '/settings': 'settings',
   '/system-settings': 'system-settings',
+  '/user-management': 'user-management',
   '/account': 'account',
 };
 
@@ -53,6 +48,7 @@ const PATH_TO_TITLE: Record<string, string> = {
   '/help': '使用说明',
   '/settings': 'API 设置',
   '/system-settings': '系统设置',
+  '/user-management': '用户管理',
   '/account': '个人中心',
 };
 
@@ -65,6 +61,7 @@ const KEY_TO_PATH: Record<string, string> = {
   help: '/help',
   settings: '/settings',
   'system-settings': '/system-settings',
+  'user-management': '/user-management',
   account: '/account',
 };
 
@@ -80,45 +77,31 @@ const VIEW_TO_PATH: Record<string, string> = {
   account: '/account',
 };
 
-const isMobileViewport = () => typeof window !== 'undefined' && window.innerWidth <= 768;
-
 export default function RootLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { token } = theme.useToken();
-  const { projects } = useStore();
+  const { projects, currentUser, loadCurrentUser } = useStore();
   const [collapsed, setCollapsed] = useState<boolean>(() => getStoredSidebarCollapsed());
   const [drawerVisible, setDrawerVisible] = useState(false);
-  const [mobile, setMobile] = useState(isMobileViewport());
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const mobile = useIsMobile();
 
-  const alphaColor = (color: string, alpha: number) =>
-    `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
-
-  // 监听窗口大小变化
+  // 切回桌面端时自动关闭抽屉
   useEffect(() => {
-    const handleResize = () => {
-      setMobile(isMobileViewport());
-      if (!isMobileViewport()) {
-        setDrawerVisible(false);
-      }
-    };
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
+    if (!mobile) {
+      setDrawerVisible(false);
+    }
+  }, [mobile]);
 
   // 持久化折叠状态
   useEffect(() => {
     setStoredSidebarCollapsed(collapsed);
   }, [collapsed]);
 
-  // 加载当前用户（用于判断是否显示"系统设置"菜单）
+  // 加载当前用户（用于判断是否显示"系统设置"菜单，由 store 全局共享）
   useEffect(() => {
-    authApi
-      .getCurrentUser()
-      .then(setCurrentUser)
-      .catch(() => setCurrentUser(null));
-  }, []);
+    loadCurrentUser();
+  }, [loadCurrentUser]);
 
   // 兼容旧 ?view= 链接：检测到则重定向到新路由
   useEffect(() => {
@@ -159,7 +142,7 @@ export default function RootLayout() {
           { key: 'book-import', icon: <UploadOutlined />, label: '拆书导入' },
           { key: 'mcp', icon: <ApiOutlined />, label: 'MCP 插件' },
           { key: 'prompts', icon: <FileSearchOutlined />, label: '提示词管理' },
-          { key: 'help', icon: <QuestionCircleOutlined />, label: '使用说明' },
+          { key: 'help', icon: <QuestionCircleOutlined />, label: <span className="onboarding-help-btn">使用说明</span> },
         ],
       },
       {
@@ -169,6 +152,7 @@ export default function RootLayout() {
           { key: 'settings', icon: <SettingOutlined />, label: 'API 设置' },
           { key: 'account', icon: <WalletOutlined />, label: '个人中心' },
           ...(isAdmin ? [{ key: 'system-settings', icon: <MailOutlined />, label: '系统设置' }] : []),
+          ...(isAdmin ? [{ key: 'user-management', icon: <TeamOutlined />, label: '用户管理' }] : []),
         ],
       },
     ],
@@ -182,10 +166,11 @@ export default function RootLayout() {
       { key: 'book-import', icon: <UploadOutlined />, label: '拆书导入' },
       { key: 'mcp', icon: <ApiOutlined />, label: 'MCP 插件' },
       { key: 'prompts', icon: <FileSearchOutlined />, label: '提示词管理' },
-      { key: 'help', icon: <QuestionCircleOutlined />, label: '使用说明' },
+      { key: 'help', icon: <QuestionCircleOutlined />, label: <span className="onboarding-help-btn">使用说明</span> },
       { key: 'settings', icon: <SettingOutlined />, label: 'API 设置' },
       { key: 'account', icon: <WalletOutlined />, label: '个人中心' },
       ...(isAdmin ? [{ key: 'system-settings', icon: <MailOutlined />, label: '系统设置' }] : []),
+      ...(isAdmin ? [{ key: 'user-management', icon: <TeamOutlined />, label: '用户管理' }] : []),
     ],
     [isAdmin]
   );
@@ -195,58 +180,87 @@ export default function RootLayout() {
   const isBookshelf = location.pathname === '/' || location.pathname === '/projects';
 
   // 书架页统计卡片（瘦身版）
-  const totalWords = projects.reduce((sum, p) => sum + (p.current_words || 0), 0);
-  const activeProjects = projects.filter((p) => p.status === 'writing').length;
-  const completedProjects = projects.filter((p) => {
-    const progress =
-      p.target_words && p.target_words > 0
-        ? Math.min(Math.round(((p.current_words || 0) / p.target_words) * 100), 100)
-        : 0;
-    return progress >= 100 || p.status === 'completed';
-  }).length;
+  const bookshelfStats = useMemo(() => {
+    if (!isBookshelf || projects.length === 0) return null;
 
-  const bookshelfStats = !mobile && isBookshelf && projects.length > 0 && (
-    <div style={{ display: 'flex', gap: 12 }}>
-      {[
-        { label: '创作中', value: activeProjects, unit: '本' },
-        { label: '已完结', value: completedProjects, unit: '本' },
-        { label: '总字数', value: totalWords, unit: '字', raw: true },
-      ].map((item, index) => (
-        <div
-          key={index}
-          className="glass-card"
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            borderRadius: 10,
-            minWidth: 48,
-            height: 40,
-            padding: '0 10px',
-          }}
-        >
-          <span style={{ fontSize: 10, color: token.colorTextSecondary, marginBottom: 2, lineHeight: 1 }}>
-            {item.label}
-          </span>
-          <span
+    const totalWords = projects.reduce((sum, p) => sum + (p.current_words || 0), 0);
+    const totalChapters = projects.reduce((sum, p) => sum + (p.chapter_count || 0), 0);
+    const activeProjects = projects.filter((p) => p.status === 'writing').length;
+    const completedProjects = projects.filter((p) => {
+      const progress =
+        p.target_words && p.target_words > 0
+          ? Math.min(Math.round(((p.current_words || 0) / p.target_words) * 100), 100)
+          : 0;
+      return progress >= 100 || p.status === 'completed';
+    }).length;
+
+    return mobile ? (
+      // 移动端：顶栏紧凑数字（3项目 · 12章 · 1.2W字）
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 5,
+          fontSize: 12,
+          color: token.colorTextSecondary,
+          fontFamily: 'Monaco, monospace',
+          whiteSpace: 'nowrap',
+          lineHeight: 1,
+        }}
+      >
+        <span style={{ fontWeight: 600, color: token.colorPrimary }}>{projects.length}</span>
+        <span>项目</span>
+        <span style={{ color: token.colorTextQuaternary }}>·</span>
+        <span style={{ fontWeight: 600, color: token.colorPrimary }}>{totalChapters}</span>
+        <span>章</span>
+        <span style={{ color: token.colorTextQuaternary }}>·</span>
+        <span style={{ fontWeight: 600, color: token.colorPrimary }}>{formatWordCount(totalWords)}</span>
+        <span>字</span>
+      </div>
+    ) : (
+      // 桌面端：完整统计卡片
+      <div style={{ display: 'flex', gap: 12 }}>
+        {[
+          { label: '创作中', value: activeProjects, unit: '本' },
+          { label: '已完结', value: completedProjects, unit: '本' },
+          { label: '总字数', value: totalWords, unit: '字', raw: true },
+        ].map((item, index) => (
+          <div
+            key={index}
+            className="glass-card"
             style={{
-              fontSize: 13,
-              fontWeight: 600,
-              color: token.colorPrimary,
-              lineHeight: 1,
-              fontFamily: 'Monaco, monospace',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: 10,
+              minWidth: 48,
+              height: 40,
+              padding: '0 10px',
             }}
           >
-            {item.raw ? formatWordCount(item.value) : item.value}
-            {item.unit && (
-              <span style={{ fontSize: 9, marginLeft: 2, opacity: 0.8 }}>{item.unit}</span>
-            )}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
+            <span style={{ fontSize: 10, color: token.colorTextSecondary, marginBottom: 2, lineHeight: 1 }}>
+              {item.label}
+            </span>
+            <span
+              style={{
+                fontSize: 13,
+                fontWeight: 600,
+                color: token.colorPrimary,
+                lineHeight: 1,
+                fontFamily: 'Monaco, monospace',
+              }}
+            >
+              {item.raw ? formatWordCount(item.value) : item.value}
+              {item.unit && (
+                <span style={{ fontSize: 9, marginLeft: 2, opacity: 0.8 }}>{item.unit}</span>
+              )}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }, [isBookshelf, projects, mobile, token]);
 
   const desktopSiderWidth = collapsed ? COLLAPSED_SIDER_WIDTH : EXPANDED_SIDER_WIDTH;
   const headerHeight = mobile ? 56 : HEADER_HEIGHT;

@@ -154,15 +154,23 @@ export default function Foreshadows() {
         setTableScrollY(Math.max(containerHeight - 55, 200));
       }
     };
-    
+
     calculateTableHeight();
-    window.addEventListener('resize', calculateTableHeight);
-    
+
+    // resize 监听加 debounce，避免频繁触发重算
+    let resizeTimeoutId: number | undefined;
+    const debouncedCalculateTableHeight = () => {
+      if (resizeTimeoutId) window.clearTimeout(resizeTimeoutId);
+      resizeTimeoutId = window.setTimeout(calculateTableHeight, 150);
+    };
+    window.addEventListener('resize', debouncedCalculateTableHeight);
+
     // 延迟再计算一次，确保布局完成
     const timer = setTimeout(calculateTableHeight, 100);
-    
+
     return () => {
-      window.removeEventListener('resize', calculateTableHeight);
+      window.removeEventListener('resize', debouncedCalculateTableHeight);
+      if (resizeTimeoutId) window.clearTimeout(resizeTimeoutId);
       clearTimeout(timer);
     };
   }, [stats]); // stats 变化时重新计算（因为统计卡片高度可能变化）

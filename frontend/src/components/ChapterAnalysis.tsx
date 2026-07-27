@@ -45,8 +45,12 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
     }
 
     // 监听窗口大小变化
+    let timeoutId: number | undefined;
     const handleResize = () => {
-      setIsMobile(isMobileDevice());
+      if (timeoutId) window.clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(() => {
+        setIsMobile(isMobileDevice());
+      }, 150);
     };
 
     window.addEventListener('resize', handleResize);
@@ -54,6 +58,7 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
     // 清理函数：组件卸载或关闭时清除轮询
     return () => {
       window.removeEventListener('resize', handleResize);
+      if (timeoutId) window.clearTimeout(timeoutId);
       // 清除可能存在的轮询
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

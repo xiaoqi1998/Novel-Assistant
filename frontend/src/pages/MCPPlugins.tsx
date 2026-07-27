@@ -30,9 +30,11 @@ import {
   ApiOutlined,
   QuestionCircleOutlined,
   WarningOutlined,
+  FormatPainterOutlined,
 } from '@ant-design/icons';
 import { mcpPluginApi, settingsApi } from '../services/api';
 import type { MCPPlugin, MCPTool } from '../types';
+import { alphaColor } from '../utils/color';
 
 const { Paragraph, Text, Title } = Typography;
 const { TextArea } = Input;
@@ -41,7 +43,6 @@ export default function MCPPluginsPage() {
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [form] = Form.useForm();
   const { token } = theme.useToken();
-  const alphaColor = (color: string, alpha: number) => `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
 
   const statusStyles = {
     success: {
@@ -68,11 +69,18 @@ export default function MCPPluginsPage() {
 
   // 响应式监听窗口大小变化
   useEffect(() => {
+    let timeoutId: number | undefined;
     const handleResize = () => {
-      setIsMobile(window.innerWidth <= 768);
+      if (timeoutId) window.clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(() => {
+        setIsMobile(window.innerWidth <= 768);
+      }, 150);
     };
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      if (timeoutId) window.clearTimeout(timeoutId);
+    };
   }, []);
   const [modal, contextHolder] = Modal.useModal();
   const [loading, setLoading] = useState(false);
@@ -83,6 +91,39 @@ export default function MCPPluginsPage() {
   const [viewingTools, setViewingTools] = useState<{ pluginId: string; tools: MCPTool[] } | null>(null);
   const [checkingFunctionCalling, setCheckingFunctionCalling] = useState(false);
   const [modelSupportStatus, setModelSupportStatus] = useState<'unknown' | 'supported' | 'unsupported'>('unknown');
+  const [jsonError, setJsonError] = useState<string>('');
+
+  // 校验 JSON 语法
+  const validateJson = (value: string) => {
+    if (!value || !value.trim()) {
+      setJsonError('');
+      return;
+    }
+    try {
+      JSON.parse(value);
+      setJsonError('');
+    } catch (e) {
+      setJsonError((e as Error).message);
+    }
+  };
+
+  // 格式化 JSON
+  const handleFormatJson = () => {
+    const value = form.getFieldValue('config_json');
+    if (!value || !value.trim()) {
+      return;
+    }
+    try {
+      const parsed = JSON.parse(value);
+      const formatted = JSON.stringify(parsed, null, 2);
+      form.setFieldValue('config_json', formatted);
+      setJsonError('');
+      message.success('JSON 已格式化');
+    } catch (e) {
+      setJsonError((e as Error).message);
+      message.error('JSON 格式错误，无法格式化');
+    }
+  };
 
   useEffect(() => {
     const initPage = async () => {
@@ -202,6 +243,7 @@ export default function MCPPluginsPage() {
   }
 }`
     });
+    setJsonError('');
     setModalVisible(true);
   };
 
@@ -231,6 +273,7 @@ export default function MCPPluginsPage() {
       enabled: plugin.enabled,
       category: plugin.category || 'general',
     });
+    setJsonError('');
     setModalVisible(true);
   };
 
@@ -576,7 +619,9 @@ export default function MCPPluginsPage() {
       // 验证JSON格式
       try {
         JSON.parse(values.config_json);
-      } catch {
+        setJsonError('');
+      } catch (e) {
+        setJsonError((e as Error).message);
         message.error('配置JSON格式错误，请检查');
         setLoading(false);
         return;
@@ -1015,6 +1060,7 @@ export default function MCPPluginsPage() {
           onCancel={() => {
             setModalVisible(false);
             form.resetFields();
+            setJsonError('');
           }}
           onOk={() => form.submit()}
           width={isMobile ? '100%' : 600}
@@ -1024,9 +1070,16 @@ export default function MCPPluginsPage() {
         >
           <Form form={form} layout="vertical" onFinish={handleSubmit}>
             <Form.Item
-              label="MCP配置JSON"
+              label={
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                  <span>MCP配置JSON</span>
+                  <Button size="small" type="text" icon={<FormatPainterOutlined />} onClick={handleFormatJson}>格式化</Button>
+                </div>
+              }
               name="config_json"
               rules={[{ required: true, message: '请输入配置JSON' }]}
+              validateStatus={jsonError ? 'error' : ''}
+              help={jsonError || undefined}
               extra="粘贴标准MCP配置，系统自动提取插件名称。支持HTTP和Stdio类型"
             >
               <TextArea
@@ -1042,6 +1095,7 @@ export default function MCPPluginsPage() {
   }
 }`}
                 style={{ fontFamily: 'monospace', fontSize: '13px' }}
+                onBlur={(e) => validateJson(e.target.value)}
               />
             </Form.Item>
 

@@ -21,6 +21,7 @@ import {
 } from '@xyflow/react';
 import type { Node, Edge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { alphaColor } from '../utils/color';
 
 const { Text } = Typography;
 
@@ -564,8 +565,6 @@ export default function RelationshipGraph() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const { token } = theme.useToken();
-  const alphaColor = (color: string, alpha: number) =>
-    `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
 
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [, setLoading] = useState(false);

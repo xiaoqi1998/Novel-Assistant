@@ -72,10 +72,12 @@ export const CharacterCard: React.FC<CharacterCardProps> = ({ character, onEdit,
         ...(onExport ? [<ExportOutlined key="export" onClick={onExport} />] : []),
         <Popconfirm
           key="delete"
-          title={`确定删除这个${isOrganization ? '组织' : '角色'}吗？`}
+          title={`确认删除${isOrganization ? '组织' : '角色'}？`}
+          description={isOrganization ? '删除后将无法恢复，组织相关的成员与势力信息也将被删除。' : '删除后将无法恢复，角色相关的关系与职业信息也将被删除。'}
           onConfirm={() => onDelete(character.id)}
           okText="确定"
           cancelText="取消"
+          okButtonProps={{ danger: true }}
         >
           <DeleteOutlined />
         </Popconfirm>,

@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate, Outlet, Link, useLocation } from 'react-router-dom';
-import { Layout, Spin, Button, Drawer, theme } from 'antd';
+import { Layout, Spin, Button, Drawer, Result, theme } from 'antd';
 import {
   ArrowLeftOutlined,
   FileTextOutlined,
@@ -26,10 +26,10 @@ import AppTopBar from '../components/AppTopBar';
 import AppFooter from '../components/AppFooter';
 import { getStoredSidebarCollapsed, setStoredSidebarCollapsed } from '../utils/sidebarState';
 import FloatingTaskPanel from '../components/FloatingTaskPanel';
+import { alphaColor } from '../utils/color';
+import { useIsMobile } from '../utils/useIsMobile';
 
 const { Content } = Layout;
-
-const isMobileViewport = () => typeof window !== 'undefined' && window.innerWidth <= 768;
 
 export default function ProjectDetail() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -37,21 +37,16 @@ export default function ProjectDetail() {
   const location = useLocation();
   const [collapsed, setCollapsed] = useState<boolean>(() => getStoredSidebarCollapsed());
   const [drawerVisible, setDrawerVisible] = useState(false);
-  const [mobile, setMobile] = useState(isMobileViewport());
+  const mobile = useIsMobile();
+  const [loadError, setLoadError] = useState<string | null>(null);
   const { token } = theme.useToken();
-  const alphaColor = (color: string, alpha: number) =>
-    `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
 
+  // 切回桌面端时自动关闭抽屉
   useEffect(() => {
-    const handleResize = () => {
-      setMobile(isMobileViewport());
-      if (!isMobileViewport()) {
-        setDrawerVisible(false);
-      }
-    };
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
+    if (!mobile) {
+      setDrawerVisible(false);
+    }
+  }, [mobile]);
 
   useEffect(() => {
     setStoredSidebarCollapsed(collapsed);
@@ -72,20 +67,22 @@ export default function ProjectDetail() {
   const { refreshOutlines } = useOutlineSync();
   const { refreshChapters } = useChapterSync();
 
-  useEffect(() => {
-    const loadProjectData = async (id: string) => {
-      try {
-        setLoading(true);
-        const project = await projectApi.getProject(id);
-        setCurrentProject(project);
-        await Promise.all([refreshOutlines(id), refreshCharacters(id), refreshChapters(id)]);
-      } catch (error) {
-        console.error('加载项目数据失败:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
+  const loadProjectData = useCallback(async (id: string) => {
+    try {
+      setLoading(true);
+      setLoadError(null);
+      const project = await projectApi.getProject(id);
+      setCurrentProject(project);
+      await Promise.all([refreshOutlines(id), refreshCharacters(id), refreshChapters(id)]);
+    } catch (error) {
+      console.error('加载项目数据失败:', error);
+      setLoadError(error instanceof Error ? error.message : '加载项目数据失败，请重试');
+    } finally {
+      setLoading(false);
+    }
+  }, [setLoading, setCurrentProject, refreshOutlines, refreshCharacters, refreshChapters]);
 
+  useEffect(() => {
     if (projectId) {
       loadProjectData(projectId);
     }
@@ -93,7 +90,7 @@ export default function ProjectDetail() {
     return () => {
       clearProjectData();
     };
-  }, [projectId, clearProjectData, setLoading, setCurrentProject, refreshOutlines, refreshCharacters, refreshChapters]);
+  }, [projectId, clearProjectData, loadProjectData]);
 
   const menuItems = useMemo(
     () => [
@@ -101,13 +98,13 @@ export default function ProjectDetail() {
         type: 'group' as const,
         label: '创作管理',
         children: [
-          { key: 'world-setting', icon: <GlobalOutlined />, label: <Link to={`/project/${projectId}/world-setting`}>世界设定</Link> },
+          { key: 'world-setting', icon: <GlobalOutlined />, label: <Link to={`/project/${projectId}/world-setting`} className="onboarding-world-menu">世界设定</Link> },
           { key: 'characters', icon: <TeamOutlined />, label: <Link to={`/project/${projectId}/characters`}>角色管理</Link> },
           { key: 'organizations', icon: <BankOutlined />, label: <Link to={`/project/${projectId}/organizations`}>组织管理</Link> },
           { key: 'careers', icon: <TrophyOutlined />, label: <Link to={`/project/${projectId}/careers`}>职业管理</Link> },
           { key: 'relationships', icon: <ApartmentOutlined />, label: <Link to={`/project/${projectId}/relationships`}>关系管理</Link> },
           { key: 'outline', icon: <FileTextOutlined />, label: <Link to={`/project/${projectId}/outline`}>大纲管理</Link> },
-          { key: 'chapters', icon: <BookOutlined />, label: <Link to={`/project/${projectId}/chapters`}>章节管理</Link> },
+          { key: 'chapters', icon: <BookOutlined />, label: <Link to={`/project/${projectId}/chapters`} className="onboarding-chapters-menu">章节管理</Link> },
           { key: 'chapter-analysis', icon: <FundOutlined />, label: <Link to={`/project/${projectId}/chapter-analysis`}>剧情分析</Link> },
           { key: 'foreshadows', icon: <BulbOutlined />, label: <Link to={`/project/${projectId}/foreshadows`}>伏笔管理</Link> },
         ],
@@ -129,13 +126,13 @@ export default function ProjectDetail() {
 
   const menuItemsCollapsed = useMemo(
     () => [
-      { key: 'world-setting', icon: <GlobalOutlined />, label: <Link to={`/project/${projectId}/world-setting`}>世界设定</Link> },
+      { key: 'world-setting', icon: <GlobalOutlined />, label: <Link to={`/project/${projectId}/world-setting`} className="onboarding-world-menu">世界设定</Link> },
       { key: 'careers', icon: <TrophyOutlined />, label: <Link to={`/project/${projectId}/careers`}>职业管理</Link> },
       { key: 'characters', icon: <TeamOutlined />, label: <Link to={`/project/${projectId}/characters`}>角色管理</Link> },
       { key: 'relationships', icon: <ApartmentOutlined />, label: <Link to={`/project/${projectId}/relationships`}>关系管理</Link> },
       { key: 'organizations', icon: <BankOutlined />, label: <Link to={`/project/${projectId}/organizations`}>组织管理</Link> },
       { key: 'outline', icon: <FileTextOutlined />, label: <Link to={`/project/${projectId}/outline`}>大纲管理</Link> },
-      { key: 'chapters', icon: <BookOutlined />, label: <Link to={`/project/${projectId}/chapters`}>章节管理</Link> },
+      { key: 'chapters', icon: <BookOutlined />, label: <Link to={`/project/${projectId}/chapters`} className="onboarding-chapters-menu">章节管理</Link> },
       { key: 'chapter-analysis', icon: <FundOutlined />, label: <Link to={`/project/${projectId}/chapter-analysis`}>剧情分析</Link> },
       { key: 'foreshadows', icon: <BulbOutlined />, label: <Link to={`/project/${projectId}/foreshadows`}>伏笔管理</Link> },
       { key: 'writing-styles', icon: <EditOutlined />, label: <Link to={`/project/${projectId}/writing-styles`}>写作风格</Link> },
@@ -165,6 +162,26 @@ export default function ProjectDetail() {
     if (path.includes('/full-review')) return 'full-review';
     return 'world-setting';
   }, [location.pathname]);
+
+  if (loadError) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <Result
+          status="error"
+          title="加载失败"
+          subTitle={loadError}
+          extra={[
+            <Button key="retry" type="primary" onClick={() => projectId && loadProjectData(projectId)}>
+              重试
+            </Button>,
+            <Button key="home" onClick={() => navigate('/')}>
+              返回主页
+            </Button>,
+          ]}
+        />
+      </div>
+    );
+  }
 
   if (loading || !currentProject) {
     return (

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import dayjs, { Dayjs } from 'dayjs';
-import { Alert, Button, Card, Col, DatePicker, Form, Input, InputNumber, Modal, Popconfirm, Row, Select, Space, Spin, Switch, Table, Tag, Tabs, Typography, message, theme } from 'antd';
+import { Alert, Button, Card, Col, DatePicker, Form, Input, InputNumber, Modal, Popconfirm, Row, Select, Space, Spin, Switch, Table, Tag, Tabs, Tooltip, Typography, message, theme } from 'antd';
 import type { ColumnsType, TablePaginationConfig } from 'antd/es/table';
-import { BellOutlined, CheckCircleOutlined, DeleteOutlined, EditOutlined, EyeInvisibleOutlined, MailOutlined, PlusOutlined, ReloadOutlined, SaveOutlined, SendOutlined, SettingOutlined } from '@ant-design/icons';
+import { BellOutlined, CheckCircleOutlined, DeleteOutlined, EditOutlined, EyeInvisibleOutlined, MailOutlined, PlusOutlined, QuestionCircleOutlined, ReloadOutlined, SaveOutlined, SendOutlined, SettingOutlined } from '@ant-design/icons';
 import { announcementApi, authApi, settingsApi } from '../services/api';
 import type { Announcement, AnnouncementCreate, AnnouncementLevel, AnnouncementStatus, AnnouncementStatusResponse, AnnouncementUpdate, SystemSMTPSettings, SystemSMTPSettingsUpdate, User } from '../types';
 import MarkdownRenderer from '../components/MarkdownRenderer';
@@ -269,9 +269,24 @@ export default function SystemSettingsPage() {
   };
 
   const closeAnnouncementModal = () => {
-    setAnnouncementModalOpen(false);
-    setEditingAnnouncement(null);
-    announcementForm.resetFields();
+    if (announcementForm.isFieldsTouched()) {
+      Modal.confirm({
+        title: '未保存的改动',
+        content: '有未保存的改动，确认关闭？',
+        centered: true,
+        okText: '丢弃改动',
+        cancelText: '继续编辑',
+        onOk: () => {
+          setAnnouncementModalOpen(false);
+          setEditingAnnouncement(null);
+          announcementForm.resetFields();
+        },
+      });
+    } else {
+      setAnnouncementModalOpen(false);
+      setEditingAnnouncement(null);
+      announcementForm.resetFields();
+    }
   };
 
   const validateAnnouncementWindow = (values: AnnouncementFormValues) => {
@@ -588,12 +603,34 @@ export default function SystemSettingsPage() {
 
                       <Row gutter={16}>
                         <Col xs={24} md={12}>
-                          <Form.Item name="smtp_use_ssl" label="启用 SSL" valuePropName="checked">
+                          <Form.Item
+                            name="smtp_use_ssl"
+                            label={
+                              <Space size={4}>
+                                <span>启用 SSL</span>
+                                <Tooltip title="SSL（旧协议，已不推荐，仅兼容老服务器）">
+                                  <QuestionCircleOutlined style={{ color: token.colorTextSecondary, fontSize: 12 }} />
+                                </Tooltip>
+                              </Space>
+                            }
+                            valuePropName="checked"
+                          >
                             <Switch />
                           </Form.Item>
                         </Col>
                         <Col xs={24} md={12}>
-                          <Form.Item name="smtp_use_tls" label="启用 TLS" valuePropName="checked">
+                          <Form.Item
+                            name="smtp_use_tls"
+                            label={
+                              <Space size={4}>
+                                <span>启用 TLS</span>
+                                <Tooltip title="TLS（推荐，现代邮件服务器标准）">
+                                  <QuestionCircleOutlined style={{ color: token.colorTextSecondary, fontSize: 12 }} />
+                                </Tooltip>
+                              </Space>
+                            }
+                            valuePropName="checked"
+                          >
                             <Switch />
                           </Form.Item>
                         </Col>
@@ -790,7 +827,7 @@ export default function SystemSettingsPage() {
                 <Button size="small" onClick={() => appendMarkdownSnippet('- 列表项\n- 列表项')}>列表</Button>
                 <Button size="small" onClick={() => appendMarkdownSnippet('> 引用说明')}>引用</Button>
                 <Button size="small" onClick={() => appendMarkdownSnippet('[链接文字](https://example.com)')}>链接</Button>
-                <Button size="small" onClick={() => appendMarkdownSnippet('<p align="center">\n  <img src="https://avatars.githubusercontent.com/u/283105808?s=48&v=4" alt="DolOffer Logo" width="200"/>\n  <br>\n  <em>专注于优质数字产品推荐与超值优惠分享的领先平台</em>\n</p>')}>居中图片</Button>
+                <Button size="small" onClick={() => appendMarkdownSnippet('<p align="center">\n  <img src="https://via.placeholder.com/600x400" alt="图片说明文字" width="200"/>\n  <br>\n  <em>在此输入图片描述</em>\n</p>')}>居中图片</Button>
                 <Button size="small" onClick={() => appendMarkdownSnippet('```\n代码内容\n```')}>代码块</Button>
               </Space>
 
@@ -816,9 +853,9 @@ export default function SystemSettingsPage() {
                         '[查看详情](https://example.com)',
                         '',
                         '<p align="center">',
-                        '  <img src="https://avatars.githubusercontent.com/u/283105808?s=48&v=4" alt="DolOffer Logo" width="200"/>',
+                        '  <img src="https://via.placeholder.com/600x400" alt="图片说明文字" width="200"/>',
                         '  <br>',
-                        '  <em>专注于优质数字产品推荐与超值优惠分享的领先平台</em>',
+                        '  <em>在此输入图片描述</em>',
                         '</p>',
                       ].join('\n')}
                     />

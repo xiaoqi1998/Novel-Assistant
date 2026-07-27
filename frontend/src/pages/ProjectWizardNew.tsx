@@ -2,10 +2,10 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Form, Input, InputNumber, Select, Button, Card,
-  Row, Col, Typography, Space, message, Radio, theme
+  Row, Col, Typography, Space, message, Radio, theme, Modal
 } from 'antd';
 import {
-  RocketOutlined, ArrowLeftOutlined, CheckCircleOutlined
+  RocketOutlined, ArrowLeftOutlined, CheckCircleOutlined, CheckCircleFilled
 } from '@ant-design/icons';
 import { AIProjectGenerator, type GenerationConfig } from '../components/AIProjectGenerator';
 import type { WizardBasicInfo } from '../types';
@@ -19,6 +19,7 @@ export default function ProjectWizardNew() {
   const [form] = Form.useForm();
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const { token } = theme.useToken();
+  const outlineMode = Form.useWatch('outline_mode', form);
 
   // 状态管理
   const [currentStep, setCurrentStep] = useState<'form' | 'generating'>('form');
@@ -26,14 +27,21 @@ export default function ProjectWizardNew() {
   const [resumeProjectId, setResumeProjectId] = useState<string | null>(null);
 
   useEffect(() => {
+    let timeoutId: number | undefined;
     const handleResize = () => {
-      setIsMobile(window.innerWidth <= 768);
+      if (timeoutId) window.clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(() => {
+        setIsMobile(window.innerWidth <= 768);
+      }, 150);
     };
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      if (timeoutId) window.clearTimeout(timeoutId);
+    };
   }, []);
 
-  // 检查URL参数,如果有project_id则恢复生成
+  // 检查URL参数，如果有project_id则恢复生成
   useEffect(() => {
     const projectId = searchParams.get('project_id');
     if (projectId) {
@@ -101,6 +109,24 @@ export default function ProjectWizardNew() {
   const handleBack = () => {
     setCurrentStep('form');
     setGenerationConfig(null);
+  };
+
+  // 返回首页（生成中进行中需二次确认）
+  const handleGoHome = () => {
+    if (currentStep === 'generating') {
+      Modal.confirm({
+        title: '确认离开当前页面？',
+        content: '生成仍在进行中，离开将中断当前生成。是否确认离开？',
+        okText: '确认离开',
+        cancelText: '继续生成',
+        okButtonProps: { danger: true },
+        onOk: () => {
+          navigate('/');
+        },
+      });
+    } else {
+      navigate('/');
+    }
   };
 
   // 渲染表单页面
@@ -195,12 +221,23 @@ export default function ProjectWizardNew() {
                 <Card
                   hoverable
                   style={{
-                    // borderColor: form.getFieldValue('outline_mode') === 'one-to-one' ? token.colorPrimary : token.colorBorder,
+                    borderColor: outlineMode === 'one-to-one' ? token.colorPrimary : token.colorBorder,
                     borderWidth: 2,
                     height: '100%',
+                    background: outlineMode === 'one-to-one' ? token.colorPrimaryBg : undefined,
+                    position: 'relative',
                   }}
                   onClick={() => form.setFieldValue('outline_mode', 'one-to-one')}
                 >
+                  {outlineMode === 'one-to-one' && (
+                    <CheckCircleFilled style={{
+                      position: 'absolute',
+                      top: 8,
+                      right: 8,
+                      fontSize: 20,
+                      color: token.colorPrimary,
+                    }} />
+                  )}
                   <Radio value="one-to-one" style={{ width: '100%' }}>
                     <Space direction="vertical" size={4} style={{ width: '100%' }}>
                       <div style={{ fontSize: 16, fontWeight: 'bold' }}>
@@ -222,12 +259,23 @@ export default function ProjectWizardNew() {
                 <Card
                   hoverable
                   style={{
-                    // borderColor: form.getFieldValue('outline_mode') === 'one-to-many' ? token.colorPrimary : token.colorBorder,
+                    borderColor: outlineMode === 'one-to-many' ? token.colorPrimary : token.colorBorder,
                     borderWidth: 2,
                     height: '100%',
+                    background: outlineMode === 'one-to-many' ? token.colorPrimaryBg : undefined,
+                    position: 'relative',
                   }}
                   onClick={() => form.setFieldValue('outline_mode', 'one-to-many')}
                 >
+                  {outlineMode === 'one-to-many' && (
+                    <CheckCircleFilled style={{
+                      position: 'absolute',
+                      top: 8,
+                      right: 8,
+                      fontSize: 20,
+                      color: token.colorPrimary,
+                    }} />
+                  )}
                   <Radio value="one-to-many" style={{ width: '100%' }}>
                     <Space direction="vertical" size={4} style={{ width: '100%' }}>
                       <div style={{ fontSize: 16, fontWeight: 'bold' }}>
@@ -340,9 +388,8 @@ export default function ProjectWizardNew() {
         }}>
           <Button
             icon={<ArrowLeftOutlined />}
-            onClick={() => navigate('/')}
+            onClick={handleGoHome}
             size={isMobile ? 'middle' : 'large'}
-            disabled={currentStep === 'generating'}
           >
             {isMobile ? '返回' : '返回首页'}
           </Button>
@@ -355,7 +402,17 @@ export default function ProjectWizardNew() {
             项目创建向导
           </Title>
 
-          <div style={{ width: isMobile ? 60 : 120 }}></div>
+          {currentStep === 'generating' ? (
+            <Button
+              onClick={handleBack}
+              size={isMobile ? 'middle' : 'large'}
+              danger
+            >
+              {isMobile ? '取消' : '取消生成'}
+            </Button>
+          ) : (
+            <div style={{ width: isMobile ? 60 : 120 }}></div>
+          )}
         </div>
       </div>
 

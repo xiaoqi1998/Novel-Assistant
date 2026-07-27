@@ -1,7 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Drawer, Input, List, Typography, Empty, Tag, theme } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 import type { Chapter } from '../types';
+import { eventBus } from '../store/eventBus';
 
 const { Link } = Typography;
 
@@ -26,6 +27,15 @@ export default function FloatingIndexPanel({
 }: FloatingIndexPanelProps) {
   const { token } = theme.useToken();
   const [searchTerm, setSearchTerm] = useState('');
+
+  // 通过事件总线通知 FloatingTaskPanel 等组件 Drawer 的开关状态
+  useEffect(() => {
+    if (visible) {
+      eventBus.emit('drawer:open');
+    } else {
+      eventBus.emit('drawer:close');
+    }
+  }, [visible]);
 
   const filteredGroups = useMemo(() => {
     if (!searchTerm) {
@@ -53,6 +63,7 @@ export default function FloatingIndexPanel({
       onClose={onClose}
       open={visible}
       width={320}
+      zIndex={1040}
       styles={{
         body: { padding: 0 },
       }}
@@ -60,42 +71,45 @@ export default function FloatingIndexPanel({
       <div style={{ padding: '16px', borderBottom: `1px solid ${token.colorBorderSecondary}` }}>
         <Input
           placeholder="搜索章节标题"
-          prefix={<SearchOutlined />}
+          prefix={<SearchOutlined aria-hidden="true" />}
+          aria-label="搜索章节"
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           allowClear
         />
       </div>
 
-      {filteredGroups.length > 0 ? (
-        <List
-          dataSource={filteredGroups}
-          renderItem={group => (
-            <List.Item style={{ padding: '0 16px', flexDirection: 'column', alignItems: 'flex-start' }}>
-              <div style={{ padding: '12px 0', fontWeight: 'bold' }}>
-                <Tag color={group.outlineId ? 'blue' : 'default'}>
-                  {group.outlineTitle}
-                </Tag>
-              </div>
-              <List
-                size="small"
-                dataSource={group.chapters}
-                renderItem={chapter => (
-                  <List.Item style={{ paddingLeft: 16, borderBlockStart: 'none' }}>
-                    <Link onClick={() => handleChapterClick(chapter.id)}>
-                      {`第${chapter.chapter_number}章: ${chapter.title}`}
-                    </Link>
-                  </List.Item>
-                )}
-                split={false}
-              />
-            </List.Item>
-          )}
-          style={{ height: 'calc(100vh - 120px)', overflowY: 'auto' }}
-        />
-      ) : (
-        <Empty description="没有找到匹配的章节" style={{ marginTop: 48 }} />
-      )}
+      <div aria-live="polite">
+        {filteredGroups.length > 0 ? (
+          <List
+            dataSource={filteredGroups}
+            renderItem={group => (
+              <List.Item style={{ padding: '0 16px', flexDirection: 'column', alignItems: 'flex-start' }}>
+                <div style={{ padding: '12px 0', fontWeight: 'bold' }}>
+                  <Tag color={group.outlineId ? 'blue' : 'default'}>
+                    {group.outlineTitle}
+                  </Tag>
+                </div>
+                <List
+                  size="small"
+                  dataSource={group.chapters}
+                  renderItem={chapter => (
+                    <List.Item style={{ paddingLeft: 16, borderBlockStart: 'none' }}>
+                      <Link onClick={() => handleChapterClick(chapter.id)}>
+                        {`第${chapter.chapter_number}章: ${chapter.title}`}
+                      </Link>
+                    </List.Item>
+                  )}
+                  split={false}
+                />
+              </List.Item>
+            )}
+            style={{ height: 'calc(100vh - 120px)', overflowY: 'auto' }}
+          />
+        ) : (
+          <Empty description="没有找到匹配的章节" style={{ marginTop: 48 }} />
+        )}
+      </div>
     </Drawer>
   );
 }

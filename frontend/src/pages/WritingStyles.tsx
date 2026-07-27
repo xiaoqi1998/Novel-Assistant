@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Button,
   Modal,
   Form,
   Input,
+  Select,
   message,
   Card,
   Space,
@@ -21,10 +22,12 @@ import {
   DeleteOutlined,
   StarOutlined,
   StarFilled,
+  SearchOutlined,
 } from '@ant-design/icons';
 import { useStore } from '../store';
 import { writingStyleApi } from '../services/api';
 import type { WritingStyle, WritingStyleCreate, WritingStyleUpdate } from '../types';
+import { useIsMobile } from '../utils/useIsMobile';
 
 const { TextArea } = Input;
 const { Text, Paragraph } = Typography;
@@ -33,6 +36,8 @@ export default function WritingStyles() {
   const { currentProject } = useStore();
   const [styles, setStyles] = useState<WritingStyle[]>([]);
   const [loading, setLoading] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [typeFilter, setTypeFilter] = useState<string>('all');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingStyle, setEditingStyle] = useState<WritingStyle | null>(null);
@@ -41,7 +46,7 @@ export default function WritingStyles() {
 
   const { token } = theme.useToken();
 
-  const isMobile = window.innerWidth <= 768;
+  const isMobile = useIsMobile();
   
   // 卡片网格配置
   const gridConfig = {
@@ -159,6 +164,46 @@ export default function WritingStyles() {
     setIsCreateModalOpen(true);
   };
 
+  const handleCreateCancel = () => {
+    if (createForm.isFieldsTouched()) {
+      Modal.confirm({
+        title: '未保存的改动',
+        content: '有未保存的改动，确认关闭？',
+        centered: true,
+        okText: '丢弃改动',
+        cancelText: '继续编辑',
+        onOk: () => {
+          setIsCreateModalOpen(false);
+          createForm.resetFields();
+        },
+      });
+    } else {
+      setIsCreateModalOpen(false);
+      createForm.resetFields();
+    }
+  };
+
+  const handleEditCancel = () => {
+    if (editForm.isFieldsTouched()) {
+      Modal.confirm({
+        title: '未保存的改动',
+        content: '有未保存的改动，确认关闭？',
+        centered: true,
+        okText: '丢弃改动',
+        cancelText: '继续编辑',
+        onOk: () => {
+          setIsEditModalOpen(false);
+          editForm.resetFields();
+          setEditingStyle(null);
+        },
+      });
+    } else {
+      setIsEditModalOpen(false);
+      editForm.resetFields();
+      setEditingStyle(null);
+    }
+  };
+
   const getStyleTypeColor = (styleType: string) => {
     return styleType === 'preset' ? 'blue' : 'purple';
   };
@@ -166,6 +211,28 @@ export default function WritingStyles() {
   const getStyleTypeLabel = (styleType: string) => {
     return styleType === 'preset' ? '预设' : '自定义';
   };
+
+  const filteredStyles = useMemo(() => {
+    let list = styles;
+
+    // 按名称搜索
+    if (searchTerm.trim()) {
+      const term = searchTerm.trim().toLowerCase();
+      list = list.filter((s) => s.name?.toLowerCase().includes(term));
+    }
+
+    // 类型筛选（根据 style_type 或 user_id 判断）
+    if (typeFilter !== 'all') {
+      list = list.filter((s) => {
+        const isPreset = s.style_type === 'preset' || s.user_id === null;
+        if (typeFilter === 'preset') return isPreset;
+        if (typeFilter === 'custom') return !isPreset;
+        return true;
+      });
+    }
+
+    return list;
+  }, [styles, searchTerm, typeFilter]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -178,31 +245,68 @@ export default function WritingStyles() {
         marginBottom: isMobile ? 12 : 16,
         borderBottom: `1px solid ${token.colorBorderSecondary}`,
         display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
+        flexDirection: 'column',
+        gap: 12,
       }}>
-        <h2 style={{ margin: 0, fontSize: isMobile ? 18 : 24 }}>
-          <EditOutlined style={{ marginRight: 8 }} />
-          写作风格管理
-        </h2>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={showCreateModal}
-        >
-          创建自定义风格
-        </Button>
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: 12,
+        }}>
+          <h2 style={{ margin: 0, fontSize: isMobile ? 18 : 24 }}>
+            <EditOutlined style={{ marginRight: 8 }} />
+            写作风格管理
+          </h2>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={showCreateModal}
+          >
+            创建自定义风格
+          </Button>
+        </div>
+        {styles.length > 0 && (
+          <div style={{
+            display: 'flex',
+            flexDirection: isMobile ? 'column' : 'row',
+            gap: isMobile ? 8 : 12,
+            alignItems: isMobile ? 'stretch' : 'center',
+          }}>
+            <Input
+              prefix={<SearchOutlined style={{ color: token.colorTextQuaternary }} />}
+              placeholder="按名称搜索写作风格..."
+              allowClear
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              style={{ flex: 1, maxWidth: isMobile ? '100%' : 320 }}
+            />
+            <Select
+              value={typeFilter}
+              onChange={setTypeFilter}
+              style={{ minWidth: 120, width: isMobile ? '100%' : undefined }}
+              options={[
+                { value: 'all', label: '全部类型' },
+                { value: 'preset', label: '预设' },
+                { value: 'custom', label: '自定义' },
+              ]}
+            />
+          </div>
+        )}
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto' }}>
         {styles.length === 0 ? (
           <Empty description="暂无风格数据" />
+        ) : filteredStyles.length === 0 ? (
+          <Empty description="没有符合条件的写作风格" />
         ) : (
           <Row
             gutter={[0, gridConfig.gutter]}
             style={{ marginLeft: 0, marginRight: 0 }}
           >
-            {styles.map((style) => (
+            {filteredStyles.map((style) => (
               <Col
                 xs={gridConfig.xs}
                 sm={gridConfig.sm}
@@ -317,10 +421,7 @@ export default function WritingStyles() {
       <Modal
         title="创建自定义风格"
         open={isCreateModalOpen}
-        onCancel={() => {
-          setIsCreateModalOpen(false);
-          createForm.resetFields();
-        }}
+        onCancel={handleCreateCancel}
         footer={null}
         centered
         width={isMobile ? 'calc(100vw - 32px)' : 600}
@@ -357,10 +458,7 @@ export default function WritingStyles() {
           
           <Form.Item>
             <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
-              <Button onClick={() => {
-                setIsCreateModalOpen(false);
-                createForm.resetFields();
-              }}>
+              <Button onClick={handleCreateCancel}>
                 取消
               </Button>
               <Button type="primary" htmlType="submit" loading={loading}>
@@ -375,11 +473,7 @@ export default function WritingStyles() {
       <Modal
         title="编辑写作风格"
         open={isEditModalOpen}
-        onCancel={() => {
-          setIsEditModalOpen(false);
-          editForm.resetFields();
-          setEditingStyle(null);
-        }}
+        onCancel={handleEditCancel}
         footer={null}
         centered
         width={isMobile ? 'calc(100vw - 32px)' : 600}
@@ -411,11 +505,7 @@ export default function WritingStyles() {
           
           <Form.Item>
             <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
-              <Button onClick={() => {
-                setIsEditModalOpen(false);
-                editForm.resetFields();
-                setEditingStyle(null);
-              }}>
+              <Button onClick={handleEditCancel}>
                 取消
               </Button>
               <Button type="primary" htmlType="submit" loading={loading}>

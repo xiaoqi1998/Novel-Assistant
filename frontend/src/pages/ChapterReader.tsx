@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Card, Spin, Alert, Button, Space, Switch, Drawer, message, Progress, theme } from 'antd';
+import { Card, Spin, Alert, Button, Space, Switch, Drawer, message, Progress, Input, theme, ConfigProvider, Tooltip } from 'antd';
 import {
   ArrowLeftOutlined,
   EyeOutlined,
@@ -9,10 +9,17 @@ import {
   ReloadOutlined,
   LeftOutlined,
   RightOutlined,
+  SearchOutlined,
+  UpOutlined,
+  DownOutlined,
+  BulbOutlined,
+  MoonOutlined,
 } from '@ant-design/icons';
 import api from '../services/api';
 import AnnotatedText, { type MemoryAnnotation } from '../components/AnnotatedText';
 import MemorySidebar from '../components/MemorySidebar';
+import { useThemeMode } from '../theme/useThemeMode';
+import { getThemeConfig, type ResolvedThemeMode } from '../theme/themeConfig';
 
 interface ChapterData {
   id: string;
@@ -65,9 +72,29 @@ const ChapterReader: React.FC = () => {
   const navigate = useNavigate();
 
   const { token } = theme.useToken();
+  const { resolvedMode } = useThemeMode();
+
+  // 阅读器主题：默认跟随全局 resolvedMode，用户可手动切换
+  const [readerTheme, setReaderTheme] = useState<ResolvedThemeMode>(resolvedMode);
+  // 标记用户是否手动切换过阅读器主题；若未手动切换则持续跟随全局
+  const userOverrideRef = useRef(false);
+
+  useEffect(() => {
+    if (!userOverrideRef.current) {
+      setReaderTheme(resolvedMode);
+    }
+  }, [resolvedMode]);
+
+  const handleToggleReaderTheme = () => {
+    userOverrideRef.current = true;
+    setReaderTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
+
+  const readerThemeConfig = useMemo(() => getThemeConfig(readerTheme), [readerTheme]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [errorStatus, setErrorStatus] = useState<number | null>(null);
   const [chapter, setChapter] = useState<ChapterData | null>(null);
   const [annotationsData, setAnnotationsData] = useState<AnnotationsData | null>(null);
   const [showAnnotations, setShowAnnotations] = useState(true);
@@ -76,11 +103,15 @@ const ChapterReader: React.FC = () => {
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [navigation, setNavigation] = useState<NavigationData | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
+  const [scrollToAnnotationId, setScrollToAnnotationId] = useState<string | undefined>();
 
   const loadChapterData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
+      setErrorStatus(null);
 
       // 并行加载章节内容、标注数据和导航信息
       // 注意：api拦截器已经解析了response.data，所以直接返回数据对象
@@ -128,7 +159,9 @@ const ChapterReader: React.FC = () => {
       }
     } catch (err: unknown) {
       console.error('加载章节数据失败:', err);
-      const error = err as { response?: { data?: { detail?: string } }; message?: string };
+      const error = err as { response?: { status?: number; data?: { detail?: string } }; message?: string };
+      // 保存状态码：0 表示网络错误（无 response）
+      setErrorStatus(error.response?.status ?? 0);
       setError(error.response?.data?.detail || error.message || '加载失败');
     } finally {
       setLoading(false);
@@ -141,8 +174,65 @@ const ChapterReader: React.FC = () => {
     }
   }, [chapterId, loadChapterData]);
 
+  // 计算搜索匹配位置
+  const searchMatches = useMemo(() => {
+    if (!searchQuery || !chapter) return [];
+    const result: number[] = [];
+    const content = chapter.content.toLowerCase();
+    const query = searchQuery.toLowerCase();
+    let idx = content.indexOf(query);
+    while (idx !== -1) {
+      result.push(idx);
+      idx = content.indexOf(query, idx + query.length);
+    }
+    return result;
+  }, [searchQuery, chapter]);
+
+  // 当前匹配项变化时滚动到对应位置
+  useEffect(() => {
+    if (searchMatches.length > 0 && currentMatchIndex >= 0) {
+      const el = document.getElementById(`search-match-${currentMatchIndex}`);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [currentMatchIndex, searchMatches]);
+
+  // 渲染带搜索高亮的内容（通过字符串分割 + mark 标记实现）
+  const renderHighlightedContent = () => {
+    if (!chapter) return null;
+    if (!searchQuery || searchMatches.length === 0) {
+      return chapter.content;
+    }
+
+    const parts: React.ReactNode[] = [];
+    let lastIdx = 0;
+    searchMatches.forEach((matchIdx, i) => {
+      parts.push(chapter.content.slice(lastIdx, matchIdx));
+      parts.push(
+        <mark
+          key={i}
+          id={`search-match-${i}`}
+          style={{
+            backgroundColor: i === currentMatchIndex ? '#ff9c00' : '#fff3a0',
+            color: i === currentMatchIndex ? '#fff' : 'inherit',
+            padding: '0 2px',
+            borderRadius: 2,
+          }}
+        >
+          {chapter.content.slice(matchIdx, matchIdx + searchQuery.length)}
+        </mark>
+      );
+      lastIdx = matchIdx + searchQuery.length;
+    });
+    parts.push(chapter.content.slice(lastIdx));
+
+    return parts;
+  };
+
   const handleAnnotationClick = (annotation: MemoryAnnotation) => {
     setActiveAnnotationId(annotation.id);
+    // 滚动到对应标注位置（先清空再设置，确保重复点击也能触发滚动）
+    setScrollToAnnotationId(undefined);
+    setTimeout(() => setScrollToAnnotationId(annotation.id), 0);
     // 移动端显示侧边栏
     if (window.innerWidth < 768) {
       setSidebarVisible(true);
@@ -233,17 +323,26 @@ const ChapterReader: React.FC = () => {
   }
 
   if (error || !chapter) {
+    const getErrorMessage = () => {
+      if (errorStatus === 404) return '章节不存在或已被删除';
+      if (errorStatus === 500) return '服务器错误，请稍后重试';
+      if (errorStatus === 0) return '网络连接失败，请检查网络';
+      return error || '章节不存在';
+    };
     return (
       <div style={{ padding: 24 }}>
         <Alert
           message="加载失败"
-          description={error || '章节不存在'}
+          description={getErrorMessage()}
           type="error"
           showIcon
         />
-        <Button onClick={handleBackClick} style={{ marginTop: 16 }}>
-          返回
-        </Button>
+        <Space style={{ marginTop: 16 }}>
+          <Button onClick={handleBackClick}>返回</Button>
+          <Button type="primary" icon={<ReloadOutlined />} onClick={loadChapterData}>
+            重试
+          </Button>
+        </Space>
       </div>
     );
   }
@@ -273,7 +372,7 @@ const ChapterReader: React.FC = () => {
               disabled={!navigation?.previous}
               title={navigation?.previous ? `上一章: ${navigation.previous.title}` : '已是第一章'}
             >
-              上一章
+              {window.innerWidth < 768 ? null : '上一章'}
             </Button>
             <span style={{ fontSize: 16, fontWeight: 600 }}>
               第{chapter.chapter_number}章: {chapter.title}
@@ -284,7 +383,7 @@ const ChapterReader: React.FC = () => {
               disabled={!navigation?.next}
               title={navigation?.next ? `下一章: ${navigation.next.title}` : '已是最后一章'}
             >
-              下一章
+              {window.innerWidth < 768 ? null : '下一章'}
             </Button>
           </Space>
 
@@ -297,6 +396,14 @@ const ChapterReader: React.FC = () => {
             >
               {analyzing ? '分析中...' : '重新分析'}
             </Button>
+            <Tooltip title={`阅读器主题：${readerTheme === 'dark' ? '深色' : '浅色'}（点击切换）`}>
+              <Button
+                icon={readerTheme === 'dark' ? <MoonOutlined /> : <BulbOutlined />}
+                onClick={handleToggleReaderTheme}
+              >
+                {readerTheme === 'dark' ? '深色' : '浅色'}
+              </Button>
+            </Tooltip>
             {hasAnnotations && (
               <>
                 <Switch
@@ -316,6 +423,46 @@ const ChapterReader: React.FC = () => {
               </>
             )}
           </Space>
+        </div>
+
+        {/* 章节内搜索 */}
+        <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <Input
+            prefix={<SearchOutlined style={{ color: token.colorTextTertiary }} aria-hidden="true" />}
+            placeholder="搜索本章内容"
+            aria-label="搜索本章内容"
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setCurrentMatchIndex(0);
+            }}
+            allowClear
+            style={{ maxWidth: 320 }}
+          />
+          {searchQuery && searchMatches.length > 0 && (
+            <Space size="small">
+              <span style={{ fontSize: 13, color: token.colorTextSecondary }}>
+                {currentMatchIndex + 1}/{searchMatches.length} 个匹配
+              </span>
+              <Button
+                size="small"
+                icon={<UpOutlined />}
+                onClick={() => setCurrentMatchIndex((prev) => (prev - 1 + searchMatches.length) % searchMatches.length)}
+                title="上一个匹配"
+                aria-label="上一个匹配"
+              />
+              <Button
+                size="small"
+                icon={<DownOutlined />}
+                onClick={() => setCurrentMatchIndex((prev) => (prev + 1) % searchMatches.length)}
+                title="下一个匹配"
+                aria-label="下一个匹配"
+              />
+            </Space>
+          )}
+          {searchQuery && searchMatches.length === 0 && (
+            <span style={{ fontSize: 13, color: token.colorTextTertiary }}>无匹配</span>
+          )}
         </div>
 
         {analyzing && (
@@ -343,13 +490,15 @@ const ChapterReader: React.FC = () => {
 
       {/* 主内容区域 */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* 左侧：章节内容 */}
+        {/* 左侧：章节内容（使用阅读器主题） */}
+        <ConfigProvider theme={readerThemeConfig}>
         <div
           style={{
             flex: 1,
             overflowY: 'auto',
             padding: '32px 48px',
             maxWidth: hasAnnotations ? 'calc(100% - 400px)' : '100%',
+            background: readerTheme === 'dark' ? '#0a0a0a' : '#F5F3FF',
           }}
         >
           <Card>
@@ -364,12 +513,24 @@ const ChapterReader: React.FC = () => {
                 />
               )}
 
-              {showAnnotations && hasAnnotations && annotationsData ? (
+              {searchQuery ? (
+                <div
+                  style={{
+                    lineHeight: 2,
+                    fontSize: 16,
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                  }}
+                >
+                  {renderHighlightedContent()}
+                </div>
+              ) : showAnnotations && hasAnnotations && annotationsData ? (
                 <AnnotatedText
                   content={chapter.content}
                   annotations={annotationsData.annotations}
                   onAnnotationClick={handleAnnotationClick}
                   activeAnnotationId={activeAnnotationId}
+                  scrollToAnnotation={scrollToAnnotationId}
                 />
               ) : (
                 <div
@@ -414,6 +575,7 @@ const ChapterReader: React.FC = () => {
             </div>
           </Card>
         </div>
+        </ConfigProvider>
 
         {/* 右侧：记忆侧边栏（桌面端） */}
         {hasAnnotations && annotationsData && window.innerWidth >= 768 && (

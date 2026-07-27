@@ -1,15 +1,19 @@
-import { useState, useEffect, useRef } from 'react';
-import { Button, Modal, Form, Input, Select, message, Row, Col, Empty, Tabs, Divider, Typography, Space, InputNumber, Checkbox, theme } from 'antd';
-import { ThunderboltOutlined, UserOutlined, TeamOutlined, PlusOutlined, ExportOutlined, ImportOutlined, DownloadOutlined } from '@ant-design/icons';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { Button, Modal, Form, Input, Select, message, Row, Col, Empty, Tabs, Divider, Typography, Space, InputNumber, Checkbox, Skeleton, Card, theme } from 'antd';
+import { ThunderboltOutlined, UserOutlined, TeamOutlined, PlusOutlined, ExportOutlined, ImportOutlined, DownloadOutlined, SearchOutlined, LinkOutlined } from '@ant-design/icons';
+import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
 import { useCharacterSync } from '../store/hooks';
 import { charactersPageGridConfig } from '../components/CardStyles';
 import { CharacterCard } from '../components/CharacterCard';
 import { SSELoadingOverlay } from '../components/SSELoadingOverlay';
+import { CharacterArcPanel } from '../components/CharacterArcPanel';
 import type { Character, ApiError } from '../types';
 import { characterApi } from '../services/api';
 import { SSEPostClient } from '../utils/sseClient';
+import { showErrorToast } from '../utils/errorHandler';
 import api from '../services/api';
+import { useIsMobile } from '../utils/useIsMobile';
 
 const { Title } = Typography;
 const { TextArea } = Input;
@@ -96,7 +100,9 @@ interface CharacterUpdateData {
 export default function Characters() {
   const { token } = theme.useToken();
   const { currentProject, characters } = useStore();
+  const navigate = useNavigate();
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isLoadingCharacters, setIsLoadingCharacters] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState('');
   const [activeTab, setActiveTab] = useState<'all' | 'character' | 'organization'>('all');
@@ -108,11 +114,17 @@ export default function Characters() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [createType, setCreateType] = useState<'character' | 'organization'>('character');
   const [editingCharacter, setEditingCharacter] = useState<Character | null>(null);
+  const [saving, setSaving] = useState(false);
   const [mainCareers, setMainCareers] = useState<Career[]>([]);
   const [subCareers, setSubCareers] = useState<Career[]>([]);
   const [selectedCharacters, setSelectedCharacters] = useState<string[]>([]);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [roleFilter, setRoleFilter] = useState<string>('all');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // 编辑组织时的主要成员 Tag 列表（字符串数组，元素格式如 "姓名（职位）"）
+  const [editMembers, setEditMembers] = useState<string[]>([]);
+  const [memberInput, setMemberInput] = useState('');
 
   const {
     refreshCharacters,
@@ -121,7 +133,8 @@ export default function Characters() {
 
   useEffect(() => {
     if (currentProject?.id) {
-      refreshCharacters();
+      setIsLoadingCharacters(true);
+      refreshCharacters().finally(() => setIsLoadingCharacters(false));
       fetchCareers();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -147,8 +160,8 @@ export default function Characters() {
     try {
       await deleteCharacter(id);
       message.success('删除成功');
-    } catch {
-      message.error('删除失败');
+    } catch (error) {
+      showErrorToast(error, '删除失败');
     }
   };
 
@@ -255,6 +268,7 @@ export default function Characters() {
   };
 
   const handleCreateCharacter = async (values: CharacterFormValues) => {
+    setSaving(true);
     try {
       const createData: CharacterCreateData = {
         project_id: currentProject.id,
@@ -298,8 +312,10 @@ export default function Characters() {
       setIsCreateModalOpen(false);
       createForm.resetFields();
       await refreshCharacters();
-    } catch {
-      message.error('创建失败');
+    } catch (error) {
+      showErrorToast(error, '创建失败');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -312,6 +328,25 @@ export default function Characters() {
       stage: sc.stage || 1
     })) || [];
 
+    // 解析主要成员 JSON 字符串数组为 Tag 列表
+    let parsedMembers: string[] = [];
+    if (character.is_organization && character.organization_members) {
+      try {
+        const parsed = JSON.parse(character.organization_members);
+        if (Array.isArray(parsed)) {
+          parsedMembers = parsed.filter((m): m is string => typeof m === 'string');
+        }
+      } catch {
+        // 兼容非 JSON 格式：按换行或分号拆分
+        parsedMembers = character.organization_members
+          .split(/[\n;；]+/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+      }
+    }
+    setEditMembers(parsedMembers);
+    setMemberInput('');
+
     editForm.setFieldsValue({
       ...character,
       sub_career_data: subCareerData
@@ -322,6 +357,7 @@ export default function Characters() {
   const handleUpdateCharacter = async (values: CharacterFormValues) => {
     if (!editingCharacter) return;
 
+    setSaving(true);
     try {
       // 提取副职业数据，剩余的作为更新数据
       const { sub_career_data: subCareerData, ...restValues } = values;
@@ -334,15 +370,24 @@ export default function Characters() {
         updateData.sub_careers = JSON.stringify([]);
       }
 
+      // 序列化主要成员 Tag 列表为 JSON 字符串（与现有数据结构兼容）
+      if (editingCharacter.is_organization) {
+        updateData.organization_members = JSON.stringify(editMembers);
+      }
+
       await characterApi.updateCharacter(editingCharacter.id, updateData);
       message.success('更新成功');
       setIsEditModalOpen(false);
       editForm.resetFields();
       setEditingCharacter(null);
+      setEditMembers([]);
+      setMemberInput('');
       await refreshCharacters();
     } catch (error) {
       console.error('更新失败:', error);
       message.error('更新失败');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -619,7 +664,7 @@ export default function Characters() {
 
   const displayList = getDisplayList();
 
-  const isMobile = window.innerWidth <= 768;
+  const isMobile = useIsMobile();
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -704,6 +749,37 @@ export default function Characters() {
 
       {characters.length > 0 && (
         <div style={{
+          display: 'flex',
+          flexDirection: isMobile ? 'column' : 'row',
+          gap: isMobile ? 8 : 12,
+          alignItems: isMobile ? 'stretch' : 'center',
+          marginBottom: isMobile ? 0 : 12,
+        }}>
+          <Input
+            prefix={<SearchOutlined style={{ color: token.colorTextQuaternary }} />}
+            placeholder="搜索角色名或描述..."
+            allowClear
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            style={{ flex: 1, maxWidth: isMobile ? '100%' : 320 }}
+          />
+          <Select
+            value={roleFilter}
+            onChange={setRoleFilter}
+            style={{ minWidth: 120, width: isMobile ? '100%' : undefined }}
+            options={[
+              { value: 'all', label: '全部定位' },
+              { value: 'protagonist', label: '主角' },
+              { value: 'supporting', label: '配角' },
+              { value: 'antagonist', label: '反派' },
+              { value: 'other', label: '其他' },
+            ]}
+          />
+        </div>
+      )}
+
+      {characters.length > 0 && (
+        <div style={{
           position: 'sticky',
           top: isMobile ? 60 : 72,
           zIndex: 9,
@@ -774,8 +850,48 @@ export default function Characters() {
       )}
 
       <div style={{ flex: 1, overflowY: 'auto' }}>
-        {characters.length === 0 ? (
-          <Empty description="还没有角色或组织，开始创建吧！" />
+        {isLoadingCharacters && characters.length === 0 ? (
+          <Row gutter={isMobile ? [8, 8] : charactersPageGridConfig.gutter}>
+            {Array.from({ length: isMobile ? 6 : 8 }).map((_, idx) => (
+              <Col
+                xs={24}
+                sm={charactersPageGridConfig.sm}
+                md={charactersPageGridConfig.md}
+                lg={charactersPageGridConfig.lg}
+                xl={charactersPageGridConfig.xl}
+                key={`character-skeleton-${idx}`}
+                style={{ padding: isMobile ? '4px' : '8px' }}
+              >
+                <Card style={{ height: '100%' }} styles={{ body: { padding: 16 } }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
+                    <Skeleton.Avatar active size={64} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <Skeleton active paragraph={false} title={{ width: '50%' }} />
+                      <Skeleton.Input active size="small" style={{ width: 80, marginTop: 8 }} />
+                    </div>
+                  </div>
+                  <Skeleton active paragraph={{ rows: 3, width: ['100%', '100%', '70%'] }} />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 12 }}>
+                    <Skeleton.Button active size="small" style={{ width: 60 }} />
+                    <Skeleton.Button active size="small" style={{ width: 60 }} />
+                  </div>
+                </Card>
+              </Col>
+            ))}
+          </Row>
+        ) : characters.length === 0 ? (
+          <Empty description="暂无角色或组织，开始创建吧">
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => {
+                setCreateType('character');
+                setIsCreateModalOpen(true);
+              }}
+            >
+              创建角色
+            </Button>
+          </Empty>
         ) : (
           <>
             <Row gutter={isMobile ? [8, 8] : charactersPageGridConfig.gutter}>
@@ -935,20 +1051,10 @@ export default function Characters() {
           editForm.resetFields();
           setEditingCharacter(null);
         }}
-        footer={
-          <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
-            <Button onClick={() => {
-              setIsEditModalOpen(false);
-              editForm.resetFields();
-              setEditingCharacter(null);
-            }}>
-              取消
-            </Button>
-            <Button type="primary" onClick={() => editForm.submit()}>
-              保存
-            </Button>
-          </Space>
-        }
+        onOk={() => editForm.submit()}
+        confirmLoading={saving}
+        okText="保存"
+        cancelText="取消"
         centered
         width={isMobile ? '100%' : 700}
         style={isMobile ? { top: 0, paddingBottom: 0, maxWidth: '100vw' } : undefined}
@@ -1185,23 +1291,87 @@ export default function Characters() {
                 <Input placeholder="描述组织的宗旨和目标..." />
               </Form.Item>
 
-              {/* 第三行：主要成员（只读展示） */}
+              {/* 第三行：主要成员（Tag 列表 + Input 添加 + 前往组织管理链接） */}
               <Form.Item
                 label="主要成员"
-                name="organization_members"
-                style={{ marginBottom: 4 }}
-                tooltip="成员信息由组织管理模块维护，此处仅展示"
+                style={{ marginBottom: 12 }}
+                tooltip="可在下方输入添加成员（回车确认），详细管理请前往组织管理页面"
               >
-                <TextArea
-                  disabled
-                  autoSize={{ minRows: 1, maxRows: 4 }}
-                  placeholder="暂无成员，请在组织管理中添加"
-                  style={{ color: token.colorText, backgroundColor: token.colorFillAlter }}
-                />
+                <div
+                  style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: 4,
+                    alignItems: 'center',
+                    padding: '4px 8px',
+                    minHeight: 32,
+                    border: `1px solid ${token.colorBorder}`,
+                    borderRadius: 6,
+                    backgroundColor: token.colorFillAlter,
+                  }}
+                >
+                  {editMembers.map((member, idx) => (
+                    <Tag
+                      key={`${member}-${idx}`}
+                      closable
+                      onClose={(e) => {
+                        e.preventDefault();
+                        setEditMembers(prev => prev.filter((_, i) => i !== idx));
+                      }}
+                      style={{ marginBottom: 2 }}
+                    >
+                      {member}
+                    </Tag>
+                  ))}
+                  {editMembers.length === 0 && (
+                    <span style={{ color: token.colorTextTertiary, fontSize: 13 }}>
+                      暂无成员，可在下方输入添加
+                    </span>
+                  )}
+                  <Input
+                    size="small"
+                    value={memberInput}
+                    onChange={(e) => setMemberInput(e.target.value)}
+                    onPressEnter={(e) => {
+                      e.preventDefault();
+                      const value = memberInput.trim();
+                      if (value && !editMembers.includes(value)) {
+                        setEditMembers(prev => [...prev, value]);
+                      }
+                      setMemberInput('');
+                    }}
+                    placeholder="输入成员后回车添加，如：张三（长老）"
+                    style={{
+                      flex: 1,
+                      minWidth: 200,
+                      border: 'none',
+                      backgroundColor: 'transparent',
+                      padding: '0 4px',
+                    }}
+                  />
+                </div>
+                <div
+                  style={{
+                    marginTop: 4,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}
+                >
+                  <span style={{ fontSize: 12, color: token.colorTextTertiary }}>
+                    💡 成员的详细管理请前往「组织管理」页面
+                  </span>
+                  <Button
+                    type="link"
+                    size="small"
+                    icon={<LinkOutlined />}
+                    onClick={() => navigate(`/project/${currentProject?.id}/organizations`)}
+                    style={{ padding: 0, height: 'auto', fontSize: 12 }}
+                  >
+                    前往组织管理
+                  </Button>
+                </div>
               </Form.Item>
-              <div style={{ marginBottom: 12, fontSize: 12, color: token.colorTextTertiary }}>
-                💡 请前往「组织管理」页面添加或管理组织成员
-              </div>
 
               {/* 第四行：所在地、代表颜色 */}
               <Row gutter={12}>
@@ -1242,7 +1412,10 @@ export default function Characters() {
           setIsCreateModalOpen(false);
           createForm.resetFields();
         }}
-        footer={null}
+        onOk={() => createForm.submit()}
+        confirmLoading={saving}
+        okText="创建"
+        cancelText="取消"
         centered
         width={isMobile ? '100%' : 700}
         style={isMobile ? { top: 0, paddingBottom: 0, maxWidth: '100vw' } : undefined}
@@ -1493,20 +1666,6 @@ export default function Characters() {
               </Form.Item>
             </>
           )}
-
-          <Form.Item style={{ marginBottom: 0, marginTop: 16 }}>
-            <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
-              <Button onClick={() => {
-                setIsCreateModalOpen(false);
-                createForm.resetFields();
-              }}>
-                取消
-              </Button>
-              <Button type="primary" htmlType="submit">
-                创建
-              </Button>
-            </Space>
-          </Form.Item>
         </Form>
       </Modal>
 

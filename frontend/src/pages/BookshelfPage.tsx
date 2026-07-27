@@ -1,10 +1,11 @@
-import { Card, Button, Spin, Space, Tag, Typography, Alert, theme } from 'antd';
-import { BookOutlined, RocketOutlined, BulbOutlined, UploadOutlined, DownloadOutlined, LoadingOutlined, CalendarOutlined, DeleteOutlined, CheckCircleOutlined, EditOutlined, PauseCircleOutlined, PictureOutlined, SwapOutlined, ReloadOutlined } from '@ant-design/icons';
-import { useState } from 'react';
+import { Card, Button, Skeleton, Space, Tag, Typography, Alert, Empty, Input, Select, theme } from 'antd';
+import { BookOutlined, RocketOutlined, BulbOutlined, UploadOutlined, DownloadOutlined, LoadingOutlined, CalendarOutlined, DeleteOutlined, CheckCircleOutlined, EditOutlined, PauseCircleOutlined, PictureOutlined, SwapOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { useState, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import type { Project } from '../types';
 import { bookshelfCardStyles, bookshelfCardHoverHandlers } from '../components/CardStyles';
 import { useThemeMode } from '../theme/useThemeMode';
+import { alphaColor } from '../utils/color';
 
 const { Paragraph } = Typography;
 
@@ -57,7 +58,6 @@ export default function BookshelfPage({
   const { token } = theme.useToken();
   const { resolvedMode } = useThemeMode();
   const isDark = resolvedMode === 'dark';
-  const alphaColor = (color: string, alpha: number) => `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
   const coverButtonStyle = {
     color: isDark ? token.colorWhite : token.colorPrimaryText,
     background: isDark
@@ -69,9 +69,49 @@ export default function BookshelfPage({
   };
   const [flippedProjectIds, setFlippedProjectIds] = useState<Record<string, boolean>>({});
   const [coverGeneratingIds, setCoverGeneratingIds] = useState<Record<string, boolean>>({});
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [sortBy, setSortBy] = useState<'updated' | 'created' | 'title'>('updated');
   const mobileBookHeight = 520;
   const desktopBookHeight = 520;
   const mobileSpineWidth = 32;
+
+  const filteredProjects = useMemo(() => {
+    let result = projects;
+
+    // 搜索：标题或标签（genre）
+    if (searchTerm.trim()) {
+      const term = searchTerm.trim().toLowerCase();
+      result = result.filter((p) => {
+        const titleMatch = p.title?.toLowerCase().includes(term);
+        const genreMatch = p.genre?.toLowerCase().includes(term);
+        return titleMatch || genreMatch;
+      });
+    }
+
+    // 状态筛选
+    if (statusFilter !== 'all') {
+      result = result.filter((p) => {
+        const progress = getProgress(p.current_words || 0, p.target_words || 0);
+        const displayStatus = progress >= 100 ? 'completed' : p.status;
+        return displayStatus === statusFilter;
+      });
+    }
+
+    // 排序
+    result = [...result].sort((a, b) => {
+      if (sortBy === 'title') {
+        return (a.title || '').localeCompare(b.title || '', 'zh-CN');
+      }
+      if (sortBy === 'created') {
+        return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+      }
+      // 默认：最近更新
+      return new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime();
+    });
+
+    return result;
+  }, [projects, searchTerm, statusFilter, sortBy, getProgress]);
 
   const serialBookPalettes = [
     {
@@ -217,6 +257,48 @@ export default function BookshelfPage({
         </div>
       </Card>
 
+      {projects.length > 0 && (
+        <div style={{
+          marginBottom: isMobile ? 12 : 16,
+          display: 'flex',
+          flexDirection: isMobile ? 'column' : 'row',
+          gap: isMobile ? 8 : 12,
+          alignItems: isMobile ? 'stretch' : 'center',
+          flexWrap: 'wrap',
+        }}>
+          <Input
+            prefix={<SearchOutlined style={{ color: token.colorTextQuaternary }} />}
+            placeholder="搜索项目标题或标签..."
+            allowClear
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            style={{ flex: 1, minWidth: isMobile ? '100%' : 220, maxWidth: isMobile ? '100%' : 360 }}
+          />
+          <Select
+            value={statusFilter}
+            onChange={setStatusFilter}
+            style={{ minWidth: 120, width: isMobile ? '100%' : undefined }}
+            options={[
+              { value: 'all', label: '全部状态' },
+              { value: 'planning', label: '规划中' },
+              { value: 'writing', label: '创作中' },
+              { value: 'revising', label: '修订中' },
+              { value: 'completed', label: '已完结' },
+            ]}
+          />
+          <Select
+            value={sortBy}
+            onChange={(v) => setSortBy(v)}
+            style={{ minWidth: 120, width: isMobile ? '100%' : undefined }}
+            options={[
+              { value: 'updated', label: '最近更新' },
+              { value: 'created', label: '创建时间' },
+              { value: 'title', label: '标题' },
+            ]}
+          />
+        </div>
+      )}
+
       {showApiTip && projects.length === 0 && (
         <Alert
           message="欢迎使用 墨笔"
@@ -252,7 +334,58 @@ export default function BookshelfPage({
         />
       )}
 
-      <Spin spinning={loading}>
+      {!loading && projects.length === 0 && (
+        <Empty
+          description="还没有项目，开始创建你的第一本小说吧"
+          style={{ marginTop: 60, marginBottom: 24 }}
+        >
+          <Button type="primary" size="large" icon={<RocketOutlined />} onClick={onStartWizard} className="onboarding-create-btn">创建项目</Button>
+        </Empty>
+      )}
+
+      {!loading && projects.length > 0 && filteredProjects.length === 0 && (
+        <Empty
+          description="未找到匹配的项目"
+          style={{ marginTop: 60, marginBottom: 24 }}
+        />
+      )}
+
+      {loading ? (
+        <div style={{
+          ...bookshelfCardStyles.container,
+          borderRadius: isMobile ? 12 : 16,
+          border: `1px solid ${isDark ? alphaColor(token.colorBorder, 0.42) : alphaColor(token.colorText, 0.06)}`,
+          backgroundColor: isDark ? alphaColor(token.colorBgContainer, 0.42) : alphaColor(token.colorBgContainer, 0.72),
+          backgroundImage: `radial-gradient(${alphaColor(token.colorText, isDark ? 0.16 : 0.08)} 1px, transparent 0)`,
+          backgroundSize: '18px 18px',
+          boxShadow: `inset 0 1px 0 ${alphaColor(token.colorWhite, isDark ? 0.08 : 0.45)}`,
+          padding: isMobile ? '12px' : '18px',
+          ...(isMobile && {
+            gridTemplateColumns: '1fr',
+            gap: '14px',
+          })
+        }}>
+          {Array.from({ length: isMobile ? 6 : 8 }).map((_, idx) => (
+            <Card
+              key={`book-skeleton-${idx}`}
+              style={{ ...bookshelfCardStyles.projectCard, height: isMobile ? mobileBookHeight : desktopBookHeight }}
+              styles={{ body: { padding: 0, height: '100%', flex: 1, display: 'flex', flexDirection: 'column' } }}
+            >
+              <div style={{ padding: isMobile ? '16px 16px 14px 38px' : '20px 20px 18px 42px', height: '100%', display: 'flex', flexDirection: 'column', gap: 12, overflow: 'hidden' }}>
+                <Skeleton.Image active style={{ width: '100%', height: isMobile ? 140 : 160, borderRadius: 8 }} />
+                <Skeleton active paragraph={{ rows: 2, width: ['85%', '60%'] }} title={{ width: '65%' }} />
+                <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <Skeleton.Input active size="small" style={{ width: '100%' }} />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                    <Skeleton.Input active size="small" style={{ width: 110 }} />
+                    <Skeleton.Button active size="small" style={{ width: 92 }} />
+                  </div>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      ) : (
         <div style={{
           ...bookshelfCardStyles.container,
           borderRadius: isMobile ? 12 : 16,
@@ -314,6 +447,7 @@ export default function BookshelfPage({
                     size={isMobile ? 'middle' : 'large'}
                     icon={<RocketOutlined />}
                     onClick={onStartWizard}
+                    className="onboarding-create-btn"
                     style={{
                       height: isMobile ? 42 : 52,
                       fontSize: isMobile ? 14 : 16,
@@ -322,7 +456,7 @@ export default function BookshelfPage({
                     }}
                     block
                   >
-                    快速开始
+                    创建项目
                   </Button>
                   <Button
                     size={isMobile ? 'middle' : 'large'}
@@ -358,7 +492,7 @@ export default function BookshelfPage({
             </Card>
           </div>
 
-          {Array.isArray(projects) && projects.map((project, index) => {
+          {Array.isArray(filteredProjects) && filteredProjects.map((project, index) => {
             const progress = getProgress(project.current_words || 0, project.target_words || 0);
             const progressColor = getProgressColor(progress);
             const isWizardIncomplete = project.wizard_status === 'incomplete';
@@ -941,7 +1075,7 @@ export default function BookshelfPage({
             );
           })}
         </div>
-      </Spin>
+      )}
     </div>
   );
 }

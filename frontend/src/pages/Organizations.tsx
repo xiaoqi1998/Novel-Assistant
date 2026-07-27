@@ -61,12 +61,19 @@ export default function Organizations() {
   const { token } = theme.useToken();
 
   useEffect(() => {
+    let timeoutId: number | undefined;
     const handleResize = () => {
-      setIsMobile(window.innerWidth <= 768);
+      if (timeoutId) window.clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(() => {
+        setIsMobile(window.innerWidth <= 768);
+      }, 150);
     };
 
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      if (timeoutId) window.clearTimeout(timeoutId);
+    };
   }, []);
 
   const loadOrganizations = useCallback(async () => {

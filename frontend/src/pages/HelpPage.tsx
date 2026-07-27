@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -9,6 +9,8 @@ import {
   Collapse,
   Alert,
   Space,
+  Input,
+  Empty,
   theme,
   Row,
   Col,
@@ -32,13 +34,14 @@ import {
   FieldTimeOutlined,
   BookOutlined,
   CheckCircleOutlined,
+  SearchOutlined,
+  GithubOutlined,
+  MailOutlined,
+  UnorderedListOutlined,
 } from '@ant-design/icons';
+import { alphaColor } from '../utils/color';
 
 const { Title, Paragraph, Text } = Typography;
-
-// 透明度工具（color-mix）
-const alpha = (color: string, a: number): string =>
-  `color-mix(in srgb, ${color} ${(a * 100).toFixed(0)}%, transparent)`;
 
 interface FaqItem {
   q: string;
@@ -195,10 +198,71 @@ const TIPS: { icon: ReactNode; title: string; desc: string }[] = [
   },
 ];
 
+const APP_VERSION = 'v1.5.2';
+const LAST_UPDATED = '2026-07-27';
+
 export default function HelpPage() {
   const { token } = theme.useToken();
   const navigate = useNavigate();
   const [activeFaq, setActiveFaq] = useState<string[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const handleBack = () => {
+    if (window.history.length > 1) {
+      navigate(-1);
+    } else {
+      navigate('/');
+    }
+  };
+
+  const filteredSteps = useMemo(() => {
+    if (!searchTerm.trim()) return QUICK_STEPS;
+    const term = searchTerm.trim().toLowerCase();
+    return QUICK_STEPS.filter((s) =>
+      [s.title, s.description, s.detail].some((field) => field?.toLowerCase().includes(term))
+    );
+  }, [searchTerm]);
+
+  const filteredFeatures = useMemo(() => {
+    if (!searchTerm.trim()) return FEATURES;
+    const term = searchTerm.trim().toLowerCase();
+    return FEATURES.filter((f) =>
+      [f.title, f.description].some((field) => field?.toLowerCase().includes(term))
+    );
+  }, [searchTerm]);
+
+  const filteredTips = useMemo(() => {
+    if (!searchTerm.trim()) return TIPS;
+    const term = searchTerm.trim().toLowerCase();
+    return TIPS.filter((t) =>
+      [t.title, t.desc].some((field) => field?.toLowerCase().includes(term))
+    );
+  }, [searchTerm]);
+
+  const filteredFaqs = useMemo(() => {
+    if (!searchTerm.trim()) return FAQS;
+    const term = searchTerm.trim().toLowerCase();
+    return FAQS.filter((f) =>
+      [f.q, f.a].some((field) => field?.toLowerCase().includes(term))
+    );
+  }, [searchTerm]);
+
+  const hasNoResults = !!searchTerm.trim() &&
+    filteredSteps.length === 0 &&
+    filteredFeatures.length === 0 &&
+    filteredTips.length === 0 &&
+    filteredFaqs.length === 0;
+
+  const scrollToSection = (id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const TOC_ITEMS = [
+    { id: 'quick-start', label: '快速开始' },
+    { id: 'features', label: '核心写作功能' },
+    { id: 'tips', label: '高效使用技巧' },
+    { id: 'faq', label: '常见问题' },
+  ];
 
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', paddingBottom: 64 }}>
@@ -222,16 +286,30 @@ export default function HelpPage() {
                 </Title>
               </Space>
               <Text style={{ color: token.colorText, fontSize: 14, opacity: 0.9 }}>
-                墨笔 · AI 小说创作助手 · 让长篇创作不再卡壳
+                墨笔 · AI 驱动的小说创作助手 · 让长篇创作不再卡壳
               </Text>
             </Space>
           </Col>
           <Col>
             <Space>
               <Button
+                icon={<RocketOutlined />}
+                onClick={() => {
+                  localStorage.removeItem('mobinovel_onboarding_completed');
+                  navigate('/');
+                  // 延迟一帧，确保导航完成后再触发引导
+                  setTimeout(() => {
+                    window.dispatchEvent(new CustomEvent('onboarding:restart'));
+                  }, 100);
+                }}
+                style={{ background: alphaColor(token.colorBgContainer, 0.6) }}
+              >
+                重新查看新手引导
+              </Button>
+              <Button
                 icon={<ArrowLeftOutlined />}
                 onClick={() => navigate('/')}
-                style={{ background: alpha(token.colorBgContainer, 0.6) }}
+                style={{ background: alphaColor(token.colorBgContainer, 0.6) }}
               >
                 返回书架
               </Button>
@@ -240,15 +318,51 @@ export default function HelpPage() {
         </Row>
       </Card>
 
+      {/* 搜索框 */}
+      <div style={{ marginBottom: 24 }}>
+        <Input
+          prefix={<SearchOutlined style={{ color: token.colorTextQuaternary }} />}
+          placeholder="搜索关键词，如：钩子、对话、角色、重写..."
+          size="large"
+          allowClear
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
+      </div>
+
+      <Row gutter={24}>
+        {/* 左侧目录锚点 */}
+        <Col xs={0} md={5}>
+          <div style={{ position: 'sticky', top: 16 }}>
+            <Card size="small" title={<Space><UnorderedListOutlined />目录</Space>}>
+              <Space direction="vertical" style={{ width: '100%' }}>
+                {TOC_ITEMS.map((item) => (
+                  <a
+                    key={item.id}
+                    onClick={() => scrollToSection(item.id)}
+                    style={{ display: 'block', cursor: 'pointer', fontSize: 13 }}
+                  >
+                    {item.label}
+                  </a>
+                ))}
+              </Space>
+            </Card>
+          </div>
+        </Col>
+
+        {/* 右侧内容 */}
+        <Col xs={24} md={19}>
       {/* 快速开始 */}
+      {filteredSteps.length > 0 && (
       <Card
+        id="quick-start"
         title={
           <Space>
             <RocketOutlined style={{ color: token.colorPrimary }} />
             <span>快速开始</span>
           </Space>
         }
-        style={{ marginBottom: 24 }}
+        style={{ marginBottom: 24, scrollMarginTop: 16 }}
       >
         <Paragraph type="secondary" style={{ marginBottom: 24 }}>
           从零到生成第一章，只需 6 步。
@@ -257,7 +371,7 @@ export default function HelpPage() {
           current={-1}
           direction="vertical"
           size="small"
-          items={QUICK_STEPS.map((s) => ({
+          items={filteredSteps.map((s) => ({
             title: (
               <Space>
                 <span style={{ color: token.colorPrimary }}>{s.icon}</span>
@@ -278,22 +392,25 @@ export default function HelpPage() {
           }))}
         />
       </Card>
+      )}
 
       {/* 核心功能 */}
+      {filteredFeatures.length > 0 && (
       <Card
+        id="features"
         title={
           <Space>
             <BulbOutlined style={{ color: token.colorPrimary }} />
             <span>核心写作功能</span>
           </Space>
         }
-        style={{ marginBottom: 24 }}
+        style={{ marginBottom: 24, scrollMarginTop: 16 }}
       >
         <Paragraph type="secondary" style={{ marginBottom: 16 }}>
           墨笔的写作引擎会在大纲展开和章节生成时自动应用以下能力，让 AI 写出"像专业作家"的内容。
         </Paragraph>
         <Row gutter={[16, 16]}>
-          {FEATURES.map((f) => (
+          {filteredFeatures.map((f) => (
             <Col xs={24} sm={12} lg={8} key={f.title}>
               <Card
                 size="small"
@@ -308,7 +425,7 @@ export default function HelpPage() {
                         width: 32,
                         height: 32,
                         borderRadius: 8,
-                        background: alpha(f.color, 0.12),
+                        background: alphaColor(f.color, 0.12),
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
@@ -329,19 +446,22 @@ export default function HelpPage() {
           ))}
         </Row>
       </Card>
+      )}
 
       {/* 创作技巧 */}
+      {filteredTips.length > 0 && (
       <Card
+        id="tips"
         title={
           <Space>
             <ThunderboltOutlined style={{ color: token.colorWarning }} />
             <span>高效使用技巧</span>
           </Space>
         }
-        style={{ marginBottom: 24 }}
+        style={{ marginBottom: 24, scrollMarginTop: 16 }}
       >
         <Row gutter={[16, 16]}>
-          {TIPS.map((t, i) => (
+          {filteredTips.map((t, i) => (
             <Col xs={24} sm={12} key={i}>
               <Card size="small" style={{ height: '100%' }}>
                 <Space align="start" size={12}>
@@ -350,7 +470,7 @@ export default function HelpPage() {
                       width: 32,
                       height: 32,
                       borderRadius: 8,
-                      background: alpha(token.colorPrimary, 0.1),
+                      background: alphaColor(token.colorPrimary, 0.1),
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -374,22 +494,42 @@ export default function HelpPage() {
           ))}
         </Row>
       </Card>
+      )}
 
       {/* FAQ */}
+      {filteredFaqs.length > 0 && (
       <Card
+        id="faq"
         title={
           <Space>
             <QuestionCircleOutlined style={{ color: token.colorPrimary }} />
             <span>常见问题</span>
           </Space>
         }
-        style={{ marginBottom: 24 }}
+        extra={
+          <Space size="small">
+            <Button
+              size="small"
+              type="link"
+              onClick={() => setActiveFaq(filteredFaqs.map((_, i) => String(i)))}
+            >
+              展开全部
+            </Button>
+            <Button
+              size="small"
+              type="link"
+              onClick={() => setActiveFaq([])}
+            >
+              收起全部
+            </Button>
+          </Space>
+        }
+        style={{ marginBottom: 24, scrollMarginTop: 16 }}
       >
         <Collapse
-          accordion
           activeKey={activeFaq}
           onChange={setActiveFaq}
-          items={FAQS.map((f, i) => ({
+          items={filteredFaqs.map((f, i) => ({
             key: String(i),
             label: <Text strong>{f.q}</Text>,
             children: (
@@ -400,9 +540,16 @@ export default function HelpPage() {
           }))}
         />
       </Card>
+      )}
+
+          {hasNoResults && (
+            <Empty description="没有找到匹配的内容" style={{ padding: '60px 0' }} />
+          )}
+        </Col>
+      </Row>
 
       {/* 底部 CTA */}
-      <Card style={{ textAlign: 'center' }}>
+      <Card style={{ textAlign: 'center', marginTop: 24 }}>
         <Space direction="vertical" size={12}>
           <Title level={4} style={{ margin: 0 }}>
             准备好开始创作了吗？
@@ -420,13 +567,39 @@ export default function HelpPage() {
             <Button
               size="large"
               icon={<ArrowLeftOutlined />}
-              onClick={() => navigate(-1)}
+              onClick={handleBack}
             >
               返回上一页
             </Button>
           </Space>
+          <div style={{ borderTop: `1px solid ${token.colorBorderSecondary}`, margin: '12px 0', width: '100%' }} />
+          <Space>
+            <Text type="secondary" style={{ fontSize: 13 }}>遇到问题或有建议？</Text>
+            <Button
+              size="small"
+              icon={<GithubOutlined />}
+              href="https://github.com/novel-assistant/novel-assistant/issues"
+              target="_blank"
+            >
+              GitHub 反馈
+            </Button>
+            <Button
+              size="small"
+              icon={<MailOutlined />}
+              href="mailto:feedback@novel-assistant.com"
+            >
+              邮件反馈
+            </Button>
+          </Space>
         </Space>
       </Card>
+
+      {/* 版本信息 */}
+      <div style={{ textAlign: 'center', marginTop: 16 }}>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          版本 {APP_VERSION} · 最后更新：{LAST_UPDATED}
+        </Text>
+      </div>
     </div>
   );
 }

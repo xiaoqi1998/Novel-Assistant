@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import {
   Card, Button, Select, Radio, Space, Typography, message, Progress,
-  Alert, Tag, Spin, Modal, Empty, theme, List, Tooltip
+  Alert, Tag, Spin, Modal, Empty, theme, List, Tooltip, Popconfirm
 } from 'antd';
 import {
   AuditOutlined, PlayCircleOutlined, CopyOutlined, DownloadOutlined,
@@ -11,6 +11,7 @@ import {
   HistoryOutlined, EyeOutlined
 } from '@ant-design/icons';
 import axios from 'axios';
+import ReactDiffViewer, { DiffMethod } from 'react-diff-viewer-continued';
 import {
   startFullReviewBackground,
   getReviewReport,
@@ -20,6 +21,9 @@ import {
   pollTaskUntilComplete
 } from '../services/backgroundTaskService';
 import { eventBus } from '../store/eventBus';
+import { useThemeMode } from '../theme/useThemeMode';
+import MarkdownRenderer from '../components/MarkdownRenderer';
+import { notify } from '../utils/notification';
 import './FullReview.css';
 
 const { Title, Text } = Typography;
@@ -32,6 +36,7 @@ interface ChapterInfo {
   chapter_number: number;
   title: string;
   word_count: number;
+  content?: string;
 }
 
 interface ModifiedChapter {
@@ -45,6 +50,8 @@ interface ModifiedChapter {
 const FullReview: React.FC = () => {
   const { projectId } = useParams<{ projectId: string }>();
   const { token } = theme.useToken();
+  const { resolvedMode } = useThemeMode();
+  const isDarkMode = resolvedMode === 'dark';
 
   const [step, setStep] = useState<ReviewStep>('select');
   const [scope, setScope] = useState<ReviewScope>('single');
@@ -74,6 +81,49 @@ const FullReview: React.FC = () => {
   const modifiedChaptersRef = useRef<ModifiedChapter[]>([]);
   // 取消后台任务轮询的函数
   const cancelPollingRef = useRef<(() => void) | null>(null);
+
+  // diff viewer 样式（与 ChapterContentComparison 保持一致）
+  const diffViewerStyles = useMemo(() => ({
+    variables: {
+      light: {
+        diffViewerBackground: token.colorBgContainer,
+        diffViewerColor: token.colorText,
+        diffViewerTitleBackground: token.colorBgElevated,
+        diffViewerTitleColor: token.colorTextHeading,
+        addedBackground: token.colorSuccessBg,
+        addedColor: token.colorText,
+        removedBackground: token.colorErrorBg,
+        removedColor: token.colorText,
+        wordAddedBackground: token.colorSuccessBorder,
+        wordRemovedBackground: token.colorErrorBorder,
+        addedGutterBackground: token.colorSuccessBg,
+        removedGutterBackground: token.colorErrorBg,
+        gutterBackground: token.colorFillQuaternary,
+        gutterBackgroundDark: token.colorFillTertiary,
+        highlightBackground: token.colorWarningBg,
+        highlightGutterBackground: token.colorWarningBorder,
+      },
+      dark: {
+        diffViewerBackground: token.colorBgContainer,
+        diffViewerColor: token.colorText,
+        diffViewerTitleBackground: token.colorBgElevated,
+        diffViewerTitleColor: token.colorTextHeading,
+        addedBackground: 'rgba(82, 196, 26, 0.16)',
+        addedColor: token.colorText,
+        removedBackground: 'rgba(245, 34, 45, 0.16)',
+        removedColor: token.colorText,
+        wordAddedBackground: 'rgba(82, 196, 26, 0.4)',
+        wordRemovedBackground: 'rgba(245, 34, 45, 0.4)',
+        addedGutterBackground: 'rgba(82, 196, 26, 0.16)',
+        removedGutterBackground: 'rgba(245, 34, 45, 0.16)',
+        gutterBackground: token.colorFillQuaternary,
+        gutterBackgroundDark: token.colorFillTertiary,
+        highlightBackground: token.colorWarningBg,
+        highlightGutterBackground: token.colorWarningBorder,
+      },
+    },
+    line: { padding: '2px 10px' },
+  }), [token]);
 
   // 加载章节列表
   useEffect(() => {
@@ -150,6 +200,11 @@ const FullReview: React.FC = () => {
         }
         // 刷新历史列表
         loadHistoryReports();
+        // 后台任务完成通知（仅在页面不在焦点时发送）
+        notify(
+          '全文审校完成',
+          `审查报告已生成${chapters.length > 0 ? `，项目共 ${chapters.length} 章` : ''}`,
+        );
       },
       (errMsg) => {
         setIsStreaming(false);
@@ -188,6 +243,7 @@ const FullReview: React.FC = () => {
         chapter_number: ch.chapter_number,
         title: ch.title,
         word_count: ch.word_count || 0,
+        content: ch.content || '',
       })));
     } catch {
       message.error('加载章节列表失败');
@@ -236,6 +292,11 @@ const FullReview: React.FC = () => {
         }
         loadHistoryReports();
         message.success('审查完成，报告已保存');
+        // 后台任务完成通知（仅在页面不在焦点时发送）
+        notify(
+          '全文审校完成',
+          `审查报告已生成${chapters.length > 0 ? `，项目共 ${chapters.length} 章` : ''}`,
+        );
       },
       (errMsg) => {
         setIsStreaming(false);
@@ -363,7 +424,7 @@ const FullReview: React.FC = () => {
                     modifiedChaptersRef.current.push({
                       chapterId: currentChapterId,
                       title: chapter?.title || `章节${currentChapterId}`,
-                      originalContent: '',
+                      originalContent: chapter?.content || '',
                       modifiedContent: cleanedContent.trim(),
                       confirmed: false,
                     });
@@ -645,22 +706,14 @@ const FullReview: React.FC = () => {
           )}
 
           {reviewReport ? (
-            <div className="review-report-content">
-              <pre style={{
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
-                fontFamily: 'inherit',
-                fontSize: 14,
-                lineHeight: 1.8,
-                maxHeight: '60vh',
-                overflow: 'auto',
-                padding: 16,
-                background: token.colorFillQuaternary,
-                borderRadius: 8,
-                color: token.colorText,
-              }}>
-                {reviewReport}
-              </pre>
+            <div className="review-report-content" style={{
+              maxHeight: '60vh',
+              overflow: 'auto',
+              padding: 16,
+              background: token.colorFillQuaternary,
+              borderRadius: 8,
+            }}>
+              <MarkdownRenderer content={reviewReport} />
             </div>
           ) : (
             <div style={{ textAlign: 'center', padding: 40 }}>
@@ -759,37 +812,58 @@ const FullReview: React.FC = () => {
                         >
                           复制
                         </Button>
-                        <Button
-                          size="small"
-                          type="primary"
-                          icon={<CheckOutlined />}
-                          onClick={() => confirmOverwrite(ch.chapterId, ch.modifiedContent)}
+                        <Popconfirm
+                          title="覆盖后原内容将被替换，无法撤销，确认继续？"
+                          okText="确认覆盖"
+                          cancelText="取消"
+                          okType="danger"
+                          onConfirm={() => confirmOverwrite(ch.chapterId, ch.modifiedContent)}
                         >
-                          确认覆盖
-                        </Button>
+                          <Button
+                            size="small"
+                            type="primary"
+                            icon={<CheckOutlined />}
+                          >
+                            确认覆盖
+                          </Button>
+                        </Popconfirm>
                       </Space>
                     )
                   }
                 >
-                  <div style={{
-                    maxHeight: 300,
-                    overflow: 'auto',
-                    padding: 12,
-                    background: token.colorFillQuaternary,
-                    borderRadius: 6,
-                  }}>
-                    <pre style={{
-                      whiteSpace: 'pre-wrap',
-                      wordBreak: 'break-word',
-                      fontFamily: 'inherit',
-                      fontSize: 13,
-                      lineHeight: 1.6,
-                      margin: 0,
-                      color: token.colorText,
+                  {ch.originalContent ? (
+                    <ReactDiffViewer
+                      oldValue={ch.originalContent}
+                      newValue={ch.modifiedContent}
+                      splitView={true}
+                      compareMethod={DiffMethod.WORDS}
+                      leftTitle="原文"
+                      rightTitle="修改后"
+                      showDiffOnly={false}
+                      useDarkTheme={isDarkMode}
+                      styles={diffViewerStyles}
+                    />
+                  ) : (
+                    <div style={{
+                      maxHeight: 300,
+                      overflow: 'auto',
+                      padding: 12,
+                      background: token.colorFillQuaternary,
+                      borderRadius: 6,
                     }}>
-                      {ch.modifiedContent}
-                    </pre>
-                  </div>
+                      <pre style={{
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-word',
+                        fontFamily: 'inherit',
+                        fontSize: 13,
+                        lineHeight: 1.6,
+                        margin: 0,
+                        color: token.colorText,
+                      }}>
+                        {ch.modifiedContent}
+                      </pre>
+                    </div>
+                  )}
                 </Card>
               ))}
             </div>

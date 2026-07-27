@@ -32,6 +32,7 @@ import Login from './pages/Login';
 import AuthCallback from './pages/AuthCallback';
 import ProtectedRoute from './components/ProtectedRoute';
 import RootLayout from './components/RootLayout';
+import NotFound from './components/NotFound';
 import './App.css';
 
 function App() {
@@ -82,6 +83,7 @@ function App() {
             <Route path="skill-manage" element={<SkillManage />} />
             <Route path="full-review" element={<FullReview />} />
           </Route>
+          <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
     </>

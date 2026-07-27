@@ -1,11 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Card, Input, Button, Tag, List, Typography, Space, Spin, message, Tooltip, Tabs, theme } from 'antd';
-import { SendOutlined, RobotOutlined, UserOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { Card, Input, Button, Tag, List, Typography, Space, Spin, message, Tooltip, Tabs, theme, Modal } from 'antd';
+import { SendOutlined, RobotOutlined, UserOutlined, ThunderboltOutlined, StopOutlined, CopyOutlined, DeleteOutlined } from '@ant-design/icons';
 import axios from 'axios';
-// 使用简单的文本渲染替代 react-markdown
-const MarkdownRender: React.FC<{ content: string }> = ({ content }) => {
-  return <div style={{ whiteSpace: 'pre-wrap' }}>{content}</div>;
-};
+import MarkdownRenderer from '../components/MarkdownRenderer';
 
 const { TextArea } = Input;
 const { Title, Text, Paragraph } = Typography;
@@ -23,6 +20,9 @@ interface ChatMessage {
   content: string;
 }
 
+const CHAT_HISTORY_KEY = 'mobinovel_skill_chat_history';
+const MAX_HISTORY_MESSAGES = 50;
+
 const SkillChat: React.FC = () => {
   const { token } = theme.useToken();
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -36,12 +36,34 @@ const SkillChat: React.FC = () => {
   const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
+    // 恢复历史对话
+    try {
+      const saved = localStorage.getItem(CHAT_HISTORY_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.selectedSkill) setSelectedSkill(parsed.selectedSkill);
+        if (Array.isArray(parsed.messages)) setMessages(parsed.messages);
+      }
+    } catch {
+      // 忽略解析错误
+    }
     fetchSkills();
   }, []);
 
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // 对话历史保存到 localStorage（最多 50 条，超出丢弃最旧）
+  useEffect(() => {
+    if (messages.length === 0) return;
+    try {
+      const trimmed = messages.slice(-MAX_HISTORY_MESSAGES);
+      localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify({ selectedSkill, messages: trimmed }));
+    } catch {
+      // 配额超限，忽略
+    }
+  }, [messages, selectedSkill]);
 
   const fetchSkills = async () => {
     try {
@@ -64,6 +86,31 @@ const SkillChat: React.FC = () => {
   const handleSkillSelect = (skill: Skill) => {
     setSelectedSkill(skill);
     setMessages([]);
+    try { localStorage.removeItem(CHAT_HISTORY_KEY); } catch { /* ignore */ }
+  };
+
+  const handleCopy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      message.success('已复制');
+    } catch {
+      message.error('复制失败');
+    }
+  };
+
+  const handleClearMessages = () => {
+    Modal.confirm({
+      title: '确认清空对话？',
+      content: '清空后当前对话历史将无法恢复。',
+      okText: '清空',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: () => {
+        setMessages([]);
+        try { localStorage.removeItem(CHAT_HISTORY_KEY); } catch { /* ignore */ }
+        message.success('已清空对话');
+      },
+    });
   };
 
   const handleSend = async () => {
@@ -168,7 +215,7 @@ const SkillChat: React.FC = () => {
       <div style={{ height: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column', padding: '0 16px', minWidth: 0, overflow: 'hidden' }}>
         {/* 顶部栏 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: '1px solid #f0f0f0' }}>
-          <Button size="small" onClick={() => { setSelectedSkill(null); setMessages([]); }}>← 返回</Button>
+          <Button size="small" onClick={() => { setSelectedSkill(null); setMessages([]); try { localStorage.removeItem(CHAT_HISTORY_KEY); } catch { /* ignore */ } }}>← 返回</Button>
           <ThunderboltOutlined style={{ color: '#1890ff' }} />
           <Text strong>{selectedSkill.template_name}</Text>
           <Tag color={categoryColors[selectedSkill.category] || '#default'} style={{ marginLeft: 4 }}>{selectedSkill.category}</Tag>
@@ -186,6 +233,16 @@ const SkillChat: React.FC = () => {
               {selectedSkill.description}
             </Text>
           </Tooltip>
+          <Button
+            size="small"
+            danger
+            icon={<DeleteOutlined />}
+            onClick={handleClearMessages}
+            disabled={messages.length === 0 || loading}
+            style={{ marginLeft: 'auto' }}
+          >
+            清空对话
+          </Button>
         </div>
 
         {/* 消息区域 */}
@@ -215,9 +272,23 @@ const SkillChat: React.FC = () => {
                 color: msg.role === 'user' ? '#fff' : '#333',
               }}>
                 {msg.role === 'assistant' ? (
-                  <div className="markdown-body" style={{ fontSize: 14, lineHeight: 1.7 }}>
-                    <MarkdownRender content={msg.content || '...'} />
-                  </div>
+                  <>
+                    <div className="markdown-body" style={{ fontSize: 14, lineHeight: 1.7 }}>
+                      <MarkdownRenderer content={msg.content || '...'} />
+                    </div>
+                    {msg.content && (
+                      <div style={{ marginTop: 8, textAlign: 'right' }}>
+                        <Button
+                          size="small"
+                          type="text"
+                          icon={<CopyOutlined />}
+                          onClick={() => handleCopy(msg.content)}
+                        >
+                          复制
+                        </Button>
+                      </div>
+                    )}
+                  </>
                 ) : (
                   <div style={{ fontSize: 14, whiteSpace: 'pre-wrap' }}>{msg.content}</div>
                 )}
@@ -240,7 +311,11 @@ const SkillChat: React.FC = () => {
             autoSize={{ minRows: 1, maxRows: 4 }}
             disabled={loading}
           />
-          <Button type="primary" icon={<SendOutlined />} onClick={handleSend} loading={loading} />
+          {loading ? (
+            <Button danger icon={<StopOutlined />} onClick={() => abortControllerRef.current?.abort()}>停止</Button>
+          ) : (
+            <Button type="primary" icon={<SendOutlined />} onClick={handleSend} />
+          )}
         </div>
       </div>
     );

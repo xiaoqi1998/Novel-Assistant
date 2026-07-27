@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import type { Project, Outline, Character, Chapter } from '../types';
+import type { Project, Outline, Character, Chapter, User } from '../types';
+import { authApi } from '../services/api';
 
 interface AppState {
   currentProject: Project | null;
@@ -31,6 +32,12 @@ interface AppState {
 
   currentChapter: Chapter | null;
   setCurrentChapter: (chapter: Chapter | null) => void;
+
+  // 当前登录用户信息（全局共享，避免多个组件重复请求）
+  currentUser: User | null;
+  currentUserLoaded: boolean;
+  setCurrentUser: (user: User | null) => void;
+  loadCurrentUser: (force?: boolean) => Promise<void>;
 
   loading: boolean;
   setLoading: (loading: boolean) => void;
@@ -116,6 +123,20 @@ export const useStore = create<AppState>((set) => ({
 
   currentChapter: null,
   setCurrentChapter: (chapter) => set({ currentChapter: chapter }),
+
+  currentUser: null,
+  currentUserLoaded: false,
+  setCurrentUser: (user) => set({ currentUser: user, currentUserLoaded: true }),
+  loadCurrentUser: async (force = false) => {
+    // 已加载且非强制刷新时跳过，避免多个组件重复请求
+    if (!force && useStore.getState().currentUserLoaded) return;
+    try {
+      const user = await authApi.getCurrentUser();
+      set({ currentUser: user, currentUserLoaded: true });
+    } catch {
+      set({ currentUser: null, currentUserLoaded: true });
+    }
+  },
 
   loading: false,
   setLoading: (loading) => set({ loading }),

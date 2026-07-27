@@ -1,6 +1,6 @@
-import { Card, Descriptions, Empty, Typography, Button, Modal, Form, Input, message, Flex, InputNumber, Select, theme } from 'antd';
+import { Card, Descriptions, Empty, Typography, Button, Modal, Form, Input, message, Flex, InputNumber, Select, theme, Anchor, Tabs } from 'antd';
 import { GlobalOutlined, EditOutlined, SyncOutlined, FormOutlined } from '@ant-design/icons';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useStore } from '../store';
 import { worldSettingCardStyles } from '../components/CardStyles';
 import { projectApi, wizardStreamApi } from '../services/api';
@@ -8,6 +8,14 @@ import { SSELoadingOverlay } from '../components/SSELoadingOverlay';
 
 const { Title, Paragraph } = Typography;
 const { TextArea } = Input;
+
+// 世界观四块设定的锚点配置
+const WORLD_SETTING_SECTIONS = [
+  { key: 'time', href: '#section-time', label: '时间' },
+  { key: 'location', href: '#section-location', label: '地点' },
+  { key: 'atmosphere', href: '#section-atmosphere', label: '氛围' },
+  { key: 'rules', href: '#section-rules', label: '规则' },
+] as const;
 
 export default function WorldSetting() {
   const { currentProject, setCurrentProject } = useStore();
@@ -30,6 +38,42 @@ export default function WorldSetting() {
   const [isSavingPreview, setIsSavingPreview] = useState(false);
   const [modal, contextHolder] = Modal.useModal();
   const { token } = theme.useToken();
+
+  // 移动端检测
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  // 各设定区块的折叠状态：true 表示折叠，默认全部展开（空对象）
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
+  // 移动端 Tabs 当前激活的区块
+  const [activeSection, setActiveSection] = useState<string>('time');
+
+  useEffect(() => {
+    let timeoutId: number | undefined;
+    const handleResize = () => {
+      if (timeoutId) window.clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(() => {
+        setIsMobile(window.innerWidth <= 768);
+      }, 150);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      if (timeoutId) window.clearTimeout(timeoutId);
+    };
+  }, []);
+
+  // 切换某块设定的折叠/展开
+  const toggleSection = (key: string) => {
+    setCollapsedSections(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  // 移动端 Tab 切换：平滑滚动到对应区块
+  const handleSectionTabChange = (key: string) => {
+    setActiveSection(key);
+    const el = document.getElementById(`section-${key}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
 
   // AI重新生成世界观
   const handleRegenerate = async () => {
@@ -155,12 +199,13 @@ export default function WorldSetting() {
         {/* 可滚动内容区域 */}
         <div style={{ flex: 1, overflowY: 'auto' }}>
           <Empty
-            description="暂无世界设定信息"
+            description="暂无世界设定信息，点击「AI 生成」开始构建"
             style={{ marginTop: 60 }}
           >
             <Paragraph type="secondary">
               世界设定信息在创建项目向导中生成，用于构建小说的世界观背景。
             </Paragraph>
+            <Button type="primary" icon={<SyncOutlined />} onClick={handleRegenerate} loading={isRegenerating}>AI 生成</Button>
           </Empty>
         </div>
       </div>
@@ -286,77 +331,176 @@ export default function WorldSetting() {
           }
         >
           <div style={{ padding: '16px 0' }}>
-            {currentProject.world_time_period && (
-              <div style={{ marginBottom: 24 }}>
-                <Title level={5} style={{ color: token.colorPrimary, marginBottom: 12 }}>
-                  时间设定
-                </Title>
-                <Paragraph style={{
-                  fontSize: 15,
-                  lineHeight: 1.8,
-                  padding: 16,
-                  background: token.colorBgLayout,
-                  borderRadius: 8,
-                  borderLeft: `4px solid ${token.colorPrimary}`
-                }}>
-                  {currentProject.world_time_period}
-                </Paragraph>
-              </div>
+            {/* 移动端：顶部水平滚动 Tabs 作为目录锚点 */}
+            {isMobile && (
+              <Tabs
+                activeKey={activeSection}
+                onChange={handleSectionTabChange}
+                size="small"
+                style={{ marginBottom: 16 }}
+                items={WORLD_SETTING_SECTIONS.map(s => ({ key: s.key, label: s.label }))}
+              />
             )}
 
-            {currentProject.world_location && (
-              <div style={{ marginBottom: 24 }}>
-                <Title level={5} style={{ color: token.colorSuccess, marginBottom: 12 }}>
-                  地点设定
-                </Title>
-                <Paragraph style={{
-                  fontSize: 15,
-                  lineHeight: 1.8,
-                  padding: 16,
-                  background: token.colorBgLayout,
-                  borderRadius: 8,
-                  borderLeft: `4px solid ${token.colorSuccess}`
+            <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+              {/* 桌面端：左侧 sticky 目录锚点 */}
+              {!isMobile && (
+                <div style={{
+                  position: 'sticky',
+                  top: 80,
+                  flexShrink: 0,
+                  width: 120,
                 }}>
-                  {currentProject.world_location}
-                </Paragraph>
-              </div>
-            )}
+                  <Anchor
+                    offsetTop={80}
+                    items={WORLD_SETTING_SECTIONS.map(s => ({
+                      key: s.key,
+                      href: s.href,
+                      title: s.label,
+                    }))}
+                  />
+                </div>
+              )}
 
-            {currentProject.world_atmosphere && (
-              <div style={{ marginBottom: 24 }}>
-                <Title level={5} style={{ color: token.colorWarning, marginBottom: 12 }}>
-                  氛围设定
-                </Title>
-                <Paragraph style={{
-                  fontSize: 15,
-                  lineHeight: 1.8,
-                  padding: 16,
-                  background: token.colorBgLayout,
-                  borderRadius: 8,
-                  borderLeft: `4px solid ${token.colorWarning}`
-                }}>
-                  {currentProject.world_atmosphere}
-                </Paragraph>
-              </div>
-            )}
+              {/* 右侧内容区：四块设定，每块支持折叠/展开 */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {currentProject.world_time_period && (
+                  <div id="section-time" style={{ marginBottom: 24, scrollMarginTop: 80 }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        cursor: 'pointer',
+                        marginBottom: collapsedSections.time ? 0 : 12,
+                      }}
+                      onClick={() => toggleSection('time')}
+                    >
+                      <Title level={5} style={{ color: token.colorPrimary, margin: 0 }}>
+                        时间设定
+                      </Title>
+                      <Button type="text" size="small" style={{ fontSize: 12 }}>
+                        {collapsedSections.time ? '展开 ▼' : '收起 ▲'}
+                      </Button>
+                    </div>
+                    {!collapsedSections.time && (
+                      <Paragraph style={{
+                        fontSize: 15,
+                        lineHeight: 1.8,
+                        padding: 16,
+                        background: token.colorBgLayout,
+                        borderRadius: 8,
+                        borderLeft: `4px solid ${token.colorPrimary}`
+                      }}>
+                        {currentProject.world_time_period}
+                      </Paragraph>
+                    )}
+                  </div>
+                )}
 
-            {currentProject.world_rules && (
-              <div style={{ marginBottom: 0 }}>
-                <Title level={5} style={{ color: token.colorError, marginBottom: 12 }}>
-                  规则设定
-                </Title>
-                <Paragraph style={{
-                  fontSize: 15,
-                  lineHeight: 1.8,
-                  padding: 16,
-                  background: token.colorBgLayout,
-                  borderRadius: 8,
-                  borderLeft: `4px solid ${token.colorError}`
-                }}>
-                  {currentProject.world_rules}
-                </Paragraph>
+                {currentProject.world_location && (
+                  <div id="section-location" style={{ marginBottom: 24, scrollMarginTop: 80 }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        cursor: 'pointer',
+                        marginBottom: collapsedSections.location ? 0 : 12,
+                      }}
+                      onClick={() => toggleSection('location')}
+                    >
+                      <Title level={5} style={{ color: token.colorSuccess, margin: 0 }}>
+                        地点设定
+                      </Title>
+                      <Button type="text" size="small" style={{ fontSize: 12 }}>
+                        {collapsedSections.location ? '展开 ▼' : '收起 ▲'}
+                      </Button>
+                    </div>
+                    {!collapsedSections.location && (
+                      <Paragraph style={{
+                        fontSize: 15,
+                        lineHeight: 1.8,
+                        padding: 16,
+                        background: token.colorBgLayout,
+                        borderRadius: 8,
+                        borderLeft: `4px solid ${token.colorSuccess}`
+                      }}>
+                        {currentProject.world_location}
+                      </Paragraph>
+                    )}
+                  </div>
+                )}
+
+                {currentProject.world_atmosphere && (
+                  <div id="section-atmosphere" style={{ marginBottom: 24, scrollMarginTop: 80 }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        cursor: 'pointer',
+                        marginBottom: collapsedSections.atmosphere ? 0 : 12,
+                      }}
+                      onClick={() => toggleSection('atmosphere')}
+                    >
+                      <Title level={5} style={{ color: token.colorWarning, margin: 0 }}>
+                        氛围设定
+                      </Title>
+                      <Button type="text" size="small" style={{ fontSize: 12 }}>
+                        {collapsedSections.atmosphere ? '展开 ▼' : '收起 ▲'}
+                      </Button>
+                    </div>
+                    {!collapsedSections.atmosphere && (
+                      <Paragraph style={{
+                        fontSize: 15,
+                        lineHeight: 1.8,
+                        padding: 16,
+                        background: token.colorBgLayout,
+                        borderRadius: 8,
+                        borderLeft: `4px solid ${token.colorWarning}`
+                      }}>
+                        {currentProject.world_atmosphere}
+                      </Paragraph>
+                    )}
+                  </div>
+                )}
+
+                {currentProject.world_rules && (
+                  <div id="section-rules" style={{ marginBottom: 0, scrollMarginTop: 80 }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        cursor: 'pointer',
+                        marginBottom: collapsedSections.rules ? 0 : 12,
+                      }}
+                      onClick={() => toggleSection('rules')}
+                    >
+                      <Title level={5} style={{ color: token.colorError, margin: 0 }}>
+                        规则设定
+                      </Title>
+                      <Button type="text" size="small" style={{ fontSize: 12 }}>
+                        {collapsedSections.rules ? '展开 ▼' : '收起 ▲'}
+                      </Button>
+                    </div>
+                    {!collapsedSections.rules && (
+                      <Paragraph style={{
+                        fontSize: 15,
+                        lineHeight: 1.8,
+                        padding: 16,
+                        background: token.colorBgLayout,
+                        borderRadius: 8,
+                        borderLeft: `4px solid ${token.colorError}`
+                      }}>
+                        {currentProject.world_rules}
+                      </Paragraph>
+                    )}
+                  </div>
+                )}
               </div>
-            )}
+            </div>
           </div>
         </Card>
       </div>

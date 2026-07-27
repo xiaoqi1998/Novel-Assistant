@@ -4,6 +4,7 @@ import { Card, Button, Space, Typography, message, Progress, theme } from 'antd'
 import { CheckCircleOutlined, LoadingOutlined } from '@ant-design/icons';
 import { wizardStreamApi } from '../services/api';
 import type { ApiError } from '../types';
+import { alphaColor } from '../utils/color';
 
 const { Title, Paragraph, Text } = Typography;
 
@@ -54,8 +55,6 @@ export const AIProjectGenerator: React.FC<AIProjectGeneratorProps> = ({
 }) => {
   const navigate = useNavigate();
   const { token } = theme.useToken();
-  const alphaColor = (color: string, alpha: number) =>
-    `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
 
   // 状态管理
   const [loading, setLoading] = useState(false);
@@ -126,7 +125,7 @@ export const AIProjectGenerator: React.FC<AIProjectGeneratorProps> = ({
       setGenerationData(data);
       setProjectId(projectIdParam);
 
-      // 获取项目信息,判断当前完成到哪一步
+      // 获取项目信息，判断当前完成到哪一步
       const response = await fetch(`/api/projects/${projectIdParam}`, {
         credentials: 'include'
       });

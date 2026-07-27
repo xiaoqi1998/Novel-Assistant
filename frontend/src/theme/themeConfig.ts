@@ -79,7 +79,7 @@ const darkThemeConfig: ThemeConfig = {
     colorTextBase: '#f0f0f0', // 高对比白字
     colorBgLayout: '#0a0a0a',
     colorBgContainer: '#141414', // 卡片深灰
-    colorBgElevated: '#1a1a1a', // 弹出层
+    colorBgElevated: '#1f1f1f', // 弹出层
     colorBorderSecondary: '#262626', // 低明度边框
     colorBorder: '#333333',
   },

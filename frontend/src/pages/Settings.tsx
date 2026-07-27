@@ -336,6 +336,23 @@ export default function SettingsPage() {
     });
   };
 
+  const handleTabChange = (newTab: string) => {
+    if (newTab === activeTab) return;
+    // 仅 'current' 和 'cover' 两个 Tab 使用了 form，切换前检查是否有未保存改动
+    if ((activeTab === 'current' || activeTab === 'cover') && form.isFieldsTouched()) {
+      modal.confirm({
+        title: '未保存的改动',
+        content: '当前 Tab 有未保存的改动，切换后将丢失，确认切换？',
+        centered: true,
+        okText: '丢弃改动',
+        cancelText: '继续编辑',
+        onOk: () => setActiveTab(newTab),
+      });
+    } else {
+      setActiveTab(newTab);
+    }
+  };
+
   const xiaomiMimoDefaultUrl = 'https://token-plan-cn.xiaomimimo.com/v1';
   const builtInKeyProviders = ['xiaomi_mimo'];
   const xiaomiMimoDefaultModels = [
@@ -365,6 +382,7 @@ export default function SettingsPage() {
   const selectedProvider = Form.useWatch('api_provider', form);
   const selectedCoverProvider = Form.useWatch('cover_api_provider', form);
   const selectedPresetProvider = Form.useWatch('api_provider', presetForm);
+  const temperatureValue = Form.useWatch('temperature', form);
 
   const handleProviderChange = (value: string) => {
     const provider = apiProviders.find(p => p.value === value);
@@ -1185,7 +1203,7 @@ export default function SettingsPage() {
           >
             <Tabs
               activeKey={activeTab}
-              onChange={setActiveTab}
+              onChange={handleTabChange}
               items={[
                 {
                   key: 'current',
@@ -1507,6 +1525,11 @@ export default function SettingsPage() {
                                   title="控制输出的随机性，值越高越随机（0.0-2.0）"
                                   style={{ color: token.colorTextSecondary, fontSize: isMobile ? '12px' : '14px' }}
                                 />
+                                {temperatureValue !== undefined && temperatureValue !== null && (
+                                  <Text type="secondary" style={{ fontSize: isMobile ? '12px' : '13px' }}>
+                                    温度：{Number(temperatureValue).toFixed(1)}
+                                  </Text>
+                                )}
                               </Space>
                             }
                             name="temperature"
@@ -1559,6 +1582,11 @@ export default function SettingsPage() {
                               </Space>
                             }
                             name="system_prompt"
+                            extra={
+                              <Text type="secondary" style={{ fontSize: isMobile ? '12px' : '13px' }}>
+                                支持变量：{'{{project_name}}'} 项目名、{'{{chapter_title}}'} 章节标题、{'{{character_name}}'} 角色名
+                              </Text>
+                            }
                           >
                             <TextArea
                               rows={4}

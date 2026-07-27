@@ -23,6 +23,7 @@ import {
   BulbOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
+import { alphaColor } from '../utils/color';
 
 const { Text } = Typography;
 
@@ -144,14 +145,12 @@ export default function WritingAssistantPanel({ chapterId }: WritingAssistantPan
     plan?.information_rhythm
   );
 
-  const alpha = (color: string, a: number) => `color-mix(in srgb, ${color} ${(a * 100).toFixed(0)}%, transparent)`;
-
   return (
     <div style={{
       height: '100%',
       display: 'flex',
       flexDirection: 'column',
-      background: alpha(token.colorBgElevated, 0.6),
+      background: alphaColor(token.colorBgElevated, 0.6),
       borderLeft: `1px solid ${token.colorBorderSecondary}`,
     }}>
       {/* 顶部标题栏 */}
@@ -287,7 +286,7 @@ export default function WritingAssistantPanel({ chapterId }: WritingAssistantPan
                           <div key={i} style={{
                             textAlign: 'center',
                             padding: '4px 2px',
-                            background: alpha(token.colorWarningBg, 0.5),
+                            background: alphaColor(token.colorWarningBg, 0.5),
                             borderRadius: 4,
                           }}>
                             <div style={{ fontSize: 10, color: token.colorTextSecondary }}>{p.label}</div>
@@ -333,9 +332,9 @@ export default function WritingAssistantPanel({ chapterId }: WritingAssistantPan
                       {plan.ending_hook.description && (
                         <div style={{
                           padding: '6px 8px',
-                          background: alpha(token.colorErrorBg, 0.4),
+                          background: alphaColor(token.colorErrorBg, 0.4),
                           borderRadius: 4,
-                          border: `1px solid ${alpha(token.colorErrorBorder, 0.5)}`,
+                          border: `1px solid ${alphaColor(token.colorErrorBorder, 0.5)}`,
                           fontSize: 11,
                           color: token.colorText,
                         }}>
@@ -364,9 +363,9 @@ export default function WritingAssistantPanel({ chapterId }: WritingAssistantPan
                       {plan.scene_beats.map((beat, i) => (
                         <div key={i} style={{
                           padding: '6px 8px',
-                          background: alpha(token.colorInfoBg, 0.4),
+                          background: alphaColor(token.colorInfoBg, 0.4),
                           borderRadius: 4,
-                          border: `1px solid ${alpha(token.colorInfoBorder, 0.4)}`,
+                          border: `1px solid ${alphaColor(token.colorInfoBorder, 0.4)}`,
                           fontSize: 11,
                           lineHeight: 1.6,
                         }}>
@@ -446,9 +445,9 @@ export default function WritingAssistantPanel({ chapterId }: WritingAssistantPan
                       {plan.information_rhythm.information_gap && (
                         <div style={{
                           padding: '6px 8px',
-                          background: alpha(token.colorPrimaryBg, 0.4),
+                          background: alphaColor(token.colorPrimaryBg, 0.4),
                           borderRadius: 4,
-                          border: `1px solid ${alpha(token.colorBorder, 0.4)}`,
+                          border: `1px solid ${alphaColor(token.colorBorder, 0.4)}`,
                         }}>
                           <Text type="secondary" style={{ fontSize: 10 }}>信息差：</Text>
                           <span>{plan.information_rhythm.information_gap}</span>

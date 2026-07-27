@@ -7,7 +7,6 @@ import {
   Grid,
   Input,
   Layout,
-  Spin,
   Tabs,
   Typography,
   message,
@@ -22,6 +21,9 @@ import {
 import { authApi } from '../services/api';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import ThemeSwitch from '../components/ThemeSwitch';
+import FullScreenLoading from '../components/FullScreenLoading';
+import BrandLogo from '../components/BrandLogo';
+import { alphaColor } from '../utils/color';
 
 const { Title, Paragraph } = Typography;
 
@@ -66,7 +68,6 @@ export default function Login() {
   const { token } = theme.useToken();
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
-  const alphaColor = (color: string, alpha: number) => `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
   const primaryButtonShadow = `0 8px 20px ${alphaColor(token.colorPrimary, 0.28)}`;
 
   const newapiAuthEnabled = authConfig.newapi_auth_enabled;
@@ -112,8 +113,16 @@ export default function Login() {
       if (response.success) {
         handleLoginSuccess();
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('New API 登录失败:', error);
+      const errDetail = error?.response?.data?.detail;
+      if (error?.message === 'Network Error' || !error?.response) {
+        message.error('网络错误，请检查网络连接');
+      } else if (typeof errDetail === 'string' && errDetail) {
+        message.error(errDetail);
+      } else {
+        message.error('账号或密码错误');
+      }
     } finally {
       setLoading(false);
     }
@@ -131,8 +140,19 @@ export default function Login() {
         message.success(response.message || '注册成功，已自动登录');
         handleLoginSuccess();
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('New API 注册失败:', error);
+      const errDetail = error?.response?.data?.detail;
+      const status = error?.response?.status;
+      if (error?.message === 'Network Error' || !error?.response) {
+        message.error('网络错误');
+      } else if (status === 409 || (typeof errDetail === 'string' && errDetail.includes('已存在'))) {
+        message.error('账号已存在');
+      } else if (typeof errDetail === 'string' && errDetail) {
+        message.error(errDetail);
+      } else {
+        message.error('注册失败');
+      }
     } finally {
       setLoading(false);
     }
@@ -322,19 +342,7 @@ export default function Login() {
   ];
 
   if (checking) {
-    return (
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          minHeight: '100vh',
-          background: token.colorBgLayout,
-        }}
-      >
-        <Spin size="large" style={{ color: token.colorPrimary }} />
-      </div>
-    );
+    return <FullScreenLoading tip="正在准备登录环境…" />;
   }
 
   return (
@@ -412,15 +420,11 @@ export default function Login() {
             textAlign: isMobile ? 'center' : 'left',
             color: '#f0f0f0',
           }}>
-            <div style={{
-              width: 64, height: 64, borderRadius: 18,
-              margin: isMobile ? '0 0 16px' : '0 0 24px',
-              background: `linear-gradient(135deg, #7C3AED 0%, #4F46E5 100%)`,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: '0 12px 32px rgba(124,58,237,0.4)',
-            }}>
-              <img src="/logo.svg" alt="墨笔" style={{ width: 36, height: 36, filter: 'brightness(0) invert(1)' }} />
-            </div>
+            <BrandLogo
+              size={64}
+              variant="image"
+              style={{ margin: isMobile ? '0 0 16px' : '0 0 24px' }}
+            />
             <h1 style={{
               fontSize: isMobile ? 40 : 64,
               fontWeight: 800,

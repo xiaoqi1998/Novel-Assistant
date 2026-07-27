@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Spin, theme } from 'antd';
+import FullScreenLoading from '../components/FullScreenLoading';
 
 /**
  * 认证回调占位页
@@ -11,7 +11,6 @@ import { Spin, theme } from 'antd';
  */
 export default function AuthCallback() {
   const navigate = useNavigate();
-  const { token } = theme.useToken();
 
   useEffect(() => {
     // 直接跳转首页；若未登录会被 ProtectedRoute 拦截到 /login
@@ -20,20 +19,5 @@ export default function AuthCallback() {
     navigate(redirect, { replace: true });
   }, [navigate]);
 
-  return (
-    <div style={{
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center',
-      minHeight: '100vh',
-      background: `linear-gradient(135deg, ${token.colorPrimary} 0%, ${token.colorPrimaryHover} 100%)`,
-    }}>
-      <div style={{ textAlign: 'center' }}>
-        <Spin size="large" />
-        <div style={{ marginTop: 20, color: token.colorWhite, fontSize: 16 }}>
-          正在跳转...
-        </div>
-      </div>
-    </div>
-  );
+  return <FullScreenLoading tip="正在跳转…" />;
 }

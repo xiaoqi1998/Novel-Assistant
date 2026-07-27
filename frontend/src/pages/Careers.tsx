@@ -3,7 +3,7 @@ import { Button, Modal, Form, Input, Select, message, Row, Col, Empty, Tabs, Car
 import { ThunderboltOutlined, PlusOutlined, EditOutlined, DeleteOutlined, TrophyOutlined } from '@ant-design/icons';
 import { useParams } from 'react-router-dom';
 import api from '../services/api';
-import SSEProgressModal from '../components/SSEProgressModal';
+import { SSELoadingOverlay } from '../components/SSELoadingOverlay';
 
 const { TextArea } = Input;
 const { Title, Text, Paragraph } = Typography;
@@ -473,7 +473,8 @@ export default function Careers() {
             </Modal>
 
             {/* AI生成进度 */}
-            <SSEProgressModal
+            <SSELoadingOverlay
+                variant="modal"
                 visible={aiGenerating}
                 progress={aiProgress}
                 message={aiMessage}

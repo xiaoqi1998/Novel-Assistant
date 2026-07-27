@@ -1,11 +1,14 @@
 import type { ReactNode } from 'react';
 import { Button, Menu, Space, theme } from 'antd';
 import type { MenuProps } from 'antd';
-import { BookOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
+import { MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
 import ThemeSwitch from './ThemeSwitch';
 import UserMenu from './UserMenu';
+import BrandLogo from './BrandLogo';
 import { useThemeMode } from '../theme/useThemeMode';
+import type { ThemeMode } from '../theme/themeStorage';
 import { BulbOutlined, MoonOutlined, DesktopOutlined } from '@ant-design/icons';
+import { alphaColor } from '../utils/color';
 
 export const EXPANDED_SIDER_WIDTH = 240;
 export const COLLAPSED_SIDER_WIDTH = 64;
@@ -42,7 +45,6 @@ export default function AppSidebar({
   showCollapsedThemeButton = true,
 }: AppSidebarProps) {
   const { token } = theme.useToken();
-  const alphaColor = (color: string, alpha: number) => `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
 
   return (
     <div
@@ -89,13 +91,18 @@ export function SidebarContent({
 }: AppSidebarProps) {
   const { token } = theme.useToken();
   const { mode, resolvedMode, setMode } = useThemeMode();
-  const alphaColor = (color: string, alpha: number) => `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
 
   const cycleThemeMode = () => {
-    const nextMode = mode === 'light' ? 'dark' : mode === 'dark' ? 'system' : 'light';
+    // 只在 light/dark 间切换；若当前为 system 模式则切到当前解析模式的对立面
+    const nextMode: ThemeMode = resolvedMode === 'dark' ? 'light' : 'dark';
     setMode(nextMode);
   };
-  const collapsedThemeIcon = mode === 'light' ? <BulbOutlined /> : mode === 'dark' ? <MoonOutlined /> : <DesktopOutlined />;
+  const toggleSystemMode = () => {
+    // 独立的 system 开关：当前为 system 则退出到 resolvedMode，否则进入 system
+    setMode(mode === 'system' ? resolvedMode : 'system');
+  };
+  const collapsedThemeIcon = resolvedMode === 'dark' ? <MoonOutlined /> : <BulbOutlined />;
+  const isSystemMode = mode === 'system';
 
   return (
     <>
@@ -118,6 +125,7 @@ export function SidebarContent({
             type="text"
             icon={<MenuUnfoldOutlined />}
             onClick={() => onToggleCollapsed(false)}
+            aria-label="展开侧边栏"
             style={{
               color: token.colorText,
               width: '100%',
@@ -132,23 +140,7 @@ export function SidebarContent({
         ) : (
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, overflow: 'hidden' }}>
-              <div
-                style={{
-                  width: 30,
-                  height: 30,
-                  background: `linear-gradient(135deg, ${token.colorPrimary}, ${alphaColor(token.colorPrimary, 0.75)})`,
-                  borderRadius: 8,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: token.colorWhite,
-                  fontSize: 16,
-                  boxShadow: `0 4px 12px ${alphaColor(token.colorPrimary, 0.3)}`,
-                  flexShrink: 0,
-                }}
-              >
-                <BookOutlined />
-              </div>
+              <BrandLogo size={30} />
               <span
                 style={{
                   color: token.colorText,
@@ -167,6 +159,7 @@ export function SidebarContent({
               type="text"
               icon={<MenuFoldOutlined />}
               onClick={() => onToggleCollapsed(true)}
+              aria-label="折叠侧边栏"
               style={{
                 color: token.colorTextSecondary,
                 width: 32,
@@ -188,6 +181,7 @@ export function SidebarContent({
           style={{ borderRight: 0, paddingTop: 12, width: '100%' }}
           onClick={({ key }) => onMenuClick?.(key)}
           items={menuItems}
+          aria-label={collapsed ? '导航菜单（已折叠）' : undefined}
         />
       </div>
 
@@ -202,21 +196,40 @@ export function SidebarContent({
         {collapsed ? (
           <Space direction="vertical" style={{ width: '100%', alignItems: 'center' }} size={10}>
             {showCollapsedThemeButton && (
-              <Button
-                type="text"
-                icon={collapsedThemeIcon}
-                onClick={cycleThemeMode}
-                title={`主题模式：${mode === 'light' ? '浅色' : mode === 'dark' ? '深色' : '跟随系统'}（点击切换）`}
-                style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 20,
-                  background: alphaColor(token.colorPrimary, 0.08),
-                  border: `1px solid ${alphaColor(token.colorPrimary, 0.15)}`,
-                  color: token.colorPrimary,
-                  padding: 0,
-                }}
-              />
+              <>
+                <Button
+                  type="text"
+                  icon={collapsedThemeIcon}
+                  onClick={cycleThemeMode}
+                  title={`主题模式：${resolvedMode === 'dark' ? '深色' : '浅色'}（点击切换）`}
+                  aria-label={`主题模式：${resolvedMode === 'dark' ? '深色' : '浅色'}，点击切换`}
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 20,
+                    background: alphaColor(token.colorPrimary, 0.08),
+                    border: `1px solid ${alphaColor(token.colorPrimary, 0.15)}`,
+                    color: token.colorPrimary,
+                    padding: 0,
+                  }}
+                />
+                <Button
+                  type="text"
+                  icon={<DesktopOutlined />}
+                  onClick={toggleSystemMode}
+                  title={isSystemMode ? '当前跟随系统（点击退出）' : '跟随系统（点击启用）'}
+                  aria-label={isSystemMode ? '当前跟随系统，点击退出' : '跟随系统，点击启用'}
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 20,
+                    background: isSystemMode ? alphaColor(token.colorPrimary, 0.18) : 'transparent',
+                    border: `1px solid ${isSystemMode ? alphaColor(token.colorPrimary, 0.3) : alphaColor(token.colorBorder, 0.4)}`,
+                    color: isSystemMode ? token.colorPrimary : token.colorTextTertiary,
+                    padding: 0,
+                  }}
+                />
+              </>
             )}
             {footerExtra}
             <UserMenu compact />
@@ -233,7 +246,7 @@ export function SidebarContent({
               }}
             >
               <span>主题模式</span>
-              <span>{resolvedMode === 'dark' ? '深色' : '浅色'}</span>
+              <span>{mode === 'system' ? `跟随系统·${resolvedMode === 'dark' ? '深色' : '浅色'}` : resolvedMode === 'dark' ? '深色' : '浅色'}</span>
             </div>
             <ThemeSwitch block />
             {footerExtra}

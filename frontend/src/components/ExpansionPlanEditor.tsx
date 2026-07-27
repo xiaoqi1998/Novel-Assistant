@@ -43,7 +43,7 @@ export default function ExpansionPlanEditor({
       const response = await characterApi.getCharacters(projectId);
       console.log('加载到的角色数据:', response);
       
-      // API返回的是 {total, items} 格式,需要提取items
+      // API返回的是 {total, items} 格式，需要提取items
       let chars: Character[] = [];
       if (Array.isArray(response)) {
         chars = response;

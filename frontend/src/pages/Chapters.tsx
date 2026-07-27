@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, theme } from 'antd';
+import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, Tooltip, Skeleton, theme } from 'antd';
 import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined, BulbOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { eventBus } from '../store/eventBus';
 import { useChapterSync } from '../store/hooks';
 import { generateChapterBackground } from '../services/backgroundTaskService';
 import { projectApi, writingStyleApi, chapterApi } from '../services/api';
+import { showErrorToast } from '../utils/errorHandler';
 import type { Chapter, ChapterUpdate, ApiError, WritingStyle, AnalysisTask, ExpansionPlanData } from '../types';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
 import ChapterAnalysis from '../components/ChapterAnalysis';
@@ -16,6 +17,7 @@ import PartialRegenerateToolbar from '../components/PartialRegenerateToolbar';
 import PartialRegenerateModal from '../components/PartialRegenerateModal';
 import WritingAssistantPanel from '../components/WritingAssistantPanel';
 import InspirationButton from '../components/InspirationButton';
+import { formatWordCount } from '../utils/format';
 
 const { TextArea } = Input;
 
@@ -48,6 +50,62 @@ const setCachedWordCount = (value: number): void => {
   }
 };
 
+// 格式化字数显示统一使用 utils/format 中的 formatWordCount（1.2K / 1.2W / 1.2M）
+
+// 计算字数：中文字符按 1 字计算，连续英文/数字串按 1 字计算
+const countWords = (text: string): number => {
+  if (!text) return 0;
+  const chineseChars = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
+  const stripped = text.replace(/[\u4e00-\u9fa5]/g, ' ');
+  const englishWords = (stripped.match(/[A-Za-z0-9]+/g) || []).length;
+  return chineseChars + englishWords;
+};
+
+// === Task 26.2：章节草稿（localStorage） ===
+interface ChapterDraft {
+  chapterId: string;
+  title: string;
+  content: string;
+  savedAt: number;
+}
+
+const getChapterDraftKey = (chapterId: string): string => `mobinovel_chapter_draft_${chapterId}`;
+
+const loadChapterDraft = (chapterId: string): ChapterDraft | null => {
+  try {
+    const raw = localStorage.getItem(getChapterDraftKey(chapterId));
+    if (!raw) return null;
+    const data = JSON.parse(raw) as ChapterDraft;
+    if (!data || typeof data.content !== 'string' || typeof data.savedAt !== 'number') return null;
+    return data;
+  } catch (error) {
+    console.warn('读取章节草稿失败:', error);
+    return null;
+  }
+};
+
+const saveChapterDraft = (chapterId: string, content: string, title: string): void => {
+  try {
+    const draft: ChapterDraft = { chapterId, content, title, savedAt: Date.now() };
+    localStorage.setItem(getChapterDraftKey(chapterId), JSON.stringify(draft));
+  } catch (error) {
+    console.warn('保存章节草稿失败:', error);
+  }
+};
+
+const clearChapterDraft = (chapterId: string): void => {
+  try {
+    localStorage.removeItem(getChapterDraftKey(chapterId));
+  } catch (error) {
+    console.warn('清除章节草稿失败:', error);
+  }
+};
+
+// 字数统计警告阈值
+const WORD_COUNT_WARNING_THRESHOLD = 5000;
+// 草稿自动保存间隔（毫秒）
+const DRAFT_AUTOSAVE_INTERVAL = 30000;
+
 export default function Chapters() {
   const { currentProject, chapters, outlines, setCurrentChapter, setCurrentProject } = useStore();
   const [modal, contextHolder] = Modal.useModal();
@@ -56,7 +114,9 @@ export default function Chapters() {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [isContinuing, setIsContinuing] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isLoadingChapters, setIsLoadingChapters] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [form] = Form.useForm();
   const [editorForm] = Form.useForm();
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
@@ -83,6 +143,7 @@ export default function Chapters() {
   const [chapterSearchKeyword, setChapterSearchKeyword] = useState('');
   const [chapterPage, setChapterPage] = useState(1);
   const [chapterPageSize, setChapterPageSize] = useState(20);
+  const [expandedChapterIds, setExpandedChapterIds] = useState<Set<string>>(new Set());
 
   // 阅读器状态
   const [readerVisible, setReaderVisible] = useState(false);
@@ -112,6 +173,11 @@ export default function Chapters() {
   const [singleChapterProgress, setSingleChapterProgress] = useState(0);
   const [singleChapterProgressMessage, setSingleChapterProgressMessage] = useState('');
 
+  // Task 26.1：实时字数统计
+  const [editorWordCount, setEditorWordCount] = useState(0);
+  // Task 26.2：草稿自动保存
+  const [lastDraftSaveTime, setLastDraftSaveTime] = useState<number | null>(null);
+  const draftAutoSaveTimerRef = useRef<number | null>(null);
 
   // 批量生成相关状态
   const [batchGenerateVisible, setBatchGenerateVisible] = useState(false);
@@ -130,12 +196,19 @@ export default function Chapters() {
   const batchPollingIntervalRef = useRef<number | null>(null);
 
   useEffect(() => {
+    let timeoutId: number | undefined;
     const handleResize = () => {
-      setIsMobile(window.innerWidth <= 768);
+      if (timeoutId) window.clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(() => {
+        setIsMobile(window.innerWidth <= 768);
+      }, 150);
     };
 
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      if (timeoutId) window.clearTimeout(timeoutId);
+    };
   }, []);
 
   // 处理文本选中 - 检测选中文本并显示浮动工具栏
@@ -300,8 +373,15 @@ export default function Chapters() {
       modalBody.addEventListener('scroll', handleScroll);
     }
 
-    // 监听窗口大小变化
-    window.addEventListener('resize', handleScroll);
+    // 监听窗口大小变化（加 debounce，避免频繁触发位置重算）
+    let resizeTimeoutId: number | undefined;
+    const handleResizeScroll = () => {
+      if (resizeTimeoutId) window.clearTimeout(resizeTimeoutId);
+      resizeTimeoutId = window.setTimeout(() => {
+        requestAnimationFrame(updateToolbarPosition);
+      }, 150);
+    };
+    window.addEventListener('resize', handleResizeScroll);
 
     return () => {
       textArea.removeEventListener('mouseup', handleMouseUp);
@@ -310,7 +390,8 @@ export default function Chapters() {
       if (modalBody) {
         modalBody.removeEventListener('scroll', handleScroll);
       }
-      window.removeEventListener('resize', handleScroll);
+      window.removeEventListener('resize', handleResizeScroll);
+      if (resizeTimeoutId) window.clearTimeout(resizeTimeoutId);
     };
   }, [isEditorOpen, handleTextSelection, updateToolbarPosition]);
 
@@ -351,9 +432,42 @@ export default function Chapters() {
     generateChapterContentStream
   } = useChapterSync();
 
+  // Task 26.1：监听编辑器内容变化，实时计算字数
+  const editorContentValue = Form.useWatch('content', editorForm);
+  useEffect(() => {
+    setEditorWordCount(countWords(editorContentValue || ''));
+  }, [editorContentValue]);
+
+  // Task 26.2：编辑器打开时每 30 秒自动保存草稿到 localStorage
+  useEffect(() => {
+    if (!isEditorOpen || !editingId || isGenerating) {
+      return;
+    }
+
+    const saveDraft = () => {
+      const content = editorForm.getFieldValue('content') || '';
+      const title = editorForm.getFieldValue('title') || '';
+      // 仅在内容非空时保存
+      if (content.trim()) {
+        saveChapterDraft(editingId, content, title);
+        setLastDraftSaveTime(Date.now());
+      }
+    };
+
+    draftAutoSaveTimerRef.current = window.setInterval(saveDraft, DRAFT_AUTOSAVE_INTERVAL);
+
+    return () => {
+      if (draftAutoSaveTimerRef.current) {
+        clearInterval(draftAutoSaveTimerRef.current);
+        draftAutoSaveTimerRef.current = null;
+      }
+    };
+  }, [isEditorOpen, editingId, isGenerating, editorForm]);
+
   useEffect(() => {
     if (currentProject?.id) {
-      refreshChapters();
+      setIsLoadingChapters(true);
+      refreshChapters().finally(() => setIsLoadingChapters(false));
       loadWritingStyles();
       loadAnalysisTasks();
       checkAndRestoreBatchTask();
@@ -794,6 +908,7 @@ export default function Chapters() {
   const handleSubmit = async (values: ChapterUpdate) => {
     if (!editingId) return;
 
+    setSaving(true);
     try {
       await updateChapter(editingId, values);
 
@@ -803,8 +918,10 @@ export default function Chapters() {
       message.success('章节更新成功');
       setIsModalOpen(false);
       form.resetFields();
-    } catch {
-      message.error('操作失败');
+    } catch (error) {
+      showErrorToast(error);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -812,6 +929,7 @@ export default function Chapters() {
     const chapter = chapters.find(c => c.id === id);
     if (chapter) {
       setCurrentChapter(chapter);
+      // Task 26.2：先设置服务器版本作为基础
       editorForm.setFieldsValue({
         title: chapter.title,
         content: chapter.content,
@@ -819,18 +937,52 @@ export default function Chapters() {
       setEditingId(id);
       setTemporaryNarrativePerspective(undefined); // 重置人称选择
       setSelectedSkillKey(undefined); // 重置Skill选择
+      setLastDraftSaveTime(null);
       setIsEditorOpen(true);
       // 打开编辑窗口时加载模型列表和Skill列表
       loadAvailableModels();
       loadAvailableSkills();
+
+      // Task 26.2：检测是否存在未保存的草稿（且与服务器版本不同）
+      const draft = loadChapterDraft(id);
+      if (draft && draft.content !== chapter.content) {
+        const draftTime = new Date(draft.savedAt).toLocaleString();
+        modal.confirm({
+          title: '检测到未保存的草稿',
+          content: `是否恢复未保存的草稿？草稿保存时间：${draftTime}`,
+          okText: '恢复草稿',
+          cancelText: '使用服务器版本',
+          centered: true,
+          onOk: () => {
+            editorForm.setFieldsValue({
+              title: draft.title || chapter.title,
+              content: draft.content,
+            });
+            setLastDraftSaveTime(draft.savedAt);
+            message.info('已恢复草稿');
+          },
+          onCancel: () => {
+            clearChapterDraft(id);
+            message.info('已丢弃草稿，使用服务器版本');
+          },
+        });
+      } else if (draft) {
+        // 草稿与服务器内容一致，清理掉无用的草稿
+        clearChapterDraft(id);
+      }
     }
   };
 
   const handleEditorSubmit = async (values: ChapterUpdate) => {
     if (!editingId || !currentProject) return;
 
+    setSaving(true);
     try {
       await updateChapter(editingId, values);
+
+      // Task 26.2：用户主动保存成功后清除草稿
+      clearChapterDraft(editingId);
+      setLastDraftSaveTime(null);
 
       // 刷新项目信息以更新总字数统计
       const updatedProject = await projectApi.getProject(currentProject.id);
@@ -838,9 +990,47 @@ export default function Chapters() {
 
       message.success('章节保存成功');
       setIsEditorOpen(false);
-    } catch {
-      message.error('保存失败');
+    } catch (error) {
+      showErrorToast(error, '保存失败');
+    } finally {
+      setSaving(false);
     }
+  };
+
+  // Task 26.2：取消编辑时处理草稿（有未保存内容则询问是否保存为草稿）
+  const handleEditorCancel = () => {
+    if (isGenerating) {
+      message.warning('AI正在创作中，请等待完成后再关闭');
+      return;
+    }
+
+    const currentContent = editorForm.getFieldValue('content') || '';
+    const chapter = editingId ? chapters.find(c => c.id === editingId) : null;
+    const serverContent = chapter?.content || '';
+    const hasUnsavedChanges = currentContent !== serverContent;
+
+    if (hasUnsavedChanges && currentContent.trim() && editingId) {
+      modal.confirm({
+        title: '是否保存草稿？',
+        content: '当前内容尚未保存到服务器，是否保存为草稿以便下次恢复？',
+        okText: '保存草稿',
+        cancelText: '丢弃草稿',
+        centered: true,
+        onOk: () => {
+          const title = editorForm.getFieldValue('title') || '';
+          saveChapterDraft(editingId, currentContent, title);
+          message.success('草稿已保存');
+          setIsEditorOpen(false);
+        },
+        onCancel: () => {
+          clearChapterDraft(editingId);
+          setIsEditorOpen(false);
+        },
+      });
+      return;
+    }
+
+    setIsEditorOpen(false);
   };
 
   const handleGenerate = async () => {
@@ -1100,8 +1290,8 @@ export default function Chapters() {
         try {
           projectApi.exportProject(currentProject.id);
           message.success('开始下载导出文件');
-        } catch {
-          message.error('导出失败，请重试');
+        } catch (error) {
+          showErrorToast(error, '导出失败，请重试');
         }
       },
     });
@@ -1648,6 +1838,41 @@ export default function Chapters() {
     }
   };
 
+  // 渲染章节内容预览（支持展开/收起）
+  const renderChapterContentPreview = (item: Chapter) => {
+    if (!item.content) {
+      return <span style={{ color: token.colorTextTertiary, fontSize: isMobile ? 12 : 14 }}>暂无内容</span>;
+    }
+    const threshold = isMobile ? 80 : 150;
+    const isLongContent = item.content.length > threshold;
+    const isExpanded = expandedChapterIds.has(item.id);
+    return (
+      <div style={{ marginTop: 8, color: token.colorTextSecondary, lineHeight: 1.6, fontSize: isMobile ? 12 : 14 }}>
+        {isExpanded ? item.content : item.content.substring(0, threshold)}
+        {!isExpanded && isLongContent && '...'}
+        {isLongContent && (
+          <a
+            onClick={(e) => {
+              e.stopPropagation();
+              setExpandedChapterIds(prev => {
+                const next = new Set(prev);
+                if (next.has(item.id)) {
+                  next.delete(item.id);
+                } else {
+                  next.add(item.id);
+                }
+                return next;
+              });
+            }}
+            style={{ marginLeft: 4, fontSize: isMobile ? 12 : 14 }}
+          >
+            {isExpanded ? '收起' : '展开'}
+          </a>
+        )}
+      </div>
+    );
+  };
+
   // 显示展开规划详情
   const showExpansionPlanModal = (chapter: Chapter) => {
     if (!chapter.expansion_plan) return;
@@ -1896,7 +2121,7 @@ export default function Chapters() {
 
   // 打开规划编辑器
   const handleOpenPlanEditor = (chapter: Chapter) => {
-    // 直接打开编辑器,如果没有规划数据则创建新的
+    // 直接打开编辑器，如果没有规划数据则创建新的
     setEditingPlanChapter(chapter);
     setPlanEditorVisible(true);
   };
@@ -2111,8 +2336,40 @@ export default function Chapters() {
       )}
 
       <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
-        {chapters.length === 0 ? (
-          <Empty description="还没有章节，开始创作吧！" />
+        {isLoadingChapters && chapters.length === 0 ? (
+          <List
+            dataSource={Array.from({ length: 6 })}
+            renderItem={(_, idx) => (
+              <List.Item
+                key={`chapter-skeleton-${idx}`}
+                style={{
+                  padding: '16px',
+                  marginBottom: 16,
+                  background: token.colorBgContainer,
+                  borderRadius: token.borderRadius,
+                  border: `1px solid ${token.colorBorderSecondary}`,
+                }}
+              >
+                <div style={{ width: '100%' }}>
+                  <List.Item.Meta
+                    avatar={!isMobile && <Skeleton.Avatar active shape="square" size={32} />}
+                    title={<Skeleton active paragraph={false} title={{ width: '40%' }} />}
+                    description={<Skeleton active paragraph={{ rows: 2, width: ['90%', '70%'] }} title={false} />}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+                    <Skeleton.Button active size="small" style={{ width: 56 }} />
+                    <Skeleton.Button active size="small" style={{ width: 56 }} />
+                    <Skeleton.Button active size="small" style={{ width: 56 }} />
+                    <Skeleton.Button active size="small" style={{ width: 56 }} />
+                  </div>
+                </div>
+              </List.Item>
+            )}
+          />
+        ) : chapters.length === 0 ? (
+          <Empty description="暂无章节，开始创作吧">
+            <Button type="primary" icon={<PlusOutlined />} onClick={showManualCreateChapterModal}>创建章节</Button>
+          </Empty>
         ) : filteredSortedChapters.length === 0 ? (
           <Empty description="未找到匹配章节" />
         ) : currentProject.outline_mode === 'one-to-one' ? (
@@ -2205,16 +2462,7 @@ export default function Chapters() {
                         </Space>
                       </div>
                     }
-                    description={
-                      item.content ? (
-                        <div style={{ marginTop: 8, color: token.colorTextSecondary, lineHeight: 1.6, fontSize: isMobile ? 12 : 14 }}>
-                          {item.content.substring(0, isMobile ? 80 : 150)}
-                          {item.content.length > (isMobile ? 80 : 150) && '...'}
-                        </div>
-                      ) : (
-                        <span style={{ color: token.colorTextTertiary, fontSize: isMobile ? 12 : 14 }}>暂无内容</span>
-                      )
-                    }
+                    description={renderChapterContentPreview(item)}
                   />
 
                   {isMobile && (
@@ -2430,16 +2678,7 @@ export default function Chapters() {
                               </Space>
                             </div>
                           }
-                          description={
-                            item.content ? (
-                              <div style={{ marginTop: 8, color: token.colorTextSecondary, lineHeight: 1.6, fontSize: isMobile ? 12 : 14 }}>
-                                {item.content.substring(0, isMobile ? 80 : 150)}
-                                {item.content.length > (isMobile ? 80 : 150) && '...'}
-                              </div>
-                            ) : (
-                              <span style={{ color: token.colorTextTertiary, fontSize: isMobile ? 12 : 14 }}>暂无内容</span>
-                            )
-                          }
+                          description={renderChapterContentPreview(item)}
                         />
 
                         {isMobile && (
@@ -2490,8 +2729,8 @@ export default function Chapters() {
                             {/* 只在 one-to-many 模式下显示删除按钮 */}
                             {currentProject.outline_mode === 'one-to-many' && (
                               <Popconfirm
-                                title="确定删除？"
-                                description="删除后无法恢复"
+                                title="确认删除章节？"
+                                description="删除后将无法恢复，章节内容和分析结果都将被删除。"
                                 onConfirm={() => handleDeleteChapter(item.id)}
                                 okText="删除"
                                 cancelText="取消"
@@ -2516,34 +2755,37 @@ export default function Chapters() {
             ))}
           </Collapse>
         )}
-      </div>
 
-      {filteredSortedChapters.length > 0 && (
-        <div style={{ paddingTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
-          <Pagination
-            current={chapterPage}
-            pageSize={chapterPageSize}
-            total={filteredSortedChapters.length}
-            showSizeChanger
-            pageSizeOptions={['10', '20', '50', '100']}
-            onChange={(page, size) => {
-              setChapterPage(page);
-              if (size !== chapterPageSize) {
-                setChapterPageSize(size);
-                setChapterPage(1);
-              }
-            }}
-            showTotal={(total) => `共 ${total} 条`}
-            size={isMobile ? 'small' : 'default'}
-          />
-        </div>
-      )}
+        {filteredSortedChapters.length > 0 && (
+          <div style={{ position: 'sticky', bottom: 0, background: token.colorBgContainer, padding: 12, textAlign: 'right' }}>
+            <Pagination
+              current={chapterPage}
+              pageSize={chapterPageSize}
+              total={filteredSortedChapters.length}
+              showSizeChanger
+              pageSizeOptions={['10', '20', '50', '100']}
+              onChange={(page, size) => {
+                setChapterPage(page);
+                if (size !== chapterPageSize) {
+                  setChapterPageSize(size);
+                  setChapterPage(1);
+                }
+              }}
+              showTotal={(total) => `共 ${total} 条`}
+              size={isMobile ? 'small' : 'default'}
+            />
+          </div>
+        )}
+      </div>
 
       <Modal
         title={editingId ? '编辑章节信息' : '添加章节'}
         open={isModalOpen}
         onCancel={() => setIsModalOpen(false)}
-        footer={null}
+        onOk={() => form.submit()}
+        confirmLoading={saving}
+        okText="更新"
+        cancelText="取消"
         centered
         width={isMobile ? 'calc(100vw - 32px)' : 520}
         style={isMobile ? {
@@ -2595,15 +2837,6 @@ export default function Chapters() {
               <Select.Option value="completed">已完成</Select.Option>
             </Select>
           </Form.Item>
-
-          <Form.Item>
-            <Space style={{ float: 'right' }}>
-              <Button onClick={() => setIsModalOpen(false)}>取消</Button>
-              <Button type="primary" htmlType="submit">
-                更新
-              </Button>
-            </Space>
-          </Form.Item>
         </Form>
       </Modal>
 
@@ -2626,13 +2859,7 @@ export default function Chapters() {
           </div>
         }
         open={isEditorOpen}
-        onCancel={() => {
-          if (isGenerating) {
-            message.warning('AI正在创作中，请等待完成后再关闭');
-            return;
-          }
-          setIsEditorOpen(false);
-        }}
+        onCancel={handleEditorCancel}
         closable={!isGenerating}
         maskClosable={false}
         keyboard={!isGenerating}
@@ -2642,7 +2869,7 @@ export default function Chapters() {
           maxWidth: 'calc(100vw - 32px)',
           margin: '0 auto',
           padding: '0 16px'
-        } : undefined}
+        } : { maxWidth: 1200 }}
         styles={{
           body: {
             maxHeight: isMobile ? 'calc(100vh - 200px)' : 'calc(100vh - 110px)',
@@ -2650,7 +2877,12 @@ export default function Chapters() {
             padding: isMobile ? '16px 12px' : '8px'
           }
         }}
-        footer={null}
+        onOk={() => editorForm.submit()}
+        confirmLoading={saving}
+        okText="保存章节"
+        cancelText="取消"
+        okButtonProps={{ disabled: isGenerating }}
+        cancelButtonProps={{ disabled: isGenerating }}
       >
         <Form form={editorForm} layout="vertical" onFinish={handleEditorSubmit}>
           {/* 章节标题和AI创作按钮 */}
@@ -2670,18 +2902,20 @@ export default function Chapters() {
 
                 return (
                   <>
-                  <Button
-                    type="primary"
-                    icon={canGenerate ? <ThunderboltOutlined /> : <LockOutlined />}
-                    onClick={() => currentChapter && showGenerateModal(currentChapter)}
-                    loading={isContinuing}
-                    disabled={!canGenerate}
-                    danger={!canGenerate}
-                    style={{ fontWeight: 'bold' }}
-                    title={!canGenerate ? disabledReason : '根据大纲和前置章节内容创作（流式）'}
-                  >
-                    {isMobile ? 'AI' : 'AI创作'}
-                  </Button>
+                  <Tooltip title={canGenerate ? '根据大纲和前置章节内容创作（流式）' : disabledReason}>
+                    <span>
+                      <Button
+                        type="primary"
+                        icon={canGenerate ? <ThunderboltOutlined /> : <LockOutlined />}
+                        onClick={() => currentChapter && showGenerateModal(currentChapter)}
+                        loading={isContinuing}
+                        disabled={!canGenerate}
+                        style={{ fontWeight: 'bold' }}
+                      >
+                        {isMobile ? 'AI' : 'AI创作'}
+                      </Button>
+                    </span>
+                  </Tooltip>
                   <Button
                     icon={<RocketOutlined />}
                     onClick={handleBackgroundGenerate}
@@ -2850,7 +3084,7 @@ export default function Chapters() {
           }}>
             {/* 左侧：编辑区 */}
             <div style={{ flex: 1, minWidth: 0 }}>
-              <Form.Item label="章节内容" name="content">
+              <Form.Item label="章节内容" name="content" style={{ marginBottom: 4 }}>
                 <TextArea
                   ref={contentTextAreaRef}
                   rows={isMobile ? 12 : 20}
@@ -2859,6 +3093,40 @@ export default function Chapters() {
                   disabled={isGenerating}
                 />
               </Form.Item>
+              {/* Task 26.1：实时字数统计 + Task 26.2：草稿保存状态 */}
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: 12,
+                fontSize: 12,
+                color: token.colorTextSecondary,
+                flexWrap: 'wrap',
+                gap: 8,
+              }}>
+                <span>
+                  字数：
+                  <span style={{
+                    color: editorWordCount > WORD_COUNT_WARNING_THRESHOLD ? token.colorWarning : token.colorText,
+                    fontWeight: 500,
+                  }}>
+                    {editorWordCount}
+                  </span>
+                  <span style={{ color: token.colorTextTertiary, marginLeft: 4 }}>
+                    （{formatWordCount(editorWordCount)} 字）
+                  </span>
+                  {editorWordCount > WORD_COUNT_WARNING_THRESHOLD && (
+                    <span style={{ color: token.colorWarning, marginLeft: 8 }}>
+                      ⚠️ 字数较多
+                    </span>
+                  )}
+                </span>
+                {lastDraftSaveTime && (
+                  <span style={{ color: token.colorTextTertiary }}>
+                    📝 草稿已自动保存：{new Date(lastDraftSaveTime).toLocaleTimeString()}
+                  </span>
+                )}
+              </div>
             </div>
 
             {/* 右侧：写作助手侧边栏（仅桌面端且可见时显示） */}
@@ -2886,34 +3154,6 @@ export default function Chapters() {
               />
             </div>
           </div>
-
-          <Form.Item>
-            <Space style={{ width: '100%', justifyContent: 'flex-end', flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'stretch' : 'center' }}>
-              <Space style={{ width: isMobile ? '100%' : 'auto' }}>
-                <Button
-                  onClick={() => {
-                    if (isGenerating) {
-                      message.warning('AI正在创作中，请等待完成后再关闭');
-                      return;
-                    }
-                    setIsEditorOpen(false);
-                  }}
-                  block={isMobile}
-                  disabled={isGenerating}
-                >
-                  取消
-                </Button>
-                <Button
-                  type="primary"
-                  htmlType="submit"
-                  block={isMobile}
-                  disabled={isGenerating}
-                >
-                  保存章节
-                </Button>
-              </Space>
-            </Space>
-          </Form.Item>
         </Form>
       </Modal>
 

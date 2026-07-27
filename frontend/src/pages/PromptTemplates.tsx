@@ -16,6 +16,7 @@ import {
   Upload,
   Spin,
   Empty,
+  Form,
   theme
 } from 'antd';
 import {
@@ -29,6 +30,7 @@ import {
 } from '@ant-design/icons';
 import axios from 'axios';
 import { promptTemplateCardStyles, promptTemplateCardHoverHandlers, promptTemplateGridConfig } from '../components/CardStyles';
+import { useIsMobile } from '../utils/useIsMobile';
 
 const { TextArea } = Input;
 const { Title, Text, Paragraph } = Typography;
@@ -56,13 +58,15 @@ interface CategoryGroup {
 export default function PromptTemplates() {
   const { token } = theme.useToken();
   const [modal, contextHolder] = Modal.useModal();
+  const [form] = Form.useForm();
   const [categories, setCategories] = useState<CategoryGroup[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('0');
   const [editingTemplate, setEditingTemplate] = useState<PromptTemplate | null>(null);
+  const [originalTemplate, setOriginalTemplate] = useState<PromptTemplate | null>(null);
   const [editorVisible, setEditorVisible] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const isMobile = window.innerWidth <= 768;
+  const isMobile = useIsMobile();
 
   // 加载模板数据
   const loadTemplates = async () => {
@@ -84,37 +88,84 @@ export default function PromptTemplates() {
 
   // 获取当前分类的模板
   const getCurrentTemplates = (): PromptTemplate[] => {
-    const index = parseInt(selectedCategory);
-    if (index === 0) {
+    if (selectedCategory === '0') {
       return categories.flatMap(cat => cat.templates);
     }
-    return categories[index - 1]?.templates || [];
+    return categories.find(cat => cat.category === selectedCategory)?.templates || [];
   };
 
   // 编辑模板
   const handleEdit = (template: PromptTemplate) => {
     setEditingTemplate({ ...template });
+    setOriginalTemplate({ ...template });
+    form.setFieldsValue({
+      template_name: template.template_name,
+      description: template.description,
+      template_content: template.template_content,
+    });
     setEditorVisible(true);
+  };
+
+  // 关闭编辑弹窗前检查是否有未保存改动
+  const handleCloseEditor = () => {
+    if (editingTemplate && originalTemplate) {
+      const values = form.getFieldsValue();
+      const hasChanges =
+        values.template_name !== originalTemplate.template_name ||
+        values.description !== originalTemplate.description ||
+        values.template_content !== originalTemplate.template_content;
+      if (hasChanges) {
+        modal.confirm({
+          title: '未保存的改动',
+          content: '有未保存的改动，确认关闭？',
+          centered: true,
+          okText: '丢弃改动',
+          cancelText: '继续编辑',
+          onOk: () => {
+            setEditorVisible(false);
+            setEditingTemplate(null);
+            setOriginalTemplate(null);
+            form.resetFields();
+          },
+        });
+        return;
+      }
+    }
+    setEditorVisible(false);
+    setEditingTemplate(null);
+    setOriginalTemplate(null);
+    form.resetFields();
   };
 
   // 保存模板
   const handleSave = async () => {
     if (!editingTemplate) return;
 
+    let values;
+    try {
+      values = await form.validateFields();
+    } catch {
+      // 校验失败，表单项会自动展示错误信息
+      return;
+    }
+
     try {
       setLoading(true);
       const createsAccountCopy = editingTemplate.is_system_default;
       await axios.post('/api/prompt-templates', {
         template_key: editingTemplate.template_key,
-        template_name: editingTemplate.template_name,
-        template_content: editingTemplate.template_content,
-        description: editingTemplate.description,
+        template_name: values.template_name,
+        template_content: values.template_content,
+        description: values.description,
         category: editingTemplate.category,
         parameters: editingTemplate.parameters,
         is_active: editingTemplate.is_active
       });
       message.success(createsAccountCopy ? '已保存为当前账户的自定义副本' : '保存成功');
       setEditorVisible(false);
+      setEditingTemplate(null);
+      setOriginalTemplate(null);
+      form.resetFields();
       loadTemplates();
     } catch (error: unknown) {
       const err = error as { response?: { data?: { detail?: string } } };
@@ -191,25 +242,46 @@ export default function PromptTemplates() {
 
   // 导入模板
   const handleImport = async (file: File) => {
+    // 文件类型校验（只允许 .json）
+    const isJson = file.type === 'application/json' || file.name.toLowerCase().endsWith('.json');
+    if (!isJson) {
+      message.error('只能上传 JSON 文件');
+      return false;
+    }
+
+    // 文件大小校验（1MB 以内）
+    const isUnderLimit = file.size / 1024 / 1024 < 1;
+    if (!isUnderLimit) {
+      message.error('文件大小不能超过 1MB');
+      return false;
+    }
+
     try {
       const text = await file.text();
-      const data = JSON.parse(text);
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (parseError) {
+        const errMsg = parseError instanceof Error ? parseError.message : '文件内容不是有效的 JSON 格式';
+        message.error(`JSON 解析失败：${errMsg}`);
+        return false;
+      }
       const response = await axios.post('/api/prompt-templates/import', data);
-      
+
       const result = response.data;
       const stats = result.statistics;
-      
+
       // 构建详细的成功消息
       let successMsg = `导入成功！\n`;
       if (stats) {
         successMsg += `• 保持系统默认：${stats.kept_system_default} 个\n`;
         successMsg += `• 创建/更新自定义：${stats.created_or_updated} 个`;
-        
+
         if (stats.converted_to_custom > 0) {
           successMsg += `\n• 检测到修改（已转为自定义）：${stats.converted_to_custom} 个`;
         }
       }
-      
+
       // 如果有被转换的模板，显示详细信息
       if (result.converted_templates && result.converted_templates.length > 0) {
         modal.info({
@@ -238,7 +310,7 @@ export default function PromptTemplates() {
       } else {
         message.success(successMsg, 5);
       }
-      
+
       loadTemplates();
     } catch (error: unknown) {
       const err = error as { response?: { data?: { detail?: string } } };
@@ -378,8 +450,8 @@ export default function PromptTemplates() {
                   onChange={setSelectedCategory}
                   items={[
                     { key: '0', label: `全部 (${categories.reduce((sum, cat) => sum + cat.count, 0)})` },
-                    ...categories.map((cat, index) => ({
-                      key: (index + 1).toString(),
+                    ...categories.map((cat) => ({
+                      key: cat.category,
                       label: `${cat.category} (${cat.count})`
                     }))
                   ]}
@@ -503,7 +575,7 @@ export default function PromptTemplates() {
       <Modal
         title={`编辑模板: ${editingTemplate?.template_name}`}
         open={editorVisible}
-        onCancel={() => setEditorVisible(false)}
+        onCancel={handleCloseEditor}
         onOk={handleSave}
         width={isMobile ? '100%' : 900}
         centered={!isMobile}
@@ -519,36 +591,40 @@ export default function PromptTemplates() {
           }
         } : undefined}
       >
-        <Space direction="vertical" style={{ width: '100%' }} size="middle">
-          <div>
-            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>模板名称</label>
-            <Input
-              value={editingTemplate?.template_name || ''}
-              onChange={(e) => setEditingTemplate(prev => prev ? { ...prev, template_name: e.target.value } : null)}
-              placeholder="输入模板名称"
-            />
-          </div>
+        <Form
+          form={form}
+          layout="vertical"
+          preserve={false}
+        >
+          <Form.Item
+            name="template_name"
+            label="模板名称"
+            rules={[{ required: true, message: '请输入模板名称' }]}
+          >
+            <Input placeholder="输入模板名称" />
+          </Form.Item>
 
-          <div>
-            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>描述</label>
+          <Form.Item
+            name="description"
+            label="描述"
+          >
             <TextArea
-              value={editingTemplate?.description || ''}
-              onChange={(e) => setEditingTemplate(prev => prev ? { ...prev, description: e.target.value } : null)}
               rows={2}
               placeholder="简要描述模板用途"
             />
-          </div>
+          </Form.Item>
 
-          <div>
-            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 500 }}>模板内容</label>
+          <Form.Item
+            name="template_content"
+            label="模板内容"
+            rules={[{ required: true, message: '请输入模板内容' }]}
+          >
             <TextArea
-              value={editingTemplate?.template_content || ''}
-              onChange={(e) => setEditingTemplate(prev => prev ? { ...prev, template_content: e.target.value } : null)}
               rows={isMobile ? 15 : 20}
               style={{ fontFamily: 'monospace', fontSize: '13px' }}
               placeholder="输入提示词模板内容..."
             />
-          </div>
+          </Form.Item>
 
           <Alert
             message="提示：使用 {variable_name} 格式表示变量占位符"
@@ -556,7 +632,7 @@ export default function PromptTemplates() {
             showIcon
             style={{ borderRadius: 8 }}
           />
-        </Space>
+        </Form>
       </Modal>
     </div>
     </>

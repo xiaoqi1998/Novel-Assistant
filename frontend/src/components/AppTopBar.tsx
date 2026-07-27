@@ -3,6 +3,8 @@ import { Button, theme } from 'antd';
 import { MenuUnfoldOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { HEADER_HEIGHT } from './AppSidebar';
+import { useIsMobile } from '../utils/useIsMobile';
+import { alphaColor } from '../utils/color';
 
 interface AppTopBarProps {
   /** 标题（左对齐） */
@@ -30,9 +32,7 @@ export default function AppTopBar({
 }: AppTopBarProps) {
   const { token } = theme.useToken();
   const navigate = useNavigate();
-  const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
-  const alphaColor = (color: string, alpha: number) =>
-    `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
+  const isMobile = useIsMobile();
 
   return (
     <div
@@ -62,6 +62,7 @@ export default function AppTopBar({
             type="text"
             icon={<MenuUnfoldOutlined />}
             onClick={onMenuClick}
+            aria-label="打开菜单"
             style={{
               fontSize: 18,
               color: token.colorText,

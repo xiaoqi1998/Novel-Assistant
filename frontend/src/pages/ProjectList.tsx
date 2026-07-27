@@ -1,33 +1,19 @@
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Button, Modal, message, Spin, Space, Tag, Typography, Upload, Checkbox, Tooltip, Grid, theme } from 'antd';
+import { Card, Button, Modal, message, Spin, Space, Tag, Typography, Upload, Checkbox, Tooltip, Grid, theme, notification } from 'antd';
 import { UploadOutlined } from '@ant-design/icons';
 import { projectApi } from '../services/api';
+import { showErrorToast } from '../utils/errorHandler';
+import { toast } from '../utils/useToast';
 import { useStore } from '../store';
 import { useProjectSync } from '../store/hooks';
 import type { ReactNode } from 'react';
 import type { Project } from '../types';
 import BookshelfPage from './BookshelfPage';
+import { formatWordCount } from '../utils/format';
 
 const { Text } = Typography;
 const { useBreakpoint } = Grid;
-
-/**
- * 格式化字数显示
- * @param count 字数
- * @returns 格式化后的字符串，如 "1.2K", "3.5W", "1.2M"
- */
-const formatWordCount = (count: number): string => {
-  if (count < 1000) {
-    return count.toString();
-  } else if (count < 10000) {
-    return (count / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
-  } else if (count < 1000000) {
-    return (count / 10000).toFixed(1).replace(/\.0$/, '') + 'W';
-  } else {
-    return (count / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
-  }
-};
 
 /**
  * 书架页（项目列表）。壳（侧边栏 / 顶栏 / 底部版本条）由 RootLayout 提供，
@@ -39,7 +25,26 @@ export default function ProjectList() {
   const isMobile = !screens.md;
   const { projects, loading } = useStore();
   const [modal, contextHolder] = Modal.useModal();
-  const [showApiTip, setShowApiTip] = useState(true);
+  const [showApiTip, setShowApiTip] = useState(() => {
+    try {
+      return localStorage.getItem('mobinovel_bookshelf_alert_dismissed') !== 'true';
+    } catch {
+      return true;
+    }
+  });
+
+  const handleSetShowApiTip = (show: boolean) => {
+    setShowApiTip(show);
+    try {
+      if (!show) {
+        localStorage.setItem('mobinovel_bookshelf_alert_dismissed', 'true');
+      } else {
+        localStorage.removeItem('mobinovel_bookshelf_alert_dismissed');
+      }
+    } catch {
+      // ignore
+    }
+  };
   const [importModalVisible, setImportModalVisible] = useState(false);
   const [exportModalVisible, setExportModalVisible] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -80,8 +85,8 @@ export default function ProjectList() {
 
   const handleDelete = (id: string) => {
     modal.confirm({
-      title: '确认删除',
-      content: '删除项目将同时删除所有相关数据，此操作不可恢复。确定要删除吗？',
+      title: '确认删除项目？',
+      content: '删除后将无法恢复，项目内的所有章节、角色、大纲等数据都将被永久删除。',
       okText: '确定',
       cancelText: '取消',
       okType: 'danger',
@@ -93,8 +98,8 @@ export default function ProjectList() {
         try {
           await deleteProject(id);
           message.success('项目删除成功');
-        } catch {
-          message.error('删除项目失败');
+        } catch (error) {
+          showErrorToast(error, '删除项目失败');
         }
       },
     });
@@ -276,7 +281,9 @@ export default function ProjectList() {
       } else {
         let successCount = 0;
         let failCount = 0;
+        const failedTitles: string[] = [];
         for (const projectId of selectedProjectIds) {
+          const project = projects.find((p) => p.id === projectId);
           try {
             await projectApi.exportProjectData(projectId, {
               include_generation_history: exportOptions.includeGenerationHistory,
@@ -290,12 +297,17 @@ export default function ProjectList() {
           } catch (error) {
             console.error(`导出项目 ${projectId} 失败:`, error);
             failCount++;
+            failedTitles.push(project?.title ?? projectId);
           }
         }
         if (failCount === 0) {
-          message.success(`成功导出 ${successCount} 个项目`);
+          toast.success(`成功导出 ${successCount} 个项目`);
         } else {
-          message.warning(`导出完成：成功 ${successCount} 个，失败 ${failCount} 个`);
+          notification.warning({
+            message: `导出结果：成功 ${successCount} 个，失败 ${failCount} 个`,
+            description: `失败项目：\n${failedTitles.join('\n')}`,
+            duration: 0,
+          });
         }
       }
       handleCloseExportModal();
@@ -316,7 +328,7 @@ export default function ProjectList() {
         loading={loading}
         projects={projects}
         showApiTip={showApiTip}
-        setShowApiTip={setShowApiTip}
+        setShowApiTip={handleSetShowApiTip}
         exportableProjectsCount={exportableProjects.length}
         onOpenImportModal={() => setImportModalVisible(true)}
         onOpenExportModal={handleOpenExportModal}

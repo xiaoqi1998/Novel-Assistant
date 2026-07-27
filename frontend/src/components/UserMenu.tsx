@@ -1,10 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
 import { Dropdown, Avatar, Space, Typography, message, theme } from 'antd';
 import { UserOutlined, LogoutOutlined, TeamOutlined, CrownOutlined } from '@ant-design/icons';
 import { authApi } from '../services/api';
-import type { User } from '../types';
+import { useStore } from '../store';
 import type { MenuProps } from 'antd';
 import { useNavigate } from 'react-router-dom';
+import { useIsMobile } from '../utils/useIsMobile';
+import { alphaColor } from '../utils/color';
 
 const { Text } = Typography;
 
@@ -17,22 +19,13 @@ interface UserMenuProps {
 
 export default function UserMenu({ showFullInfo = false, compact = false }: UserMenuProps) {
   const navigate = useNavigate();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { currentUser, loadCurrentUser } = useStore();
   const { token } = theme.useToken();
-  const alphaColor = (color: string, alpha: number) => `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     loadCurrentUser();
-  }, []);
-
-  const loadCurrentUser = async () => {
-    try {
-      const user = await authApi.getCurrentUser();
-      setCurrentUser(user);
-    } catch (error) {
-      console.error('获取用户信息失败:', error);
-    }
-  };
+  }, [loadCurrentUser]);
 
   const handleLogout = async () => {
     try {
@@ -98,6 +91,10 @@ export default function UserMenu({ showFullInfo = false, compact = false }: User
     <>
       <Dropdown menu={{ items: menuItems }} placement="bottomRight">
         <div
+          role="button"
+          tabIndex={0}
+          aria-haspopup="menu"
+          aria-label={`用户菜单：${currentUser.display_name || currentUser.username}`}
           style={{
             cursor: 'pointer',
             display: 'flex',
@@ -126,11 +123,11 @@ export default function UserMenu({ showFullInfo = false, compact = false }: User
           <div style={{ position: 'relative' }}>
             <Avatar
               src={currentUser.avatar_url}
-              icon={<UserOutlined />}
+              icon={<UserOutlined aria-hidden="true" />}
               size={compact ? 32 : 40}
               style={{
                 backgroundColor: token.colorPrimary,
-                border: `3px solid ${token.colorWhite}`,
+                border: `3px solid ${token.colorBgElevated}`,
                 boxShadow: `0 8px 20px ${alphaColor(token.colorText, 0.12)}`,
               }}
             />
@@ -146,14 +143,14 @@ export default function UserMenu({ showFullInfo = false, compact = false }: User
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                border: `2px solid ${token.colorWhite}`,
+                border: `2px solid ${token.colorBgElevated}`,
                 boxShadow: `0 2px 4px ${alphaColor(token.colorText, 0.2)}`,
               }}>
-                <CrownOutlined style={{ fontSize: 9, color: token.colorWhite }} />
+                <CrownOutlined style={{ fontSize: 9, color: token.colorWhite }} aria-hidden="true" />
               </div>
             )}
           </div>
-          <Space direction="vertical" size={0} style={{ display: compact ? 'none' : ((window.innerWidth <= 768 && !showFullInfo) ? 'none' : 'flex') }}>
+          <Space direction="vertical" size={0} style={{ display: compact ? 'none' : ((isMobile && !showFullInfo) ? 'none' : 'flex') }}>
             <Text strong style={{
               color: token.colorText,
               fontSize: 14,

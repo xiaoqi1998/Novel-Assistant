@@ -1,26 +1,20 @@
-import { useEffect, useState } from 'react';
-import type { ReactNode } from 'react';
-import { Modal, Button, Steps, Typography, theme } from 'antd';
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
+import { Modal, Button, Typography, theme } from 'antd';
 import {
-  RocketOutlined,
   FolderAddOutlined,
   GlobalOutlined,
-  FileTextOutlined,
-  StarOutlined,
+  BookOutlined,
   QuestionCircleOutlined,
   RightOutlined,
   CheckOutlined,
+  LeftOutlined,
 } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
+import { alphaColor } from '../utils/color';
 
 const { Title, Paragraph, Text } = Typography;
 
-// 辅助：透明度工具（color-mix 实现半透明色）
-const alpha = (color: string, a: number): string =>
-  `color-mix(in srgb, ${color} ${(a * 100).toFixed(0)}%, transparent)`;
-
-// localStorage 键名（v1 便于后续迭代时强制重新触发）
-const ONBOARDING_KEY = 'novel_assistant_onboarding_v1';
+// localStorage 键名
+const ONBOARDING_KEY = 'mobinovel_onboarding_completed';
 
 interface OnboardingRecord {
   completed: boolean;
@@ -50,74 +44,107 @@ const writeOnboardingRecord = (record: OnboardingRecord) => {
   }
 };
 
-interface GuideStep {
+interface CoachStep {
+  selector: string;
   icon: ReactNode;
   title: string;
   description: string;
   highlights: string[];
-  cta?: { label: string; path: string };
+  /** 元素不可见时显示的提示 */
+  fallbackNote?: string;
 }
 
-const GUIDE_STEPS: GuideStep[] = [
+const COACH_STEPS: CoachStep[] = [
   {
-    icon: <RocketOutlined />,
-    title: '欢迎使用墨笔',
-    description: '你的 AI 小说创作助手。墨笔会帮你构建世界观、生成章节、追踪伏笔，让长篇创作不再卡壳。',
-    highlights: [
-      '支持都市、玄幻、言情、悬疑等多种题材',
-      'AI 生成的同时保留你的最终决定权',
-      '完整保留你的写作上下文，章节之间自然衔接',
-    ],
-  },
-  {
+    selector: '.onboarding-create-btn',
     icon: <FolderAddOutlined />,
     title: '第一步：创建项目',
-    description: '在「我的书架」点击「创建项目」，填写书名、题材、目标字数。系统会根据题材自动适配提示词与情绪曲线。',
+    description: '点击「创建项目」开始你的第一部小说。填写书名、题材、目标字数，系统会根据题材自动适配提示词与情绪曲线。',
     highlights: [
       '题材决定 AI 写作的风格与节奏',
       '目标字数影响章节拆分与节奏控制',
       '创建后仍可随时修改设定',
     ],
-    cta: { label: '前往我的书架', path: '/' },
   },
   {
+    selector: '.onboarding-world-menu',
     icon: <GlobalOutlined />,
-    title: '第二步：构建世界观与角色',
-    description: '进入项目后，先完善「世界观设定」与「角色档案」。AI 会读取这些设定来生成符合你世界规则的内容。',
+    title: '第二步：构建世界观',
+    description: '进入项目后，在侧边栏点击「世界设定」，完善时代背景、势力格局、核心规则。AI 会读取这些设定来生成符合你世界规则的内容。',
     highlights: [
       '世界观：时代背景、势力格局、核心规则',
-      '角色：性格、背景、语言指纹、关系网络',
-      '角色越多，AI 生成的对话越有辨识度',
+      '至少填写 3-5 条核心规则',
+      '越完整，AI 越不会写出"出戏"的内容',
     ],
+    fallbackNote: '进入任意项目后可查看此菜单',
   },
   {
-    icon: <FileTextOutlined />,
-    title: '第三步：大纲 → 章节',
-    description: '在「大纲」页面规划章节骨架，每章会自动规划场景节拍、情绪曲线、章末钩子、信息释放节奏。生成章节时可流式查看 AI 写作过程。',
+    selector: '.onboarding-chapters-menu',
+    icon: <BookOutlined />,
+    title: '第三步：章节管理',
+    description: '在「章节管理」页面，你可以规划大纲、AI 生成章节、流式查看写作过程。每章会自动设计章末钩子、场景节拍与情绪曲线。',
     highlights: [
-      '大纲展开会自动设计章末追读钩子（防止结尾松散）',
+      '大纲展开会自动设计章末追读钩子',
       '场景节拍让章节内部结构紧凑',
       '信息节奏控制悬念的释放与保留',
     ],
+    fallbackNote: '进入任意项目后可查看此菜单',
   },
   {
-    icon: <StarOutlined />,
-    title: '第四步：反馈与改进',
-    description: '阅读章节后给 AI 打分和反馈，墨笔会将你的反馈注入下一章生成。你的反馈会真正影响 AI，越用越懂你。',
+    selector: '.onboarding-help-btn',
+    icon: <QuestionCircleOutlined />,
+    title: '第四步：随时查看帮助',
+    description: '点击侧边栏的「使用说明」随时查看完整指南、核心功能介绍和常见问题。遇到任何问题都可以在这里找到答案。',
     highlights: [
-      '评分反馈直接进入下一章的上下文',
-      '局部重写：选中文字即可一键改进',
-      '章节分析：自动追踪钩子、伏笔、情绪、对话质量',
+      '快速开始：6 步上手指南',
+      '核心功能：钩子、节拍、情绪曲线',
+      '常见问题：风格、对话、悬念',
     ],
-    cta: { label: '查看完整使用说明', path: '/help' },
   },
 ];
 
+// 计算说明卡片位置（根据目标元素位置智能放置）
+const computePopoverPosition = (rect: DOMRect): CSSProperties => {
+  const popoverWidth = 340;
+  const popoverHeight = 260; // 估算高度
+  const gap = 16;
+  const margin = 16;
+
+  // 优先放在下方
+  if (rect.bottom + popoverHeight + gap < window.innerHeight) {
+    return {
+      top: rect.bottom + gap,
+      left: Math.max(margin, Math.min(rect.left, window.innerWidth - popoverWidth - margin)),
+    };
+  }
+  // 上方
+  if (rect.top - popoverHeight - gap > 0) {
+    return {
+      top: rect.top - popoverHeight - gap,
+      left: Math.max(margin, Math.min(rect.left, window.innerWidth - popoverWidth - margin)),
+    };
+  }
+  // 右侧
+  if (rect.right + popoverWidth + gap < window.innerWidth) {
+    return {
+      top: Math.max(margin, Math.min(rect.top, window.innerHeight - popoverHeight - margin)),
+      left: rect.right + gap,
+    };
+  }
+  // 左侧
+  return {
+    top: Math.max(margin, Math.min(rect.top, window.innerHeight - popoverHeight - margin)),
+    left: Math.max(margin, rect.left - popoverWidth - gap),
+  };
+};
+
 export default function OnboardingGuide() {
   const { token } = theme.useToken();
-  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [current, setCurrent] = useState(0);
+  const [targetRect, setTargetRect] = useState<DOMRect | null>(null);
+  // 跳过确认时暂停引导，避免与 Modal.confirm 的 z-index 冲突
+  const [paused, setPaused] = useState(false);
 
   // 首次访问检测
   useEffect(() => {
@@ -128,6 +155,77 @@ export default function OnboardingGuide() {
       return () => clearTimeout(timer);
     }
   }, []);
+
+  // 监听"重新查看引导"事件（由 HelpPage 按钮触发）
+  useEffect(() => {
+    const handleRestart = () => {
+      setCurrent(0);
+      setPaused(false);
+      setOpen(true);
+    };
+    window.addEventListener('onboarding:restart', handleRestart);
+    return () => window.removeEventListener('onboarding:restart', handleRestart);
+  }, []);
+
+  // 定位目标元素（含重试机制，处理跨页面导航后元素延迟渲染）
+  useEffect(() => {
+    if (!open) return;
+    const step = COACH_STEPS[current];
+
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let attempts = 0;
+
+    const updatePosition = () => {
+      const el = document.querySelector(step.selector) as HTMLElement | null;
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          setTargetRect(rect);
+          return;
+        }
+      }
+      // 元素不存在或不可见，重试
+      if (attempts < 8) {
+        attempts++;
+        retryTimer = setTimeout(updatePosition, 120);
+      } else {
+        setTargetRect(null);
+      }
+    };
+
+    const initialTimer = setTimeout(updatePosition, 100);
+
+    // 监听 resize 和 scroll 实时更新位置
+    const handleResize = () => {
+      const el = document.querySelector(step.selector) as HTMLElement | null;
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          setTargetRect(rect);
+        } else {
+          setTargetRect(null);
+        }
+      } else {
+        setTargetRect(null);
+      }
+    };
+    // resize 加 debounce，scroll 保持实时
+    let resizeTimeoutId: number | undefined;
+    const handleDebouncedResize = () => {
+      if (resizeTimeoutId) window.clearTimeout(resizeTimeoutId);
+      resizeTimeoutId = window.setTimeout(handleResize, 150);
+    };
+    window.addEventListener('resize', handleDebouncedResize);
+    window.addEventListener('scroll', handleResize, true);
+
+    return () => {
+      clearTimeout(initialTimer);
+      if (retryTimer) clearTimeout(retryTimer);
+      window.removeEventListener('resize', handleDebouncedResize);
+      window.removeEventListener('scroll', handleResize, true);
+      if (resizeTimeoutId) window.clearTimeout(resizeTimeoutId);
+    };
+  }, [open, current]);
 
   const handleClose = (skipped: boolean) => {
     writeOnboardingRecord({
@@ -140,7 +238,7 @@ export default function OnboardingGuide() {
   };
 
   const handleNext = () => {
-    if (current < GUIDE_STEPS.length - 1) {
+    if (current < COACH_STEPS.length - 1) {
       setCurrent(current + 1);
     } else {
       handleClose(false);
@@ -151,151 +249,193 @@ export default function OnboardingGuide() {
     if (current > 0) setCurrent(current - 1);
   };
 
-  const handleCta = (path: string) => {
-    handleClose(false);
-    navigate(path);
+  const handleSkipClick = () => {
+    // 暂停引导，让 Modal.confirm 正常显示在最上层
+    setPaused(true);
+    Modal.confirm({
+      title: '跳过新手引导？',
+      content: '您可以随时在帮助页重新查看引导，确定要跳过吗？',
+      okText: '确定跳过',
+      cancelText: '继续查看',
+      onOk: () => {
+        handleClose(true);
+        setPaused(false);
+      },
+      onCancel: () => setPaused(false),
+    });
   };
 
-  const step = GUIDE_STEPS[current];
-  const isLast = current === GUIDE_STEPS.length - 1;
+  if (!open || paused) return null;
+
+  const step = COACH_STEPS[current];
+  const isLast = current === COACH_STEPS.length - 1;
+  const hasTarget = !!targetRect;
+
+  const popoverStyle: CSSProperties = hasTarget && targetRect
+    ? computePopoverPosition(targetRect)
+    : {
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%)',
+      };
 
   return (
-    <Modal
-      open={open}
-      onCancel={() => handleClose(true)}
-      footer={null}
-      closable={false}
-      maskClosable={false}
-      width={560}
-      centered
-      styles={{
-        mask: {
-          // 透明蒙版：半透明黑色，仍能看到背后页面但被弱化
-          backgroundColor: 'rgba(0, 0, 0, 0.55)',
-          backdropFilter: 'blur(2px)',
-          WebkitBackdropFilter: 'blur(2px)',
-        },
-        body: { padding: 0 },
-      }}
-      style={{ zIndex: 2000 }}
-    >
+    <>
+      {/* 高亮遮罩：目标元素可见时用 box-shadow 挖洞，不可见时用全屏遮罩 */}
+      {hasTarget && targetRect ? (
+        <div
+          style={{
+            position: 'fixed',
+            top: targetRect.top - 6,
+            left: targetRect.left - 6,
+            width: targetRect.width + 12,
+            height: targetRect.height + 12,
+            borderRadius: 8,
+            boxShadow: '0 0 0 9999px rgba(0, 0, 0, 0.55)',
+            border: `2px solid ${token.colorPrimary}`,
+            pointerEvents: 'none',
+            zIndex: 2000,
+            transition: 'top 0.3s ease, left 0.3s ease, width 0.3s ease, height 0.3s ease',
+          }}
+        />
+      ) : (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.55)',
+            zIndex: 2000,
+          }}
+        />
+      )}
+
+      {/* 说明卡片 */}
       <div
         style={{
-          borderRadius: 16,
-          overflow: 'hidden',
+          position: 'fixed',
+          width: 340,
           background: token.colorBgContainer,
+          borderRadius: 12,
+          boxShadow: token.boxShadowSecondary,
+          zIndex: 2001,
+          overflow: 'hidden',
+          transition: hasTarget ? 'top 0.3s ease, left 0.3s ease' : 'none',
+          ...popoverStyle,
         }}
       >
         {/* 顶部图标区 */}
         <div
           style={{
-            padding: '32px 32px 16px',
+            padding: '18px 20px 12px',
             background: `linear-gradient(135deg, ${token.colorPrimary} 0%, ${token.colorPrimaryBg} 100%)`,
-            textAlign: 'center',
             position: 'relative',
           }}
         >
-          <div
-            style={{
-              width: 64,
-              height: 64,
-              borderRadius: '50%',
-              background: token.colorBgContainer,
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: 32,
-              color: token.colorPrimary,
-              boxShadow: `0 8px 24px ${token.colorPrimaryBg}`,
-              marginBottom: 12,
-            }}
-          >
-            {step.icon}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: '50%',
+                background: token.colorBgContainer,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 20,
+                color: token.colorPrimary,
+                flexShrink: 0,
+                boxShadow: `0 4px 12px ${alphaColor(token.colorPrimary, 0.2)}`,
+              }}
+            >
+              {step.icon}
+            </div>
+            <Title level={5} style={{ margin: 0, color: token.colorText, flex: 1, lineHeight: 1.3 }}>
+              {step.title}
+            </Title>
           </div>
-          <Title level={4} style={{ margin: 0, color: token.colorText }}>
-            {step.title}
-          </Title>
           <div
             style={{
               position: 'absolute',
-              top: 16,
-              right: 20,
-              fontSize: 12,
+              top: 12,
+              right: 16,
+              fontSize: 11,
               color: token.colorTextSecondary,
-              background: alpha(token.colorBgContainer, 0.6),
-              padding: '2px 10px',
+              background: alphaColor(token.colorBgContainer, 0.6),
+              padding: '2px 8px',
               borderRadius: 10,
             }}
           >
-            {current + 1} / {GUIDE_STEPS.length}
+            {current + 1} / {COACH_STEPS.length}
           </div>
         </div>
 
         {/* 内容区 */}
-        <div style={{ padding: '24px 32px 16px' }}>
-          <Paragraph style={{ fontSize: 14, color: token.colorText, marginBottom: 16, lineHeight: 1.7 }}>
+        <div style={{ padding: '14px 20px 12px' }}>
+          <Paragraph style={{ fontSize: 13, color: token.colorText, marginBottom: 10, lineHeight: 1.6 }}>
             {step.description}
           </Paragraph>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 8 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {step.highlights.map((h, i) => (
               <div
                 key={i}
                 style={{
                   display: 'flex',
                   alignItems: 'flex-start',
-                  gap: 8,
-                  padding: '8px 12px',
-                  background: alpha(token.colorPrimary, 0.04),
-                  borderRadius: 8,
-                  border: `1px solid ${alpha(token.colorPrimary, 0.08)}`,
+                  gap: 6,
+                  padding: '6px 10px',
+                  background: alphaColor(token.colorPrimary, 0.04),
+                  borderRadius: 6,
+                  border: `1px solid ${alphaColor(token.colorPrimary, 0.08)}`,
                 }}
               >
-                <CheckOutlined style={{ color: token.colorSuccess, marginTop: 3, fontSize: 13 }} />
-                <Text style={{ fontSize: 13, color: token.colorText, flex: 1 }}>{h}</Text>
+                <CheckOutlined style={{ color: token.colorSuccess, marginTop: 2, fontSize: 12 }} />
+                <Text style={{ fontSize: 12, color: token.colorText, flex: 1 }}>{h}</Text>
               </div>
             ))}
           </div>
 
-          {/* 步骤指示器 */}
-          <Steps
-            current={current}
-            size="small"
-            style={{ marginTop: 16, marginBottom: 4 }}
-            items={GUIDE_STEPS.map((s) => ({ title: '', icon: s.icon }))}
-          />
+          {step.fallbackNote && !hasTarget && (
+            <div
+              style={{
+                marginTop: 10,
+                padding: '6px 10px',
+                background: alphaColor(token.colorWarning, 0.08),
+                borderRadius: 6,
+                border: `1px solid ${alphaColor(token.colorWarning, 0.16)}`,
+                fontSize: 12,
+                color: token.colorWarning,
+                textAlign: 'center',
+              }}
+            >
+              {step.fallbackNote}
+            </div>
+          )}
         </div>
 
         {/* 底部按钮区 */}
         <div
           style={{
-            padding: '12px 32px 20px',
+            padding: '10px 20px 16px',
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
             borderTop: `1px solid ${token.colorBorderSecondary}`,
           }}
         >
-          <Button type="text" onClick={() => handleClose(true)} style={{ color: token.colorTextSecondary }}>
+          <Button type="text" size="small" onClick={handleSkipClick} style={{ color: token.colorTextSecondary }}>
             跳过引导
           </Button>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <Button
-              type="text"
-              icon={<QuestionCircleOutlined />}
-              onClick={() => handleCta('/help')}
-            >
-              查看完整说明
-            </Button>
             {current > 0 && (
-              <Button onClick={handlePrev}>上一步</Button>
+              <Button size="small" icon={<LeftOutlined />} onClick={handlePrev}>上一步</Button>
             )}
-            <Button type="primary" onClick={handleNext} icon={isLast ? <CheckOutlined /> : <RightOutlined />} iconPosition="end">
+            <Button size="small" type="primary" onClick={handleNext} icon={isLast ? <CheckOutlined /> : <RightOutlined />} iconPosition="end">
               {isLast ? '开始创作' : '下一步'}
             </Button>
           </div>
         </div>
       </div>
-    </Modal>
+    </>
   );
 }

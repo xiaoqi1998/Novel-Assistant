@@ -26,6 +26,7 @@ import {
 import type { UploadFile } from 'antd/es/upload/interface';
 import { InboxOutlined, PlayCircleOutlined, ReloadOutlined, StopOutlined, WarningOutlined, RedoOutlined } from '@ant-design/icons';
 import { bookImportApi } from '../services/api';
+import { useIsMobile } from '../utils/useIsMobile';
 import type {
   BookImportApplyPayload,
   BookImportExtractMode,
@@ -112,7 +113,7 @@ function isNotFoundError(error: unknown): boolean {
 export default function BookImport() {
   const navigate = useNavigate();
   const { token } = theme.useToken();
-  const isMobile = window.innerWidth <= 768;
+  const isMobile = useIsMobile();
   const [file, setFile] = useState<File | null>(null);
   const [extractMode, setExtractMode] = useState<BookImportExtractMode>('tail');
   const [tailChapterCount, setTailChapterCount] = useState(10);
@@ -829,7 +830,15 @@ export default function BookImport() {
             <Space style={{ marginTop: 24 }}>
               <Button icon={<ReloadOutlined />} onClick={refreshStatus}>刷新状态</Button>
               {taskStatus && ['pending', 'running'].includes(taskStatus.status) && (
-                <Button danger icon={<StopOutlined />} onClick={cancelTask}>取消任务</Button>
+                <Popconfirm
+                  title="取消后任务将终止，已解析进度会丢失，确认取消？"
+                  okText="确认取消"
+                  cancelText="保留任务"
+                  okType="danger"
+                  onConfirm={cancelTask}
+                >
+                  <Button danger icon={<StopOutlined />}>取消任务</Button>
+                </Popconfirm>
               )}
             </Space>
           </div>
@@ -1099,9 +1108,17 @@ export default function BookImport() {
                       >
                         智能重试全部失败步骤
                       </Button>
-                      <Button onClick={skipFailedSteps}>
-                        跳过，直接进入项目
-                      </Button>
+                      <Popconfirm
+                        title="跳过后该步骤将不再处理，确认跳过？"
+                        okText="确认跳过"
+                        cancelText="取消"
+                        okType="danger"
+                        onConfirm={skipFailedSteps}
+                      >
+                        <Button>
+                          跳过，直接进入项目
+                        </Button>
+                      </Popconfirm>
                     </Space>
                   </div>
                 }

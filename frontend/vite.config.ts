@@ -9,8 +9,12 @@ const packageJson = JSON.parse(
 )
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
+  // esbuild 配置：生产构建时移除 console 与 debugger
+  esbuild: {
+    drop: mode === 'production' ? ['console', 'debugger'] : [],
+  },
   // 定义全局常量，在构建时注入
   define: {
     'import.meta.env.VITE_APP_VERSION': JSON.stringify(packageJson.version),
@@ -51,4 +55,4 @@ export default defineConfig({
       }
     }
   }
-})
+}))
