@@ -300,6 +300,61 @@ export interface Character {
   updated_at: string;
 }
 
+// 角色弧光里程碑
+export interface ArcMilestone {
+  chapter: number;
+  chapter_id?: string;
+  event: string;
+  stage_shift?: string;
+  goal_progress_delta?: number;
+  timestamp?: string;
+}
+
+// 角色弧光
+export interface CharacterArc {
+  id: string;
+  project_id: string;
+  character_id: string;
+  arc_type: string; // growth/fall/redemption/awakening/sacrifice
+  core_goal: string;
+  motivation?: string;
+  internal_conflict?: string;
+  external_goal?: string;
+  current_stage?: string; // trigger/struggle/turning_point/transformation/completion
+  stage_progress: number;
+  milestones?: ArcMilestone[];
+  target_resolution_chapter?: number;
+  status?: string; // active/completed/abandoned
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CharacterArcCreate {
+  project_id: string;
+  character_id: string;
+  arc_type: string;
+  core_goal: string;
+  motivation?: string;
+  internal_conflict?: string;
+  external_goal?: string;
+  current_stage?: string;
+  stage_progress?: number;
+  target_resolution_chapter?: number;
+  status?: string;
+}
+
+export interface CharacterArcUpdate {
+  arc_type?: string;
+  core_goal?: string;
+  motivation?: string;
+  internal_conflict?: string;
+  external_goal?: string;
+  current_stage?: string;
+  stage_progress?: number;
+  target_resolution_chapter?: number;
+  status?: string;
+}
+
 export interface CharacterUpdate {
   name?: string;
   age?: string;

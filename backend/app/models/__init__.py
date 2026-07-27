@@ -27,6 +27,7 @@ __all__ = [
     "Outline",
     "Chapter",
     "Character",
+    "CharacterArc",
     "CharacterRelationship",
     "Organization",
     "OrganizationMember",

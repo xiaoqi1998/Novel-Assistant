@@ -173,7 +173,7 @@ from app.api import (
     mcp_plugins, admin, inspiration, prompt_templates,
     careers, foreshadows, prompt_workshop, book_import,
     project_covers, tasks, skills, announcements, full_review, newapi,
-    polish
+    polish, character_arcs
 )
 
 app.include_router(auth.router, prefix="/api")
@@ -187,6 +187,7 @@ app.include_router(wizard_stream.router, prefix="/api")
 app.include_router(inspiration.router, prefix="/api")
 app.include_router(outlines.router, prefix="/api")
 app.include_router(characters.router, prefix="/api")
+app.include_router(character_arcs.router, prefix="/api")  # 角色弧光管理API
 app.include_router(careers.router, prefix="/api")  # 职业管理API
 app.include_router(chapters.router, prefix="/api")
 app.include_router(relationships.router, prefix="/api")

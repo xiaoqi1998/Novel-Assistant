@@ -1828,7 +1828,12 @@ class PromptService:
           "loyalty_change": "忠诚度提升",
           "description": "因立下大功被提拔为长老"
         }}
-      ]
+      ],
+      "arc_progress": {{
+        "stage_shift": "挣扎→转折",
+        "milestone_event": "本章中推动弧光的关键事件描述",
+        "goal_progress_delta": 10
+      }}
     }}
   ],
   "plot_points": [
@@ -1887,6 +1892,7 @@ class PromptService:
 ✅ 精确定位：keyword能在原文中精确找到
 ✅ 职业变化可选：仅当章节明确描述时填写
 ✅ 组织变化可选：仅当章节明确描述角色与组织关系变动时填写（character_states中的organization_changes）
+✅ 弧光进度可选：arc_progress仅当角色有活跃弧光且本章明确推进了弧光时填写，默认null。stage_shift格式为"原阶段→新阶段"（如"挣扎→转折"），goal_progress_delta为进度增量（-20到+20的整数）。无弧光或本章无推进时填null
 ✅ 组织状态可选：仅当章节明确描述组织势力/据点/目标变化时填写（organization_states顶级字段）
 ✅ 存活状态谨慎：survival_status仅当章节有明确死亡/失踪/退场描写时填写，默认null
 ✅ 组织覆灭谨慎：is_destroyed仅当组织被彻底消灭时设true，组织受损不算覆灭

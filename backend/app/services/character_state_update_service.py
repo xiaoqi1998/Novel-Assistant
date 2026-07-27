@@ -3,9 +3,11 @@ from typing import Dict, Any, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, and_
 from app.models.character import Character
+from app.models.character_arc import CharacterArc
 from app.models.relationship import CharacterRelationship, Organization, OrganizationMember
 from app.logger import get_logger
 import uuid
+from datetime import datetime
 
 logger = get_logger(__name__)
 
@@ -57,6 +59,7 @@ class CharacterStateUpdateService:
                 "relationship_created_count": 0,
                 "relationship_updated_count": 0,
                 "org_updated_count": 0,
+                "arc_updated_count": 0,
                 "changes": []
             }
 
@@ -65,6 +68,7 @@ class CharacterStateUpdateService:
             "relationship_created_count": 0,
             "relationship_updated_count": 0,
             "org_updated_count": 0,
+            "arc_updated_count": 0,
             "changes": []
         }
 
@@ -163,12 +167,27 @@ class CharacterStateUpdateService:
                 )
                 result["org_updated_count"] += org_updated
 
+            # 4. 更新角色弧光进度（如有 arc_progress 且角色有活跃弧光）
+            arc_progress = char_state.get('arc_progress')
+            if arc_progress and isinstance(arc_progress, dict):
+                arc_updated = await CharacterStateUpdateService._update_character_arc(
+                    db=db,
+                    character=character,
+                    arc_progress=arc_progress,
+                    chapter_id=chapter_id,
+                    chapter_number=chapter_number,
+                    changes=result["changes"]
+                )
+                if arc_updated:
+                    result["arc_updated_count"] += 1
+
         # 提交所有更改
         total_changes = (
             result["state_updated_count"] +
             result["relationship_created_count"] +
             result["relationship_updated_count"] +
-            result["org_updated_count"]
+            result["org_updated_count"] +
+            result["arc_updated_count"]
         )
         if total_changes > 0:
             await db.commit()
@@ -177,7 +196,8 @@ class CharacterStateUpdateService:
                 f"心理状态{result['state_updated_count']}个, "
                 f"新建关系{result['relationship_created_count']}个, "
                 f"更新关系{result['relationship_updated_count']}个, "
-                f"组织变动{result['org_updated_count']}个"
+                f"组织变动{result['org_updated_count']}个, "
+                f"弧光推进{result['arc_updated_count']}个"
             )
         else:
             logger.info("📋 本章没有角色状态或关系变化")
@@ -312,6 +332,114 @@ class CharacterStateUpdateService:
 
         logger.info(f"  ✅ {character.name} 心理状态更新: {state_before} → {state_after}")
         return True
+
+    @staticmethod
+    async def _update_character_arc(
+        db: AsyncSession,
+        character: Character,
+        arc_progress: Dict[str, Any],
+        chapter_id: str,
+        chapter_number: int,
+        changes: List[str]
+    ) -> bool:
+        """根据章节分析结果更新角色弧光进度。
+
+        消费 analysis_result.character_states[].arc_progress：
+        - stage_shift: "挣扎→转折"（解析为新阶段）
+        - milestone_event: 里程碑事件描述
+        - goal_progress_delta: 进度增量（-20 到 +20）
+
+        更新逻辑：
+        - 查询角色 status='active' 的弧光（取最近更新的一条）
+        - 解析 stage_shift 提取新阶段
+        - 累加 stage_progress（钳制 0-100）
+        - 追加 milestones 条目
+        - 若进度达 100 或新阶段为 completion，标记弧光 completed
+
+        Returns:
+            是否成功更新了弧光
+        """
+        try:
+            arc_result = await db.execute(
+                select(CharacterArc)
+                .where(
+                    CharacterArc.character_id == character.id,
+                    CharacterArc.status == "active",
+                )
+                .order_by(CharacterArc.updated_at.desc())
+                .limit(1)
+            )
+            arc = arc_result.scalar_one_or_none()
+            if not arc:
+                return False
+
+            # 解析 stage_shift → 新阶段
+            stage_shift = arc_progress.get('stage_shift', '')
+            new_stage = arc.current_stage
+            if stage_shift and '→' in stage_shift:
+                parts = stage_shift.split('→')
+                if len(parts) >= 2:
+                    candidate = parts[-1].strip().lower()
+                    # 映射中文阶段名到英文 key
+                    stage_map = {
+                        '触发': 'trigger', '触发期': 'trigger',
+                        '挣扎': 'struggle', '挣扎期': 'struggle',
+                        '转折': 'turning_point', '转折期': 'turning_point',
+                        '蜕变': 'transformation', '蜕变期': 'transformation',
+                        '完成': 'completion', '完成期': 'completion',
+                    }
+                    mapped = stage_map.get(candidate, candidate)
+                    if mapped in ('trigger', 'struggle', 'turning_point', 'transformation', 'completion'):
+                        new_stage = mapped
+
+            # 累加进度（钳制 0-100）
+            delta = arc_progress.get('goal_progress_delta', 0)
+            try:
+                delta_int = int(delta)
+            except (TypeError, ValueError):
+                delta_int = 0
+            old_progress = arc.stage_progress or 0
+            new_progress = max(0, min(100, old_progress + delta_int))
+
+            milestone_event = arc_progress.get('milestone_event', '') or f"第{chapter_number}章弧光推进"
+
+            # 追加里程碑
+            milestones = arc.milestones or []
+            if not isinstance(milestones, list):
+                milestones = []
+            milestones.append({
+                "chapter": chapter_number,
+                "chapter_id": chapter_id,
+                "event": milestone_event[:200],
+                "stage_shift": stage_shift or f"{arc.current_stage}→{new_stage}",
+                "goal_progress_delta": delta_int,
+                "timestamp": datetime.now().isoformat(),
+            })
+
+            old_stage = arc.current_stage
+            arc.current_stage = new_stage
+            arc.stage_progress = new_progress
+            arc.milestones = milestones
+
+            # 达 100% 或进入 completion 阶段 → 标记完成
+            if new_progress >= 100 or new_stage == 'completion':
+                arc.status = 'completed'
+                logger.info(f"  🎯 {character.name} 弧光已完成: {arc.arc_type}")
+            else:
+                logger.info(
+                    f"  📈 {character.name} 弧光推进: {old_stage}→{new_stage} "
+                    f"进度 {old_progress}→{new_progress}"
+                )
+
+            changes.append(
+                f"📈 {character.name} 弧光推进: {stage_shift or old_stage} "
+                f"(进度 {old_progress}→{new_progress})"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"  ⚠️ 更新 {character.name} 弧光失败: {e}", exc_info=True)
+            return False
 
     @staticmethod
     async def _update_relationships(

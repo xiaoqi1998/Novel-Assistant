@@ -10,6 +10,7 @@ from app.models.chapter import Chapter
 from app.models.project import Project
 from app.models.outline import Outline
 from app.models.character import Character
+from app.models.character_arc import CharacterArc
 from app.models.career import Career, CharacterCareer
 from app.models.memory import StoryMemory, PlotAnalysis
 from app.models.foreshadow import Foreshadow
@@ -28,8 +29,12 @@ STATUS_LABELS = {
 }
 
 
-def _append_current_state_lines(info_lines: List[str], character: Character) -> None:
-    """向角色上下文注入分析系统维护的最新状态。"""
+def _append_current_state_lines(info_lines: List[str], character: Character, state_limit: int = 400) -> None:
+    """向角色上下文注入分析系统维护的最新状态。
+
+    Args:
+        state_limit: current_state 截断长度，主角/反派可传更大值以保留完整心理画像
+    """
     status = character.status or "active"
     status_label = STATUS_LABELS.get(status, status)
     status_line = f"  当前状态: {status_label}"
@@ -38,11 +43,217 @@ def _append_current_state_lines(info_lines: List[str], character: Character) -> 
     info_lines.append(status_line)
 
     if character.current_state:
-        current_state = character.current_state[:150] if len(character.current_state) > 150 else character.current_state
+        current_state = character.current_state[:state_limit] if len(character.current_state) > state_limit else character.current_state
         state_line = f"  当前心理/处境: {current_state}"
         if character.state_updated_chapter:
             state_line += f"（第{character.state_updated_chapter}章更新）"
         info_lines.append(state_line)
+
+
+# 弧光阶段中文标签
+ARC_STAGE_LABELS = {
+    "trigger": "触发期",
+    "struggle": "挣扎期",
+    "turning_point": "转折期",
+    "transformation": "蜕变期",
+    "completion": "完成期",
+}
+
+# 弧光类型中文标签
+ARC_TYPE_LABELS = {
+    "growth": "成长",
+    "fall": "堕落",
+    "redemption": "救赎",
+    "awakening": "顿悟",
+    "sacrifice": "牺牲",
+}
+
+
+def _get_arc_stage_advice(stage: Optional[str]) -> str:
+    """根据弧光当前阶段给出本章推进建议（给 AI 的方向引导）。"""
+    advice_map = {
+        "trigger": "铺垫触发事件，让角色意识到改变的必要",
+        "struggle": "推进挣扎，设置阻碍让角色在冲突中成长",
+        "turning_point": "铺垫关键转折，让角色做出重要抉择",
+        "transformation": "展现蜕变后的新行为/认知",
+        "completion": "收束弧光，体现成长成果",
+    }
+    return advice_map.get(stage or "", "")
+
+
+def _append_arc_lines(
+    info_lines: List[str],
+    character_id: str,
+    arcs_map: Dict[str, List[Any]],
+    max_arcs: int = 2,
+) -> None:
+    """向角色上下文注入弧光信息（核心目标、当前阶段、内在冲突、推进建议）。
+
+    Args:
+        arcs_map: character_id -> List[CharacterArc] 映射（仅 active 弧光）
+        max_arcs: 单角色最多注入的弧光数量，控制 token（默认2：主弧光+感情弧光）
+    """
+    arcs = arcs_map.get(character_id)
+    if not arcs:
+        return
+    for arc in arcs[:max_arcs]:
+        if arc.status != "active":
+            continue
+        type_label = ARC_TYPE_LABELS.get(arc.arc_type, arc.arc_type or "成长")
+        stage_label = ARC_STAGE_LABELS.get(arc.current_stage, arc.current_stage or "触发期")
+        progress = arc.stage_progress or 0
+
+        info_lines.append(f"  弧光类型: {type_label}")
+        if arc.core_goal:
+            info_lines.append(f"  核心目标: {arc.core_goal}")
+        if arc.motivation:
+            info_lines.append(f"  动机: {arc.motivation}")
+        if arc.internal_conflict:
+            info_lines.append(f"  内在冲突: {arc.internal_conflict}")
+        info_lines.append(f"  当前弧光阶段: {stage_label}（进度{progress}%）")
+        advice = _get_arc_stage_advice(arc.current_stage)
+        if advice:
+            info_lines.append(f"  本章弧光推进建议: {advice}")
+
+
+def _build_world_and_checklist_suffix(project: Any) -> str:
+    """构建追加到大纲 P0 块的【世界设定 + 一致性校验清单】后缀。
+
+    世界规则原本未注入章节生成提示词（OneToManyContext/OneToOneContext 只含 title/genre/theme），
+    导致 AI 可随意违反世界设定。此处将其拼入 P0 大纲块，零模板/调用点改动，避免 str.format KeyError。
+    """
+    parts = []
+    if getattr(project, 'world_time_period', None):
+        parts.append(f"时代背景：{project.world_time_period}")
+    if getattr(project, 'world_location', None):
+        parts.append(f"地理位置：{project.world_location}")
+    if getattr(project, 'world_atmosphere', None):
+        parts.append(f"氛围基调：{project.world_atmosphere}")
+    if getattr(project, 'world_rules', None):
+        parts.append(f"世界规则：{project.world_rules}")
+
+    world_block = "【世界设定 - 必须遵循，不得违反】\n" + (
+        "\n".join(parts) if parts else "（本项目未设定详细世界规则）"
+    )
+    checklist_block = (
+        "【一致性校验清单 - 必须遵循】\n"
+        "- 角色行为须与「当前心理/处境」一致，不得突变性格\n"
+        "- 不得违反上述世界设定\n"
+        "- 时间线须与上一章衔接，不得跳跃\n"
+        "- 未回收的伏笔不得遗忘（参考伏笔提醒）\n"
+        "- 角色当前弧光阶段须推进，不得原地踏步（如有弧光设定）"
+    )
+    return f"\n\n{world_block}\n\n{checklist_block}"
+
+
+async def _build_quality_feedback_shared(chapter: Chapter, db: AsyncSession) -> Optional[str]:
+    """构建上一章质量反馈（AI 评分 + 用户反馈 + 近三章滚动连贯性检查）。
+
+    1-N 与 1-1 模式共用此实现，避免两份近乎重复的代码分叉。
+    滚动窗口：除 N-1 章外，额外检查 N-2/N-3 的 coherence_score，若 ≥2 章低于 6.0 则追加持续低分告警。
+    """
+    try:
+        # 查询最近 3 章（N-1, N-2, N-3），用于主反馈与滚动连贯性检查
+        recent_result = await db.execute(
+            select(Chapter)
+            .where(Chapter.project_id == chapter.project_id)
+            .where(Chapter.chapter_number < chapter.chapter_number)
+            .order_by(Chapter.chapter_number.desc())
+            .limit(3)
+        )
+        recent_chapters = recent_result.scalars().all()
+        if not recent_chapters:
+            return None
+
+        prev_chapter = recent_chapters[0]  # 上一章（N-1）
+
+        analysis_result = await db.execute(
+            select(PlotAnalysis).where(PlotAnalysis.chapter_id == prev_chapter.id)
+        )
+        analysis = analysis_result.scalar_one_or_none()
+
+        has_user_feedback = (
+            prev_chapter.user_rating is not None
+            or (prev_chapter.user_feedback and prev_chapter.user_feedback.strip())
+        )
+
+        if not analysis and not has_user_feedback:
+            return None
+
+        lines = ["【上一章质量反馈 - 请避免同类问题】"]
+
+        # === AI 评分反馈 ===
+        if analysis:
+            coherence = analysis.coherence_score or 0.0
+            engagement = analysis.engagement_score or 0.0
+            pacing = analysis.pacing_score or 0.0
+
+            low_dims = []
+            dim_labels = {
+                'coherence': ('连贯性', '注意情节衔接和逻辑一致性'),
+                'engagement': ('吸引力', '建议加强悬念和冲突'),
+                'pacing': ('节奏', '注意叙事节奏的快慢交替'),
+            }
+            scores = {'coherence': coherence, 'engagement': engagement, 'pacing': pacing}
+            for dim, score in scores.items():
+                if score < 6.0:
+                    label, advice = dim_labels[dim]
+                    low_dims.append(f"{label}({score:.1f}) — {advice}")
+
+            suggestions = analysis.suggestions or []
+            if isinstance(suggestions, list):
+                suggestions = [s for s in suggestions if isinstance(s, str) and s.strip()][:3]
+            else:
+                suggestions = []
+
+            lines.append(f"AI 评分: 连贯性 {coherence:.1f} | 吸引力 {engagement:.1f} | 节奏 {pacing:.1f}")
+
+            if low_dims:
+                lines.append(f"⚠️ 低分维度: {'; '.join(low_dims)}")
+
+            if suggestions:
+                lines.append("改进建议:")
+                for s in suggestions:
+                    lines.append(f"- {s}")
+
+        # === 滚动连贯性窗口：近 3 章持续低分检测 ===
+        if len(recent_chapters) >= 2:
+            recent_ids = [c.id for c in recent_chapters]
+            rolling_result = await db.execute(
+                select(PlotAnalysis).where(PlotAnalysis.chapter_id.in_(recent_ids))
+            )
+            rolling_analyses = {a.chapter_id: a for a in rolling_result.scalars().all()}
+            low_coherence_chapters = []
+            for c in recent_chapters:
+                a = rolling_analyses.get(c.id)
+                if a and (a.coherence_score or 0) < 6.0:
+                    low_coherence_chapters.append(f"第{c.chapter_number}章({(a.coherence_score or 0):.1f})")
+            if len(low_coherence_chapters) >= 2:
+                lines.append("")
+                lines.append(
+                    f"⚠️ 近 {len(low_coherence_chapters)} 章连贯性持续偏低: "
+                    f"{'、'.join(low_coherence_chapters)}"
+                )
+                lines.append("  本章务必重点检查情节衔接、设定一致性与时间线，避免同类问题延续")
+
+        # === 用户反馈（权重高于 AI 自评，因为用户反馈是真实体感） ===
+        if has_user_feedback:
+            lines.append("")
+            lines.append("【用户对上一章的反馈 - 重点关注】")
+            if prev_chapter.user_rating is not None:
+                lines.append(f"用户评分: {prev_chapter.user_rating}/5")
+                if prev_chapter.user_rating <= 2:
+                    lines.append("⚠️ 用户明显不满意，本章务必避免同类问题")
+                elif prev_chapter.user_rating <= 3:
+                    lines.append("⚠️ 用户不太满意，本章注意改进相关方面")
+            if prev_chapter.user_feedback and prev_chapter.user_feedback.strip():
+                lines.append(f"用户原话: {prev_chapter.user_feedback.strip()}")
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        logger.error(f"❌ 构建质量反馈失败: {str(e)}")
+        return None
 
 
 def _stringify_list_items(value: Any, limit: int = 5) -> List[str]:
@@ -483,6 +694,8 @@ class OneToManyContextBuilder:
         
         # === P0-核心信息（始终构建）===
         context.chapter_outline = self._build_chapter_outline_1n(chapter, outline)
+        # A2+A3: 将世界设定 + 一致性校验清单拼入 P0 大纲块
+        context.chapter_outline += _build_world_and_checklist_suffix(project)
 
         # === P0-情绪曲线（从expansion_plan提取）===
         context.emotion_curve = _extract_emotion_curve(chapter)
@@ -743,7 +956,27 @@ class OneToManyContextBuilder:
                         if char_id not in org_members_map:
                             org_members_map[char_id] = []
                         org_members_map[char_id].append((m, member_name))
-        
+
+        # === 批量查询角色弧光（仅 active）===
+        arcs_map: Dict[str, List[Any]] = {}
+        non_org_char_ids = [c.id for c in characters if not c.is_organization]
+        if non_org_char_ids:
+            try:
+                arcs_result = await db.execute(
+                    select(CharacterArc)
+                    .where(
+                        CharacterArc.character_id.in_(non_org_char_ids),
+                        CharacterArc.status == "active",
+                    )
+                    .order_by(CharacterArc.updated_at.desc())
+                )
+                for arc in arcs_result.scalars().all():
+                    if arc.character_id not in arcs_map:
+                        arcs_map[arc.character_id] = []
+                    arcs_map[arc.character_id].append(arc)
+            except Exception as e:
+                logger.warning(f"查询角色弧光失败（不影响生成）: {e}")
+
         # === 构建完整版角色信息 ===
         characters_info_parts = []
         for c in characters:
@@ -756,22 +989,30 @@ class OneToManyContextBuilder:
             role_type = role_type_map.get(c.role_type, c.role_type or '配角')
             
             info_lines = [f"【{c.name}】({entity_type}, {role_type})"]
-            
+
+            # 按角色类型分级截断：主角/反派戏份重，需更完整画像；配角/龙套保持紧凑以控制 token
+            is_lead = c.role_type in ('protagonist', 'antagonist')
+            appearance_limit = 200 if is_lead else 100
+            personality_limit = 300 if is_lead else 150
+            background_limit = 400 if is_lead else 200
+            state_limit = 400 if is_lead else 200
+
             # 详细属性
             if c.age:
                 info_lines.append(f"  年龄: {c.age}")
             if c.gender:
                 info_lines.append(f"  性别: {c.gender}")
             if c.appearance:
-                appearance_preview = c.appearance[:100] if len(c.appearance) > 100 else c.appearance
+                appearance_preview = c.appearance[:appearance_limit] if len(c.appearance) > appearance_limit else c.appearance
                 info_lines.append(f"  外貌: {appearance_preview}")
             if c.personality:
-                personality_preview = c.personality[:100] if len(c.personality) > 100 else c.personality
+                personality_preview = c.personality[:personality_limit] if len(c.personality) > personality_limit else c.personality
                 info_lines.append(f"  性格: {personality_preview}")
             if c.background:
-                background_preview = c.background[:150] if len(c.background) > 150 else c.background
+                background_preview = c.background[:background_limit] if len(c.background) > background_limit else c.background
                 info_lines.append(f"  背景: {background_preview}")
-            _append_current_state_lines(info_lines, c)
+            _append_current_state_lines(info_lines, c, state_limit=state_limit)
+            _append_arc_lines(info_lines, c.id, arcs_map)
             
             # 职业信息
             if c.id in char_career_relations:
@@ -1041,94 +1282,11 @@ class OneToManyContextBuilder:
         chapter: Chapter,
         db: AsyncSession
     ) -> Optional[str]:
-        """构建上一章质量反馈（AI 评分 + 用户反馈），用于软反馈闭环。"""
-        try:
-            # 查询上一章
-            prev_result = await db.execute(
-                select(Chapter)
-                .where(Chapter.project_id == chapter.project_id)
-                .where(Chapter.chapter_number < chapter.chapter_number)
-                .order_by(Chapter.chapter_number.desc())
-                .limit(1)
-            )
-            prev_chapter = prev_result.scalar_one_or_none()
-            if not prev_chapter:
-                return None
+        """构建上一章质量反馈（AI 评分 + 用户反馈 + 近三章滚动连贯性检查）。
 
-            # 查询上一章的剧情分析记录（可选，用户反馈不依赖 AI 分析）
-            analysis_result = await db.execute(
-                select(PlotAnalysis).where(PlotAnalysis.chapter_id == prev_chapter.id)
-            )
-            analysis = analysis_result.scalar_one_or_none()
-
-            # 检查是否有用户反馈
-            has_user_feedback = (
-                prev_chapter.user_rating is not None
-                or (prev_chapter.user_feedback and prev_chapter.user_feedback.strip())
-            )
-
-            # 如果 AI 分析和用户反馈都不存在，返回 None
-            if not analysis and not has_user_feedback:
-                return None
-
-            lines = ["【上一章质量反馈 - 请避免同类问题】"]
-
-            # === AI 评分反馈 ===
-            if analysis:
-                # 提取评分
-                coherence = analysis.coherence_score or 0.0
-                engagement = analysis.engagement_score or 0.0
-                pacing = analysis.pacing_score or 0.0
-
-                # 识别低分维度（< 6.0）
-                low_dims = []
-                dim_labels = {
-                    'coherence': ('连贯性', '注意情节衔接和逻辑一致性'),
-                    'engagement': ('吸引力', '建议加强悬念和冲突'),
-                    'pacing': ('节奏', '注意叙事节奏的快慢交替'),
-                }
-                scores = {'coherence': coherence, 'engagement': engagement, 'pacing': pacing}
-                for dim, score in scores.items():
-                    if score < 6.0:
-                        label, advice = dim_labels[dim]
-                        low_dims.append(f"{label}({score:.1f}) — {advice}")
-
-                # 提取改进建议（取前3条）
-                suggestions = analysis.suggestions or []
-                if isinstance(suggestions, list):
-                    suggestions = [s for s in suggestions if isinstance(s, str) and s.strip()][:3]
-                else:
-                    suggestions = []
-
-                lines.append(f"AI 评分: 连贯性 {coherence:.1f} | 吸引力 {engagement:.1f} | 节奏 {pacing:.1f}")
-
-                if low_dims:
-                    lines.append(f"⚠️ 低分维度: {'; '.join(low_dims)}")
-
-                if suggestions:
-                    lines.append("改进建议:")
-                    for s in suggestions:
-                        lines.append(f"- {s}")
-
-            # === 用户反馈（权重高于 AI 自评，因为用户反馈是真实体感） ===
-            if has_user_feedback:
-                lines.append("")
-                lines.append("【用户对上一章的反馈 - 重点关注】")
-                if prev_chapter.user_rating is not None:
-                    lines.append(f"用户评分: {prev_chapter.user_rating}/5")
-                    # 评分低于 3 分时加强警告
-                    if prev_chapter.user_rating <= 2:
-                        lines.append("⚠️ 用户明显不满意，本章务必避免同类问题")
-                    elif prev_chapter.user_rating <= 3:
-                        lines.append("⚠️ 用户不太满意，本章注意改进相关方面")
-                if prev_chapter.user_feedback and prev_chapter.user_feedback.strip():
-                    lines.append(f"用户原话: {prev_chapter.user_feedback.strip()}")
-
-            return "\n".join(lines)
-
-        except Exception as e:
-            logger.error(f"❌ 构建质量反馈失败: {str(e)}")
-            return None
+        1-N 与 1-1 共用 _build_quality_feedback_shared 实现，避免两份代码分叉。
+        """
+        return await _build_quality_feedback_shared(chapter, db)
 
     async def _get_last_ending_enhanced(
         self,
@@ -1494,6 +1652,8 @@ class OneToOneContextBuilder:
         
         # === P0-核心信息 ===
         context.chapter_outline = self._build_outline_from_structure(outline, chapter)
+        # A2+A3: 将世界设定 + 一致性校验清单拼入 P0 大纲块
+        context.chapter_outline += _build_world_and_checklist_suffix(project)
         logger.info(f"  ✅ P0-大纲信息: {len(context.chapter_outline)}字符")
 
         # === P0-情绪曲线（从expansion_plan提取）===
@@ -1700,88 +1860,11 @@ class OneToOneContextBuilder:
         chapter: Chapter,
         db: AsyncSession
     ) -> Optional[str]:
-        """构建上一章质量反馈（AI 评分 + 用户反馈），用于软反馈闭环。"""
-        try:
-            prev_result = await db.execute(
-                select(Chapter)
-                .where(Chapter.project_id == chapter.project_id)
-                .where(Chapter.chapter_number < chapter.chapter_number)
-                .order_by(Chapter.chapter_number.desc())
-                .limit(1)
-            )
-            prev_chapter = prev_result.scalar_one_or_none()
-            if not prev_chapter:
-                return None
+        """构建上一章质量反馈（AI 评分 + 用户反馈 + 近三章滚动连贯性检查）。
 
-            analysis_result = await db.execute(
-                select(PlotAnalysis).where(PlotAnalysis.chapter_id == prev_chapter.id)
-            )
-            analysis = analysis_result.scalar_one_or_none()
-
-            # 检查是否有用户反馈
-            has_user_feedback = (
-                prev_chapter.user_rating is not None
-                or (prev_chapter.user_feedback and prev_chapter.user_feedback.strip())
-            )
-
-            # 如果 AI 分析和用户反馈都不存在，返回 None
-            if not analysis and not has_user_feedback:
-                return None
-
-            lines = ["【上一章质量反馈 - 请避免同类问题】"]
-
-            # === AI 评分反馈 ===
-            if analysis:
-                coherence = analysis.coherence_score or 0.0
-                engagement = analysis.engagement_score or 0.0
-                pacing = analysis.pacing_score or 0.0
-
-                low_dims = []
-                dim_labels = {
-                    'coherence': ('连贯性', '注意情节衔接和逻辑一致性'),
-                    'engagement': ('吸引力', '建议加强悬念和冲突'),
-                    'pacing': ('节奏', '注意叙事节奏的快慢交替'),
-                }
-                scores = {'coherence': coherence, 'engagement': engagement, 'pacing': pacing}
-                for dim, score in scores.items():
-                    if score < 6.0:
-                        label, advice = dim_labels[dim]
-                        low_dims.append(f"{label}({score:.1f}) — {advice}")
-
-                suggestions = analysis.suggestions or []
-                if isinstance(suggestions, list):
-                    suggestions = [s for s in suggestions if isinstance(s, str) and s.strip()][:3]
-                else:
-                    suggestions = []
-
-                lines.append(f"AI 评分: 连贯性 {coherence:.1f} | 吸引力 {engagement:.1f} | 节奏 {pacing:.1f}")
-
-                if low_dims:
-                    lines.append(f"⚠️ 低分维度: {'; '.join(low_dims)}")
-
-                if suggestions:
-                    lines.append("改进建议:")
-                    for s in suggestions:
-                        lines.append(f"- {s}")
-
-            # === 用户反馈（权重高于 AI 自评） ===
-            if has_user_feedback:
-                lines.append("")
-                lines.append("【用户对上一章的反馈 - 重点关注】")
-                if prev_chapter.user_rating is not None:
-                    lines.append(f"用户评分: {prev_chapter.user_rating}/5")
-                    if prev_chapter.user_rating <= 2:
-                        lines.append("⚠️ 用户明显不满意，本章务必避免同类问题")
-                    elif prev_chapter.user_rating <= 3:
-                        lines.append("⚠️ 用户不太满意，本章注意改进相关方面")
-                if prev_chapter.user_feedback and prev_chapter.user_feedback.strip():
-                    lines.append(f"用户原话: {prev_chapter.user_feedback.strip()}")
-
-            return "\n".join(lines)
-
-        except Exception as e:
-            logger.error(f"❌ 构建质量反馈失败: {str(e)}")
-            return None
+        1-N 与 1-1 共用 _build_quality_feedback_shared 实现，避免两份代码分叉。
+        """
+        return await _build_quality_feedback_shared(chapter, db)
 
     async def _build_recent_chapters_context(
         self,
@@ -2001,13 +2084,33 @@ class OneToOneContextBuilder:
         for cc in character_careers:
             if cc.character_id not in char_career_relations:
                 char_career_relations[cc.character_id] = {'main': [], 'sub': []}
-            
+
             # 保存完整的CharacterCareer对象
             if cc.career_type == 'main':
                 char_career_relations[cc.character_id]['main'].append(cc)
             else:
                 char_career_relations[cc.character_id]['sub'].append(cc)
-        
+
+        # === 批量查询角色弧光（仅 active）===
+        arcs_map: Dict[str, List[Any]] = {}
+        non_org_char_ids_1v1 = [cid for cid in character_ids if cid in full_characters and not full_characters[cid].is_organization]
+        if non_org_char_ids_1v1:
+            try:
+                arcs_result = await db.execute(
+                    select(CharacterArc)
+                    .where(
+                        CharacterArc.character_id.in_(non_org_char_ids_1v1),
+                        CharacterArc.status == "active",
+                    )
+                    .order_by(CharacterArc.updated_at.desc())
+                )
+                for arc in arcs_result.scalars().all():
+                    if arc.character_id not in arcs_map:
+                        arcs_map[arc.character_id] = []
+                    arcs_map[arc.character_id].append(arc)
+            except Exception as e:
+                logger.warning(f"查询角色弧光失败（不影响生成）: {e}")
+
         # 构建角色信息字符串
         characters_info_parts = []
         for char_id in character_ids[:10]:  # 限制最多10个角色
@@ -2041,7 +2144,11 @@ class OneToOneContextBuilder:
             if c.background:
                 background_preview = c.background[:150] if len(c.background) > 150 else c.background
                 info_lines.append(f"  背景: {background_preview}")
-            
+
+            # === 当前状态 + 弧光（1-1 路径补齐，与 1-N 一致）===
+            _append_current_state_lines(info_lines, c, state_limit=400)
+            _append_arc_lines(info_lines, c.id, arcs_map)
+
             # === 职业信息（完整数据）===
             if char_id in char_career_relations:
                 career_relations = char_career_relations[char_id]

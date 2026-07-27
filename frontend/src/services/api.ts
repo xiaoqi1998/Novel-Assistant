@@ -18,6 +18,9 @@ import type {
   BatchOutlineExpansionResponse,
   Character,
   CharacterUpdate,
+  CharacterArc,
+  CharacterArcCreate,
+  CharacterArcUpdate,
   Chapter,
   ChapterCreate,
   ChapterUpdate,
@@ -704,6 +707,41 @@ export const characterApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
+};
+
+// 角色弧光管理 API
+export const characterArcApi = {
+  // 获取角色的所有弧光
+  getCharacterArcs: (characterId: string) =>
+    api.get<unknown, { arcs: CharacterArc[]; total: number }>(`/character-arcs/character/${characterId}`).then(res => res.arcs),
+
+  // 获取项目的所有弧光
+  getProjectArcs: (projectId: string, statusFilter?: string) =>
+    api.get<unknown, { arcs: CharacterArc[]; total: number }>(
+      `/character-arcs/project/${projectId}${statusFilter ? `?status_filter=${statusFilter}` : ''}`
+    ).then(res => res.arcs),
+
+  // 获取弧光详情
+  getArc: (arcId: string) => api.get<unknown, CharacterArc>(`/character-arcs/${arcId}`),
+
+  // 创建弧光
+  createArc: (data: CharacterArcCreate) =>
+    api.post<unknown, CharacterArc>('/character-arcs', data),
+
+  // 更新弧光
+  updateArc: (arcId: string, data: CharacterArcUpdate) =>
+    api.put<unknown, CharacterArc>(`/character-arcs/${arcId}`, data),
+
+  // 删除弧光
+  deleteArc: (arcId: string) => api.delete(`/character-arcs/${arcId}`),
+
+  // AI生成弧光
+  generateArc: (projectId: string, characterId: string, hint?: string) =>
+    api.post<unknown, CharacterArc>('/character-arcs/generate', {
+      project_id: projectId,
+      character_id: characterId,
+      hint: hint || null,
+    }),
 };
 
 export const chapterApi = {

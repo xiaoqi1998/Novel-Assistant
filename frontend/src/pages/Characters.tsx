@@ -1229,6 +1229,9 @@ export default function Characters() {
             </>
           )}
         </Form>
+        {editingCharacter && !editingCharacter.is_organization && currentProject?.id && (
+          <CharacterArcPanel characterId={editingCharacter.id} projectId={currentProject.id} />
+        )}
       </Modal>
 
       {/* 手动创建角色/组织模态框 */}

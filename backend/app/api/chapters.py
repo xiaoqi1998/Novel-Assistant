@@ -1260,14 +1260,16 @@ async def analyze_chapter_background(
                     state_update_result['state_updated_count'] +
                     state_update_result['relationship_created_count'] +
                     state_update_result['relationship_updated_count'] +
-                    state_update_result.get('org_updated_count', 0)
+                    state_update_result.get('org_updated_count', 0) +
+                    state_update_result.get('arc_updated_count', 0)
                 )
                 if total_state_changes > 0:
                     logger.info(
                         f"✅ 角色状态更新: 心理状态{state_update_result['state_updated_count']}个, "
                         f"新建关系{state_update_result['relationship_created_count']}个, "
                         f"更新关系{state_update_result['relationship_updated_count']}个, "
-                        f"组织变动{state_update_result.get('org_updated_count', 0)}个"
+                        f"组织变动{state_update_result.get('org_updated_count', 0)}个, "
+                        f"弧光推进{state_update_result.get('arc_updated_count', 0)}个"
                     )
                     if state_update_result['changes']:
                         for change in state_update_result['changes'][:8]:
