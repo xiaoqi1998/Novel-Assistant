@@ -1955,15 +1955,12 @@ async def generate_chapter_content_stream(
                 break  # 退出async for db_session循环
         
         except GeneratorExit:
-            # SSE连接断开
+            # SSE连接断开：任务被取消，session 可能正处于被中断的操作中间，
+            # 事务状态机可能卡在 "rollback in progress"。这里不调用 rollback()，
+            # 否则触发 "rollback() is already in progress"。
+            # 未提交事务的清理交给 finally 中的 close()。
             logger.warning("章节生成器被提前关闭（SSE断开）")
-            if db_session and not db_committed:
-                try:
-                    if db_session.in_transaction():
-                        await db_session.rollback()
-                        logger.info("章节生成事务已回滚（GeneratorExit）")
-                except Exception as e:
-                    logger.error(f"GeneratorExit回滚失败: {str(e)}")
+            raise
         except QuotaExhaustedError as e:
             logger.warning(f"章节生成额度不足: {e}")
             if db_session and not db_committed:
@@ -1984,23 +1981,19 @@ async def generate_chapter_content_stream(
                     logger.error(f"回滚失败: {str(rollback_error)}")
             yield await tracker.error(str(e))
         finally:
-            # 确保数据库会话被正确关闭
+            # 仅调用 close()：它内部会自动 rollback 未提交事务。
+            # 不在这里显式 rollback，避免与取消中的操作状态冲突。
             if db_session:
                 try:
-                    # 最后检查：确保没有未提交的事务
-                    if not db_committed and db_session.in_transaction():
-                        await db_session.rollback()
-                        logger.warning("在finally中发现未提交事务，已回滚")
-                    
                     await db_session.close()
-                    logger.info("数据库会话已关闭")
                 except Exception as close_error:
-                    logger.error(f"关闭数据库会话失败: {str(close_error)}")
-                    # 强制关闭
+                    # close 失败多为任务取消导致事务状态卡死，
+                    # 用 invalidate() 废弃连接，让连接池终止坏连接。
                     try:
-                        await db_session.close()
+                        await db_session.invalidate()
                     except Exception:
                         pass
+                    logger.warning(f"close 失败已废弃连接（多为SSE断开）: {str(close_error)}")
     
     return create_sse_response(event_generator())
 

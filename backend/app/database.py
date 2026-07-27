@@ -173,42 +173,47 @@ async def get_db(request: Request):
     
     try:
         yield session
-        if session.in_transaction():
-            await session.rollback()
     except GeneratorExit:
+        # 客户端断开（SSE/流式响应被取消）导致生成器被 aclose()。
+        # 此时任务正被取消，session 可能正处于被中断的数据库操作中间，
+        # SQLAlchemy 事务状态机会卡在 "rollback in progress" 等中间状态。
+        # 这里绝不能再调用 rollback()，否则触发：
+        #   "Method 'rollback()' can't be called here; method 'rollback()' is already in progress"
+        # 未提交事务的清理统一交给 finally 中的 session.close()。
         _session_stats["generator_exits"] += 1
-        # logger.warning(f"⚠️ GeneratorExit [User:{user_id}][ID:{session_id}] - SSE连接断开（总计:{_session_stats['generator_exits']}次）")
-        try:
-            if session.in_transaction():
-                await session.rollback()
-                logger.info(f"✅ 事务已回滚 [User:{user_id}][ID:{session_id}]（GeneratorExit）")
-        except Exception as rollback_error:
-            _session_stats["errors"] += 1
-            logger.error(f"❌ GeneratorExit回滚失败 [User:{user_id}][ID:{session_id}]: {str(rollback_error)}")
-    except Exception as e:
+        raise
+    except Exception:
         _session_stats["errors"] += 1
-        logger.error(f"❌ 会话异常 [User:{user_id}][ID:{session_id}]: {str(e)}")
         try:
-            if session.in_transaction():
-                await session.rollback()
-                logger.info(f"✅ 事务已回滚 [User:{user_id}][ID:{session_id}]（异常）")
+            await session.rollback()
+            logger.info(f"✅ 事务已回滚 [User:{user_id}][ID:{session_id}]（异常）")
         except Exception as rollback_error:
             logger.error(f"❌ 异常回滚失败 [User:{user_id}][ID:{session_id}]: {str(rollback_error)}")
         raise
     finally:
+        # 仅调用 close()：它内部会自动 rollback 未提交事务。
+        # 不在这里显式 rollback，避免与取消中的操作状态冲突再次报 "already in progress"。
         try:
-            if session.in_transaction():
-                await session.rollback()
-                logger.warning(f"⚠️ finally中发现未提交事务 [User:{user_id}][ID:{session_id}]，已回滚")
-            
             await session.close()
-            
+        except Exception as e:
+            # close 失败通常是因为任务被取消时 session 事务状态卡在
+            # "rollback in progress" 中间态，close/rollback 都无法再执行。
+            # 改用 invalidate()：它通过连接废弃关闭 session，绕过 rollback，
+            # 让连接池终止该坏连接而非回收，避免污染连接池。
+            # 这是 SSE/流式响应客户端断开时的已知场景，降级为 warning。
+            try:
+                await session.invalidate()
+            except Exception:
+                pass
+            logger.warning(
+                f"⚠️ close 失败已废弃连接（多为客户端断开所致）"
+                f" [User:{user_id}][ID:{session_id}]: {str(e)}"
+            )
+        finally:
             _session_stats["closed"] += 1
             _session_stats["active"] -= 1
             _session_stats["last_check"] = datetime.now().isoformat()
-            
-            # logger.debug(f"📊 会话关闭 [User:{user_id}][ID:{session_id}] - 活跃:{_session_stats['active']}, 总创建:{_session_stats['created']}, 总关闭:{_session_stats['closed']}, 错误:{_session_stats['errors']}")
-            
+
             # 使用优化后的会话监控阈值
             if _session_stats["active"] > settings.database_session_leak_threshold:
                 logger.error(f"🚨 严重告警：活跃会话数 {_session_stats['active']} 超过泄漏阈值 {settings.database_session_leak_threshold}！")
@@ -216,14 +221,6 @@ async def get_db(request: Request):
                 logger.warning(f"⚠️ 警告：活跃会话数 {_session_stats['active']} 超过警告阈值 {settings.database_session_max_active}，可能存在连接泄漏！")
             elif _session_stats["active"] < 0:
                 logger.error(f"🚨 活跃会话数异常: {_session_stats['active']}，统计可能不准确！")
-                
-        except Exception as e:
-            _session_stats["errors"] += 1
-            logger.error(f"❌ 关闭会话时出错 [User:{user_id}][ID:{session_id}]: {str(e)}", exc_info=True)
-            try:
-                await session.close()
-            except Exception:
-                pass
 
 async def init_db(user_id: str = None):
     """
