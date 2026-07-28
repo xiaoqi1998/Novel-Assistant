@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, Tooltip, Skeleton, theme } from 'antd';
-import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined, BulbOutlined } from '@ant-design/icons';
+import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, Tooltip, Skeleton, theme, Dropdown } from 'antd';
+import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined, BulbOutlined, DownOutlined, FileMarkdownOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { eventBus } from '../store/eventBus';
 import { useChapterSync } from '../store/hooks';
@@ -1263,21 +1263,31 @@ export default function Chapters() {
     return texts[status] || status;
   };
 
-  const handleExport = () => {
+  const handleExport = (format: 'txt' | 'markdown' = 'txt') => {
     if (chapters.length === 0) {
       message.warning('当前项目没有章节，无法导出');
       return;
     }
 
+    const formatLabel = format === 'markdown' ? 'Markdown 电子书（含目录/大纲）' : 'TXT 纯文本';
+    const tips: Record<'txt' | 'markdown', string> = {
+      txt: '仅章节正文，便于再次拆书导入',
+      markdown: '含元信息头、可点击目录、大纲、章节正文，可在 VS Code / Typora 大纲栏快速跳转章节',
+    };
+
     modal.confirm({
       title: '导出项目章节',
-      content: `确定要将《${currentProject.title}》的所有章节导出为TXT文件吗？`,
+      content: `确定要将《${currentProject.title}》导出为 ${formatLabel} 吗？\n\n${tips[format]}`,
       centered: true,
       okText: '确定导出',
       cancelText: '取消',
       onOk: () => {
         try {
-          projectApi.exportProject(currentProject.id);
+          if (format === 'markdown') {
+            projectApi.exportProjectMarkdown(currentProject.id);
+          } else {
+            projectApi.exportProject(currentProject.id);
+          }
           message.success('开始下载导出文件');
         } catch (error) {
           showErrorToast(error, '导出失败，请重试');
@@ -2294,16 +2304,35 @@ export default function Chapters() {
           >
             {batchGenerating ? '生成中...' : '批量生成'}
           </Button>
-          <Button
-            type="default"
-            icon={<DownloadOutlined />}
-            onClick={handleExport}
+          <Dropdown
+            trigger={['click']}
             disabled={chapters.length === 0}
-            block={isMobile}
-            size={isMobile ? 'middle' : 'middle'}
+            menu={{
+              items: [
+                {
+                  key: 'markdown',
+                  icon: <FileMarkdownOutlined />,
+                  label: 'Markdown 电子书（推荐）',
+                },
+                {
+                  key: 'txt',
+                  icon: <FileTextOutlined />,
+                  label: 'TXT 纯文本',
+                },
+              ],
+              onClick: ({ key }) => handleExport(key as 'txt' | 'markdown'),
+            }}
           >
-            导出为TXT
-          </Button>
+            <Button
+              type="default"
+              icon={<DownloadOutlined />}
+              disabled={chapters.length === 0}
+              block={isMobile}
+              size={isMobile ? 'middle' : 'middle'}
+            >
+              导出电子书 <DownOutlined />
+            </Button>
+          </Dropdown>
         </Space>
       </div>
 

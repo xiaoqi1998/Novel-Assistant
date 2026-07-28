@@ -398,6 +398,11 @@ export const projectApi = {
     window.open(`/api/projects/${id}/export`, '_blank');
   },
 
+  // 导出项目为 Markdown 电子书（含元信息/目录/大纲/章节）
+  exportProjectMarkdown: (id: string) => {
+    window.open(`/api/projects/${id}/export-markdown`, '_blank');
+  },
+
   // 导出项目数据为JSON
   exportProjectData: async (id: string, options: {
     include_generation_history?: boolean;

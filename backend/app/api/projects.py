@@ -440,6 +440,180 @@ async def export_project_chapters(
         raise HTTPException(status_code=500, detail=f"导出失败: {str(e)}")
 
 
+@router.get("/{project_id}/export-markdown", summary="导出项目为Markdown电子书")
+async def export_project_markdown(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    request: Request = None
+):
+    """
+    导出项目为 Markdown 格式电子书
+    包含：元信息头、可点击目录、大纲、章节正文（章节标题用二级标题，便于编辑器大纲栏快速跳转）
+    """
+    try:
+        user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            logger.warning("未登录用户尝试导出项目")
+            raise HTTPException(status_code=401, detail="未登录")
+
+        logger.info(f"开始导出项目 Markdown: project_id={project_id}, user_id={user_id}")
+
+        # 查询项目
+        result = await db.execute(
+            select(Project).where(
+                Project.id == project_id,
+                Project.user_id == user_id
+            )
+        )
+        project = result.scalar_one_or_none()
+        if not project:
+            raise HTTPException(status_code=404, detail="项目不存在")
+
+        # 查询大纲（按 order_index 排序）
+        outlines_result = await db.execute(
+            select(Outline)
+            .where(Outline.project_id == project_id)
+            .order_by(Outline.order_index)
+        )
+        outlines = outlines_result.scalars().all()
+
+        # 查询章节（按 chapter_number 排序）
+        chapters_result = await db.execute(
+            select(Chapter)
+            .where(Chapter.project_id == project_id)
+            .order_by(Chapter.chapter_number)
+        )
+        chapters = chapters_result.scalars().all()
+
+        if not chapters:
+            raise HTTPException(status_code=404, detail="项目没有任何章节")
+
+        # 构建 Markdown 内容
+        from datetime import datetime
+        import re
+
+        title = (project.title or "未命名项目").strip()
+        lines: list[str] = []
+
+        # ===== 文档头 =====
+        lines.append(f"# {title}")
+        lines.append("")
+
+        # 元信息块（多行引用，便于阅读）
+        status_map = {
+            'planning': '规划中',
+            'writing': '创作中',
+            'completed': '已完成',
+            'draft': '草稿',
+        }
+        meta_lines = []
+        if project.genre:
+            meta_lines.append(f"**类型**: {project.genre}")
+        if project.status:
+            meta_lines.append(f"**状态**: {status_map.get(project.status, project.status)}")
+        if project.current_words:
+            meta_lines.append(f"**字数**: {project.current_words:,}")
+        if project.target_words:
+            meta_lines.append(f"**目标字数**: {project.target_words:,}")
+        meta_lines.append(f"**导出时间**: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        for m in meta_lines:
+            lines.append(f"> {m}")
+        lines.append("")
+
+        # 简介
+        if project.description and project.description.strip():
+            for desc_line in project.description.strip().splitlines():
+                if desc_line.strip():
+                    lines.append(f"> {desc_line.strip()}")
+            lines.append("")
+
+        # ===== 目录 =====
+        def make_anchor(text: str) -> str:
+            """生成 Markdown 锚点：小写、空格转-、保留字母数字汉字"""
+            anchor = re.sub(r'[^\w\u4e00-\u9fa5\s-]', '', text.lower())
+            anchor = re.sub(r'\s+', '-', anchor.strip())
+            return anchor
+
+        lines.append("## 目录")
+        lines.append("")
+        if outlines:
+            lines.append(f"- [大纲](#{make_anchor('大纲')})")
+        for chapter in chapters:
+            ch_title = (chapter.title or "").strip() or f"未命名章节{chapter.chapter_number}"
+            heading = f"第{chapter.chapter_number}章 {ch_title}"
+            lines.append(f"- [{heading}](#{make_anchor(heading)})")
+        lines.append("")
+
+        # ===== 大纲 =====
+        if outlines:
+            lines.append("## 大纲")
+            lines.append("")
+            for outline in outlines:
+                o_title = (outline.title or "").strip() or "未命名大纲"
+                lines.append(f"### {o_title}")
+                lines.append("")
+                if outline.content and outline.content.strip():
+                    lines.append(outline.content.strip())
+                    lines.append("")
+            lines.append("---")
+            lines.append("")
+
+        # ===== 章节正文 =====
+        for idx, chapter in enumerate(chapters):
+            ch_title = (chapter.title or "").strip() or f"未命名章节{chapter.chapter_number}"
+            lines.append(f"## 第{chapter.chapter_number}章 {ch_title}")
+            lines.append("")
+
+            # 关联大纲标注
+            if chapter.outline_id:
+                matched = next((o for o in outlines if o.id == chapter.outline_id), None)
+                if matched and matched.title:
+                    lines.append(f"> 所属大纲: {matched.title}")
+                    lines.append("")
+
+            raw_content = (chapter.content or "").strip()
+            if raw_content:
+                lines.append(raw_content)
+            else:
+                lines.append("（本章暂无内容）")
+            lines.append("")
+
+            # 章节间分隔线
+            if idx < len(chapters) - 1:
+                lines.append("---")
+                lines.append("")
+
+        final_content = "\n".join(lines)
+
+        # 文件名（与 TXT 保持一致的 safe_title 规则）
+        safe_title = "".join(
+            c for c in title
+            if c.isalnum() or c in (' ', '-', '_', '，', '。', '、')
+        ) or "未命名项目"
+        filename = f"{safe_title}.md"
+        encoded_filename = quote(filename)
+
+        logger.info(
+            f"导出 Markdown 成功: {filename}, 共{len(chapters)}章, "
+            f"{len(outlines)}条大纲, {len(final_content)}字符"
+        )
+
+        return Response(
+            content=final_content.encode('utf-8'),
+            media_type="text/markdown; charset=utf-8",
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}",
+                "Content-Type": "text/markdown; charset=utf-8"
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"导出 Markdown 失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"导出失败: {str(e)}")
+
+
 @router.post("/{project_id}/check-consistency", summary="检查数据一致性")
 async def check_project_consistency(
     project_id: str,
