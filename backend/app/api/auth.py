@@ -444,7 +444,7 @@ async def newapi_login(request: NewApiLoginRequest, response: Response):
     if status != 1:
         raise HTTPException(status_code=403, detail="账号已被封禁，请联系管理员")
 
-    user = await _find_or_create_from_newapi(newapi_user_id, username, display_name, role, request.password)
+    user, _ = await _find_or_create_from_newapi(newapi_user_id, username, display_name, role, request.password)
     _set_login_cookies(response, user.user_id)
     logger.info(
         f"✅ [New API 登录] 用户 {user.user_id} (newapi_user_id={newapi_user_id}, role={role}) 登录成功"
