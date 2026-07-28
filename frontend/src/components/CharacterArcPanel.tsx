@@ -314,7 +314,6 @@ function ArcCard({
 
       {milestones.length > 0 && (
         <Timeline
-          size="small"
           style={{ marginTop: 8, paddingLeft: 4 }}
           items={milestones.slice(-5).reverse().map((m) => ({
             children: (

@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
-import { Button, Modal, Form, Input, Select, message, Row, Col, Empty, Tabs, Divider, Typography, Space, InputNumber, Checkbox, Skeleton, Card, theme } from 'antd';
+import { useState, useEffect, useRef } from 'react';
+import { Button, Modal, Form, Input, Select, message, Row, Col, Empty, Tabs, Divider, Typography, Space, InputNumber, Checkbox, Skeleton, Card, theme, Tag } from 'antd';
 import { ThunderboltOutlined, UserOutlined, TeamOutlined, PlusOutlined, ExportOutlined, ImportOutlined, DownloadOutlined, SearchOutlined, LinkOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
@@ -1314,7 +1314,7 @@ export default function Characters() {
                     <Tag
                       key={`${member}-${idx}`}
                       closable
-                      onClose={(e) => {
+                      onClose={(e: React.MouseEvent) => {
                         e.preventDefault();
                         setEditMembers(prev => prev.filter((_, i) => i !== idx));
                       }}
