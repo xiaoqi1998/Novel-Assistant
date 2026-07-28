@@ -121,7 +121,9 @@ class ChapterGenerateRequest(BaseModel):
     enable_mcp: bool = Field(True, description="是否启用MCP工具增强（搜索参考资料）")
     model: Optional[str] = Field(None, description="指定使用的AI模型，不提供则使用用户默认模型")
     narrative_perspective: Optional[str] = Field(None, description="临时人称视角：first_person/third_person/omniscient，不提供则使用项目默认")
-    skill_key: Optional[str] = Field(None, description="Skill 标识，指定后以该 Skill 的工作流指导创作")
+    skill_key: Optional[str] = Field(None, description="Skill 标识（兼容旧版），指定后以该 Skill 的工作流指导创作")
+    skill_keys: Optional[List[str]] = Field(None, description="Skill 标识列表（兼容旧版）")
+    auxiliary_skill_keys: Optional[List[str]] = Field(None, description="辅助 Skill 标识列表（如去AI味、文风学习），只注入创作约束")
 
 
 class BatchGenerateRequest(BaseModel):
@@ -140,7 +142,9 @@ class BatchGenerateRequest(BaseModel):
     max_retries: int = Field(3, description="每个章节的最大重试次数", ge=0, le=5)
     model: Optional[str] = Field(None, description="指定使用的AI模型，不提供则使用用户默认模型")
     narrative_perspective: Optional[str] = Field(None, description="临时指定叙事人称，不提供则使用项目默认")
-    skill_key: Optional[str] = Field(None, description="Skill 标识，指定后以该 Skill 的工作流指导创作")
+    skill_key: Optional[str] = Field(None, description="Skill 标识（兼容旧版），指定后以该 Skill 的工作流指导创作")
+    skill_keys: Optional[List[str]] = Field(None, description="Skill 标识列表（兼容旧版）")
+    auxiliary_skill_keys: Optional[List[str]] = Field(None, description="辅助 Skill 标识列表（如去AI味、文风学习），只注入创作约束")
 
 
 class BatchGenerateResponse(BaseModel):

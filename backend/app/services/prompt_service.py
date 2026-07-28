@@ -1319,6 +1319,17 @@ class PromptService:
 {relevant_memories}
 </memory>
 
+<story_skeleton priority="P2">
+【故事骨架 - 全书脉络参考】
+{story_skeleton}
+
+⚠️ 故事骨架使用须知：
+- 这是已写章节的等距采样摘要，用于保持全书脉络一致性
+- 仅作为参考背景，禁止在本章复述骨架中已发生的事件
+- 涉及早期章节的人物/伏笔/设定时，须与骨架保持一致，不得矛盾
+- 如骨架为空，则按"最近章节规划"和"衔接锚点"自然推进
+</story_skeleton>
+
 <constraints>
 【必须遵守】
 ✅ 严格按照大纲推进情节

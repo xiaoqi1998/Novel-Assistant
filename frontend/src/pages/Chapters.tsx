@@ -127,10 +127,11 @@ export default function Chapters() {
   const [availableModels, setAvailableModels] = useState<Array<{ value: string, label: string }>>([]);
   const [selectedModel, setSelectedModel] = useState<string | undefined>();
   const [batchSelectedModel, setBatchSelectedModel] = useState<string | undefined>(); // 批量生成的模型选择
-  const [batchSelectedSkillKey, setBatchSelectedSkillKey] = useState<string | undefined>(); // 批量生成的Skill选择
+  const [batchSelectedAuxiliarySkillKeys, setBatchSelectedAuxiliarySkillKeys] = useState<string[]>([]); // 批量生成的辅助Skill多选
   const [temporaryNarrativePerspective, setTemporaryNarrativePerspective] = useState<string | undefined>(); // 临时人称选择
-  const [availableSkills, setAvailableSkills] = useState<Array<{ template_key: string; template_name: string; description: string; category: string }>>([]);
-  const [selectedSkillKey, setSelectedSkillKey] = useState<string | undefined>();
+  const [availableSkills, setAvailableSkills] = useState<Array<{ template_key: string; template_name: string; description: string; category: string; skill_type?: string }>>([]);
+  const [selectedWritingSkillKey, setSelectedWritingSkillKey] = useState<string | undefined>(); // 创作类Skill（单选）
+  const [selectedAuxiliarySkillKeys, setSelectedAuxiliarySkillKeys] = useState<string[]>([]); // 辅助类Skill（多选）
   const [analysisVisible, setAnalysisVisible] = useState(false);
   const [analysisChapterId, setAnalysisChapterId] = useState<string | null>(null);
   // 分析任务状态管理
@@ -936,7 +937,8 @@ export default function Chapters() {
       });
       setEditingId(id);
       setTemporaryNarrativePerspective(undefined); // 重置人称选择
-      setSelectedSkillKey(undefined); // 重置Skill选择
+      setSelectedWritingSkillKey(undefined); // 重置创作Skill选择
+      setSelectedAuxiliarySkillKeys([]); // 重置辅助Skill选择
       setLastDraftSaveTime(null);
       setIsEditorOpen(true);
       // 打开编辑窗口时加载模型列表和Skill列表
@@ -1066,7 +1068,8 @@ export default function Chapters() {
         },
         selectedModel,  // 传递选中的模型
         temporaryNarrativePerspective,  // 传递临时人称参数
-        selectedSkillKey,  // 传递选中的Skill
+        selectedWritingSkillKey,  // 创作类 Skill（单选）
+        selectedAuxiliarySkillKeys.length > 0 ? selectedAuxiliarySkillKeys : undefined,  // 辅助类 Skill（多选）
         abortController.signal  // 支持取消
       );
 
@@ -1378,6 +1381,7 @@ export default function Chapters() {
         target_word_count: number;
         model?: string;
         skill_key?: string;
+        auxiliary_skill_keys?: string[];
       } = {
         start_chapter_number: values.startChapterNumber,
         count: values.count,
@@ -1394,10 +1398,10 @@ export default function Chapters() {
         console.log('[批量生成] 请求体不包含model，使用后端默认模型');
       }
 
-      // 如果有 Skill 参数，添加到请求体中
-      if (batchSelectedSkillKey) {
-        requestBody.skill_key = batchSelectedSkillKey;
-        console.log('[批量生成] 请求体包含skill_key:', batchSelectedSkillKey);
+      // 如果有辅助 Skill 参数，添加到请求体中
+      if (batchSelectedAuxiliarySkillKeys.length > 0) {
+        requestBody.auxiliary_skill_keys = batchSelectedAuxiliarySkillKeys;
+        console.log('[批量生成] 请求体包含auxiliary_skill_keys:', batchSelectedAuxiliarySkillKeys);
       }
 
       console.log('[批量生成] 完整请求体:', JSON.stringify(requestBody, null, 2));
@@ -2993,20 +2997,20 @@ export default function Chapters() {
             marginBottom: isMobile ? 16 : 12
           }}>
             <Form.Item
-              label="应用 Skill"
-              tooltip="选择一个 Skill 工作流指导 AI 创作，不选则使用标准创作流程"
+              label="创作 Skill"
+              tooltip="选择一个创作工作流指导 AI 写作，不选则默认启用「长篇网文写作」"
               style={{ flex: 1, marginBottom: isMobile ? 16 : 0 }}
             >
               <Select
-                placeholder="不使用 Skill（标准创作）"
-                value={selectedSkillKey}
-                onChange={setSelectedSkillKey}
+                placeholder="默认启用「长篇网文写作」"
+                value={selectedWritingSkillKey}
+                onChange={setSelectedWritingSkillKey}
                 allowClear
                 disabled={isGenerating}
                 showSearch
                 optionFilterProp="label"
               >
-                {availableSkills.map(skill => (
+                {availableSkills.filter(s => s.skill_type === 'writing').map(skill => (
                   <Select.Option key={skill.template_key} value={skill.template_key} label={skill.template_name}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span>{skill.template_name}</span>
@@ -3015,14 +3019,38 @@ export default function Chapters() {
                   </Select.Option>
                 ))}
               </Select>
-              {selectedSkillKey && (() => {
-                const skill = availableSkills.find(s => s.template_key === selectedSkillKey);
-                return skill ? (
-                  <div style={{ color: token.colorSuccess, fontSize: 12, marginTop: 4 }}>
-                    ✓ {skill.description}
-                  </div>
-                ) : null;
-              })()}
+            </Form.Item>
+
+            <Form.Item
+              label="辅助 Skill"
+              tooltip="可多选，将对应的写作约束（如去AI味）注入创作过程，不会干扰创作工作流。文风模仿请通过上方「写作风格」下拉框选择已提取的文风档案"
+              style={{ flex: 1, marginBottom: isMobile ? 16 : 0 }}
+            >
+              <Select
+                mode="multiple"
+                placeholder="不使用辅助约束"
+                value={selectedAuxiliarySkillKeys}
+                onChange={setSelectedAuxiliarySkillKeys}
+                allowClear
+                disabled={isGenerating}
+                showSearch
+                optionFilterProp="label"
+                maxTagCount={2}
+              >
+                {availableSkills.filter(s => s.skill_type === 'auxiliary').map(skill => (
+                  <Select.Option key={skill.template_key} value={skill.template_key} label={skill.template_name}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span>{skill.template_name}</span>
+                      <Tag style={{ fontSize: 11, lineHeight: '18px', padding: '0 4px' }}>{skill.category}</Tag>
+                    </div>
+                  </Select.Option>
+                ))}
+              </Select>
+              {selectedAuxiliarySkillKeys.length > 0 && (
+                <div style={{ color: token.colorSuccess, fontSize: 12, marginTop: 4 }}>
+                  ✓ 已选 {selectedAuxiliarySkillKeys.length} 个辅助约束
+                </div>
+              )}
             </Form.Item>
 
             <Form.Item
@@ -3362,16 +3390,18 @@ export default function Chapters() {
 
               <Form.Item
                 label="应用 Skill"
-                tooltip="选择一个 Skill 工作流指导批量创作，不选则使用标准创作流程"
+                tooltip="可同时选择多个 Skill 工作流指导批量创作（如：长篇写作+去AI味），不选则默认启用长篇写作"
                 style={{ flex: 1, marginBottom: 12 }}
               >
                 <Select
-                  placeholder="不使用 Skill（标准创作）"
-                  value={batchSelectedSkillKey}
-                  onChange={setBatchSelectedSkillKey}
+                  mode="multiple"
+                  placeholder="默认启用「长篇网文写作」"
+                  value={batchSelectedSkillKeys}
+                  onChange={setBatchSelectedSkillKeys}
                   allowClear
                   showSearch
                   optionFilterProp="label"
+                  maxTagCount={2}
                 >
                   {availableSkills.map(skill => (
                     <Select.Option key={skill.template_key} value={skill.template_key} label={skill.template_name}>

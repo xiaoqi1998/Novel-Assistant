@@ -289,7 +289,8 @@ export function useChapterSync() {
     onProgressUpdate?: (message: string, progress: number) => void,
     model?: string,
     narrativePerspective?: string,
-    skillKey?: string,
+    writingSkillKey?: string,
+    auxiliarySkillKeys?: string[],
     signal?: AbortSignal
   ) => {
     const abortController = new AbortController();
@@ -311,7 +312,8 @@ export function useChapterSync() {
           target_word_count: targetWordCount,
           model: model,
           narrative_perspective: narrativePerspective,
-          skill_key: skillKey
+          skill_key: writingSkillKey,
+          auxiliary_skill_keys: auxiliarySkillKeys
         }),
         signal: abortController.signal,
       });

@@ -21,6 +21,7 @@ from app.models.foreshadow import Foreshadow
 from app.models.prompt_workshop import PromptWorkshopItem, PromptSubmission, PromptWorkshopLike
 from app.models.background_task import BackgroundTask
 from app.models.announcement import Announcement
+from app.models.user_skill import UserSkill
 
 __all__ = [
     "Project",
@@ -53,5 +54,6 @@ __all__ = [
     "PromptSubmission",
     "PromptWorkshopLike",
     "BackgroundTask",
-    "Announcement"
+    "Announcement",
+    "UserSkill"
 ]

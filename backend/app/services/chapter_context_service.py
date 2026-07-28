@@ -530,6 +530,7 @@ class OneToManyContext:
     relevant_memories: Optional[str] = None  # 始终启用（相关度>0.6）
     foreshadow_reminders: Optional[str] = None
     quality_feedback: Optional[str] = None  # 上一章质量反馈（suggestions + 低分维度）
+    story_skeleton: Optional[str] = None  # 故事骨架（每N章采样，全书跨度记忆，对抗长篇失忆）
 
     # === 元信息 ===
     context_stats: Dict[str, Any] = field(default_factory=dict)
@@ -540,7 +541,7 @@ class OneToManyContext:
         for field_name in ['chapter_outline', 'emotion_curve', 'recent_chapters_context', 'continuation_point',
                           'chapter_characters', 'chapter_careers',
                           'relevant_memories', 'foreshadow_reminders',
-                          'previous_chapter_summary', 'quality_feedback']:
+                          'previous_chapter_summary', 'quality_feedback', 'story_skeleton']:
             value = getattr(self, field_name, None)
             if value:
                 total += len(value)
@@ -630,11 +631,12 @@ class OneToManyContextBuilder:
     MEMORY_COUNT = MEMORY_CONTEXT_LIMIT  # 兼容旧统计/引用
     MEMORY_SIMILARITY_THRESHOLD = 0.6  # 记忆相关度阈值
     RECENT_CHAPTERS_COUNT = 10   # 最近章节规划数量
-    
+    SKELETON_SAMPLE_INTERVAL = 5  # 故事骨架采样间隔（每N章取1章摘要进骨架，控制 token 同时保留全书脉络）
+
     def __init__(self, memory_service=None, foreshadow_service=None):
         """
         初始化构建器
-        
+
         Args:
             memory_service: 记忆服务实例（可选，用于检索相关记忆）
             foreshadow_service: 伏笔服务实例（可选，用于获取伏笔提醒）
@@ -773,7 +775,15 @@ class OneToManyContextBuilder:
             )
             if context.foreshadow_reminders:
                 logger.info(f"  ✅ 伏笔提醒: {len(context.foreshadow_reminders)}字符")
-        
+
+        # === P2-故事骨架（全书跨度记忆，对抗长篇失忆）===
+        if chapter_number > 1:
+            context.story_skeleton = await self._build_story_skeleton(
+                project.id, chapter_number, db
+            )
+            if context.story_skeleton:
+                logger.info(f"  ✅ 故事骨架: {len(context.story_skeleton)}字符")
+
         # === 统计信息 ===
         context.context_stats = {
             "mode": "one-to-many",
@@ -785,6 +795,7 @@ class OneToManyContextBuilder:
             "recent_context_length": len(context.recent_chapters_context or ""),
             "memories_length": len(context.relevant_memories or ""),
             "foreshadow_length": len(context.foreshadow_reminders or ""),
+            "skeleton_length": len(context.story_skeleton or ""),
             "total_length": context.get_total_context_length()
         }
         
@@ -1560,7 +1571,7 @@ class OneToManyContextBuilder:
                     summary = summary_result.scalar_one_or_none()
                     
                     if summary:
-                        skeleton_lines.append(f"第{ch_num}章《{ch_title}》：{summary[:100]}")
+                        skeleton_lines.append(f"第{ch_num}章《{ch_title}》：{summary[:200]}")
                     else:
                         skeleton_lines.append(f"第{ch_num}章《{ch_title}》")
             

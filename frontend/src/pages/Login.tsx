@@ -7,6 +7,7 @@ import {
   Grid,
   Input,
   Layout,
+  Modal,
   Tabs,
   Typography,
   message,
@@ -137,8 +138,35 @@ export default function Login() {
         email: values.email?.trim() || undefined,
       });
       if (response.success) {
-        message.success(response.message || '注册成功，已自动登录');
-        handleLoginSuccess();
+        // 有赠送信息时弹 Modal 显示额度和约字数
+        const giftInfo = (response as any).gift_info;
+        if (giftInfo && giftInfo.quota) {
+          const estWords = giftInfo.estimated_words || 0;
+          const estWordsStr = estWords >= 10000
+            ? `${(estWords / 10000).toFixed(1)} 万字`
+            : `${estWords} 字`;
+          Modal.success({
+            title: '🎉 注册成功',
+            content: (
+              <div style={{ fontSize: 14, lineHeight: 1.8 }}>
+                <p style={{ marginBottom: 8 }}>
+                  欢迎加入墨笔！已为你赠送写作额度：
+                </p>
+                <p style={{ marginBottom: 8, fontSize: 20, color: '#52c41a', fontWeight: 600 }}>
+                  ${giftInfo.quota} 写作额度
+                </p>
+                <p style={{ marginBottom: 0, color: token.colorTextSecondary }}>
+                  约可生成 <strong>{estWordsStr}</strong> 内容（按 deepseek-v4-pro 估算）
+                </p>
+              </div>
+            ),
+            okText: '开始创作',
+            onOk: () => handleLoginSuccess(),
+          });
+        } else {
+          message.success(response.message || '注册成功，已自动登录');
+          handleLoginSuccess();
+        }
       }
     } catch (error: any) {
       console.error('New API 注册失败:', error);
@@ -148,6 +176,8 @@ export default function Login() {
         message.error('网络错误');
       } else if (status === 409 || (typeof errDetail === 'string' && errDetail.includes('已存在'))) {
         message.error('账号已存在');
+      } else if (status === 429 && typeof errDetail === 'string') {
+        message.error(errDetail);  // IP 注册限制
       } else if (typeof errDetail === 'string' && errDetail) {
         message.error(errDetail);
       } else {
@@ -315,7 +345,7 @@ export default function Login() {
         </Button>
       </Form.Item>
       <Paragraph style={{ marginTop: 12, marginBottom: 0, color: token.colorTextSecondary, fontSize: 12 }}>
-        注册后即可使用 New API 账号登录墨笔，初始赠送 $5 写作额度。
+        注册后即可使用 New API 账号登录墨笔，初始赠送 $1 写作额度。
       </Paragraph>
     </Form>
   );

@@ -132,7 +132,7 @@ class Settings(BaseSettings):
     EMAIL_VERIFICATION_RESEND_INTERVAL_SECONDS: int = 60
     
     # 提示词工坊配置
-    WORKSHOP_MODE: str = "client"  # client: 本地部署实例, server: 云端中央服务器
+    WORKSHOP_MODE: str = "server"  # server: 自建服务器（默认）, client: 连接云端的客户端
     WORKSHOP_CLOUD_URL: str = ""  # 云端服务地址
     WORKSHOP_API_TIMEOUT: int = 30  # 云端API请求超时时间（秒）
 
@@ -143,8 +143,8 @@ class Settings(BaseSettings):
     NEW_API_BASE_URL: str = "http://new-api:3000"
     # Root Admin Token（⚠️ 用户需提供）
     NEW_API_ROOT_TOKEN: Optional[str] = None
-    # 注册赠送额度（$5，New API quota 字段直接以美元计价）
-    NEW_API_GIFT_QUOTA: float = 5
+    # 注册赠送额度（$1，New API quota 字段直接以美元计价）
+    NEW_API_GIFT_QUOTA: float = 1
     # 新用户分组
     NEW_API_DEFAULT_GROUP: str = "default"
     # Admin API 超时秒数
@@ -157,6 +157,8 @@ class Settings(BaseSettings):
     NEW_API_USD_CNY_RATE: float = 7.2
     # New API 角色映射为墨笔管理员的角色列表（逗号分隔，10=admin, 100=root）
     NEW_API_ADMIN_ROLES: str = "10,100"
+    # 注册 IP 限制：同一 IP 最多可注册的用户数量（0 表示不限制）
+    REGISTER_IP_LIMIT: int = 2
 
     class Config:
         env_file = ".env"

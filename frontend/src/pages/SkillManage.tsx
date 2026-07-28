@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Button, Table, Modal, Form, Input, Tag, Space, message, Popconfirm, Card, theme, Empty, Badge, Tooltip, Select, Switch, Typography } from 'antd';
 import type { FormInstance } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined, ThunderboltOutlined, FileTextOutlined, SearchOutlined, InfoCircleOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined, ThunderboltOutlined, FileTextOutlined, SearchOutlined, InfoCircleOutlined, UndoOutlined } from '@ant-design/icons';
 
 const { TextArea } = Input;
 const { Text } = Typography;
@@ -14,6 +14,11 @@ interface SkillItem {
   category: string;
   description: string;
   triggers: string[];
+  is_system_default: boolean;
+  is_custom: boolean;
+  can_edit: boolean;
+  can_delete: boolean;
+  can_reset: boolean;
 }
 
 interface SkillDetail {
@@ -27,6 +32,10 @@ interface SkillDetail {
   body: string;
   raw_content: string;
   standalone_references: Record<string, string>;
+  is_system_default?: boolean;
+  is_custom?: boolean;
+  skill_type?: string;
+  writing_constraints?: string;
 }
 
 const SKILL_CATEGORY_OPTIONS = [
@@ -405,6 +414,22 @@ export default function SkillManage() {
     }
   };
 
+  // 重置 Skill（删除个人副本，回退系统默认）
+  const handleReset = async (skillKey: string) => {
+    try {
+      const response = await fetch(`/api/skills/reset/${skillKey}`, { method: 'POST' });
+      if (response.ok) {
+        message.success('已重置为系统默认');
+        loadSkills();
+      } else {
+        const err = await response.json();
+        message.error(err.detail || '重置失败');
+      }
+    } catch {
+      message.error('重置失败');
+    }
+  };
+
   const filteredSkills = useMemo(() => {
     let list = skills;
 
@@ -432,20 +457,32 @@ export default function SkillManage() {
       title: '名称',
       dataIndex: 'display_name',
       key: 'display_name',
-      width: 220,
+      width: 240,
       ellipsis: true,
-      render: (text: string, record: SkillItem) => (
-        <div style={{ minWidth: 0 }}>
-          <Tooltip title={text}>
-            <strong style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{text}</strong>
-          </Tooltip>
-          <Tooltip title={record.name || record.template_key}>
-            <span style={{ display: 'block', marginTop: 2, color: token.colorTextTertiary, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {record.name || record.template_key}
-            </span>
-          </Tooltip>
-        </div>
-      ),
+      render: (text: string, record: SkillItem) => {
+        // 状态标签：系统 / 副本 / 个人
+        const statusTag = record.is_system_default ? (
+          <Tag color="blue" style={{ fontSize: 10, marginLeft: 4 }}>系统</Tag>
+        ) : record.is_custom ? (
+          <Tag color="gold" style={{ fontSize: 10, marginLeft: 4 }}>个人</Tag>
+        ) : (
+          <Tag color="green" style={{ fontSize: 10, marginLeft: 4 }}>副本</Tag>
+        );
+        return (
+          <div style={{ minWidth: 0 }}>
+            <Tooltip title={text}>
+              <strong style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {text}{statusTag}
+              </strong>
+            </Tooltip>
+            <Tooltip title={record.name || record.template_key}>
+              <span style={{ display: 'block', marginTop: 2, color: token.colorTextTertiary, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {record.name || record.template_key}
+              </span>
+            </Tooltip>
+          </div>
+        );
+      },
     },
     {
       title: '分类',
@@ -504,7 +541,7 @@ export default function SkillManage() {
     {
       title: '操作',
       key: 'actions',
-      width: 200,
+      width: 240,
       render: (_: unknown, record: SkillItem) => (
         <Space>
           <Button
@@ -523,18 +560,37 @@ export default function SkillManage() {
           >
             编辑
           </Button>
-          <Popconfirm
-            title="确定删除此 Skill？"
-            description="删除后无法恢复，相关文件将被永久删除。"
-            onConfirm={() => handleDelete(record.template_key)}
-            okText="删除"
-            cancelText="取消"
-            okButtonProps={{ danger: true }}
-          >
-            <Button type="text" danger icon={<DeleteOutlined />} size="small">
-              删除
-            </Button>
-          </Popconfirm>
+          {record.can_reset && (
+            <Popconfirm
+              title="确定重置此 Skill？"
+              description="将删除您的个人副本，回退到系统默认版本。"
+              onConfirm={() => handleReset(record.template_key)}
+              okText="重置"
+              cancelText="取消"
+            >
+              <Button type="text" icon={<UndoOutlined />} size="small">
+                重置
+              </Button>
+            </Popconfirm>
+          )}
+          {record.can_delete && (
+            <Popconfirm
+              title={record.is_system_default ? "确定删除此系统预置 Skill？" : "确定删除此 Skill？"}
+              description={record.is_system_default
+                ? "删除后所有用户将不再看到此 Skill，相关文件将被永久删除。"
+                : record.is_custom
+                ? "删除后此个人 Skill 将不再可见。"
+                : "删除个人副本后，将回退到系统默认版本。"}
+              onConfirm={() => handleDelete(record.template_key)}
+              okText="删除"
+              cancelText="取消"
+              okButtonProps={{ danger: true }}
+            >
+              <Button type="text" danger icon={<DeleteOutlined />} size="small">
+                删除
+              </Button>
+            </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -558,7 +614,7 @@ export default function SkillManage() {
             <Badge count={skills.length} style={{ marginLeft: 8, backgroundColor: token.colorPrimary }} />
           </h2>
           <div style={{ fontSize: 12, color: token.colorTextSecondary, marginTop: 4 }}>
-            在线管理 Skill 工作流，添加、编辑或删除
+            在线管理 Skill 工作流。系统预置 Skill 编辑后会创建个人副本，不影响其他用户。
           </div>
         </div>
         <Space wrap>
@@ -658,7 +714,7 @@ export default function SkillManage() {
 
       {/* 编辑 Skill 弹窗 */}
       <Modal
-        title="编辑 Skill"
+        title={editingSkill?.is_system_default ? "编辑系统预置 Skill（将创建个人副本）" : "编辑 Skill"}
         open={editModalVisible}
         onCancel={() => setEditModalVisible(false)}
         width={900}
@@ -672,6 +728,20 @@ export default function SkillManage() {
         destroyOnClose
       >
         <Form form={editForm} layout="vertical">
+          {editingSkill?.is_system_default && (
+            <div style={{
+              background: token.colorInfoBg,
+              border: `1px solid ${token.colorInfoBorder}`,
+              borderRadius: 6,
+              padding: '8px 12px',
+              marginBottom: 16,
+              fontSize: 12,
+              color: token.colorInfoText,
+            }}>
+              <InfoCircleOutlined style={{ marginRight: 6 }} />
+              这是系统预置 Skill。保存后将创建您的个人副本，原版仍对所有用户可见，您的修改仅影响自己。
+            </div>
+          )}
           <Form.Item label="内部标识" name="name" tooltip="来自 SKILL.md 的 name 字段，编辑时不支持修改">
             <Input disabled />
           </Form.Item>

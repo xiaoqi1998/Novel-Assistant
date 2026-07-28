@@ -5,7 +5,7 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 import json
 import asyncio
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from asyncio import Queue, Lock
 
@@ -1438,6 +1438,9 @@ async def generate_chapter_content_stream(
     custom_model = generate_request.model if hasattr(generate_request, 'model') else None
     temp_narrative_perspective = generate_request.narrative_perspective if hasattr(generate_request, 'narrative_perspective') else None
     skill_key = generate_request.skill_key if hasattr(generate_request, 'skill_key') else None
+    # 兼容旧版 skill_key/skill_keys：统一为 writing_skill_key + auxiliary_skill_keys
+    auxiliary_skill_keys = list(generate_request.auxiliary_skill_keys) if hasattr(generate_request, 'auxiliary_skill_keys') and generate_request.auxiliary_skill_keys else []
+    writing_skill_key = skill_key  # 创作类 Skill（单选）
     # 预先验证章节存在性（使用临时会话）
     async for temp_db in get_db(request):
         try:
@@ -1471,9 +1474,9 @@ async def generate_chapter_content_stream(
         break
     
     async def event_generator():
-        # 声明 nonlocal：event_generator 内部会为 skill_key 赋默认值（line ~1759），
+        # 声明 nonlocal：event_generator 内部会为 writing_skill_key/auxiliary_skill_keys 赋默认值，
         # 若不声明 nonlocal，Python 会将其视为局部变量，导致读取时 UnboundLocalError
-        nonlocal skill_key
+        nonlocal writing_skill_key, auxiliary_skill_keys
         # 在生成器内部创建独立的数据库会话
         db_session = None
         db_committed = False
@@ -1710,7 +1713,8 @@ async def generate_chapter_content_stream(
                             previous_chapter_summary=previous_summary,
                             recent_chapters_context=chapter_context.recent_chapters_context or '',
                             relevant_memories=chapter_context.relevant_memories or '',
-                            quality_feedback=chapter_context.quality_feedback or ''
+                            quality_feedback=chapter_context.quality_feedback or '',
+                            story_skeleton=chapter_context.story_skeleton or ''
                         )
                         logger.debug(f"创建第{current_chapter.chapter_number}章提示词完成: prompt_length={len(base_prompt)}")
                     else:
@@ -1754,43 +1758,62 @@ async def generate_chapter_content_stream(
                 # 🎨 方案一：将写作风格注入到系统提示词（最高优先级）
                 system_prompt_with_style = None
 
-                # 🎯 默认 Skill：用户未指定时自动启用长篇写作教练
-                if not skill_key:
+                # 🎯 默认创作 Skill：用户未指定时自动启用长篇写作教练
+                # 按用户隔离：基于当前用户的可见 Skill 列表查找（含个人副本）
+                if not writing_skill_key:
                     try:
-                        from app.services.skill_loader import get_all_skills_cached
-                        _skills = get_all_skills_cached()
-                        _default_skill = next((s for s in _skills if s["template_key"] == "story-long-write"), None)
+                        from app.services.skill_loader import get_all_skills_for_user
+                        _skills = await get_all_skills_for_user(current_user_id, db_session)
+                        _default_skill = next((s for s in _skills if s["name"] == "story-long-write"), None)
                         if _default_skill:
-                            skill_key = "story-long-write"
-                            logger.info(f"🎯 未指定 Skill,自动启用默认写作教练: story-long-write")
+                            writing_skill_key = _default_skill["template_key"]
+                            logger.info(f"🎯 未指定创作 Skill,自动启用默认写作教练: story-long-write (key={writing_skill_key})")
                     except Exception as e:
                         logger.warning(f"⚠️ 加载默认 Skill 失败: {e}")
 
-                # ⚡ Skill 支持：当指定 skill_key 时，将 Skill 工作流注入系统提示词
-                if skill_key:
-                    try:
-                        from app.services.skill_loader import get_all_skills_cached
-                        skills = get_all_skills_cached()
-                        skill = next((s for s in skills if s["template_key"] == skill_key), None)
+                # ⚡ Skill 注入：创作类（完整工作流）+ 辅助类（只注入写作约束）
+                # 按用户隔离：使用当前用户的可见 Skill 列表（含个人副本/自建）
+                try:
+                    from app.services.skill_loader import get_all_skills_for_user
+                    skills = await get_all_skills_for_user(current_user_id, db_session)
+                    skill_sections = []
+
+                    # 创作类 Skill：注入完整 body（工作流指令）
+                    if writing_skill_key:
+                        skill = next((s for s in skills if s["template_key"] == writing_skill_key), None)
                         if skill:
-                            skill_content = skill["content"]
+                            skill_content = skill.get("body") or skill["content"]
                             skill_name = skill["template_name"]
-                            system_prompt_with_style = f"""【⚡ Skill 工作流：{skill_name}】
+                            skill_sections.append(f"【⚡ Skill 工作流：{skill_name}】\n\n{skill_content}")
+                            logger.info(f"⚡ 已将创作 Skill '{skill_name}' 注入系统提示词（{len(skill_content)}字符）")
+                        else:
+                            logger.warning(f"⚠️ 未找到创作 Skill: {writing_skill_key}")
 
-{skill_content}
+                    # 辅助类 Skill：只注入 writing_constraints（精简约束）
+                    for aux_key in (auxiliary_skill_keys or []):
+                        skill = next((s for s in skills if s["template_key"] == aux_key), None)
+                        if skill:
+                            constraints = skill.get("writing_constraints", "")
+                            if constraints:
+                                skill_name = skill["template_name"]
+                                skill_sections.append(f"【🔧 写作约束：{skill_name}】\n\n{constraints}")
+                                logger.info(f"🔧 已将辅助 Skill '{skill_name}' 写作约束注入系统提示词（{len(constraints)}字符）")
+                            else:
+                                logger.warning(f"⚠️ 辅助 Skill '{skill['name']}' 无 writing_constraints 字段，跳过")
+                        else:
+                            logger.warning(f"⚠️ 未找到辅助 Skill: {aux_key}")
 
-⚠️ 请严格遵循上述 Skill 工作流指令进行创作！"""
-                            if style_content:
-                                system_prompt_with_style += f"""
+                    if skill_sections:
+                        system_prompt_with_style = "\n\n".join(skill_sections)
+                        system_prompt_with_style += "\n\n⚠️ 请严格遵循上述所有 Skill 工作流指令和写作约束进行创作！"
+                        if style_content:
+                            system_prompt_with_style += f"""
 
 【🎨 写作风格要求 - 补充】
 
 {style_content}"""
-                            logger.info(f"⚡ 已将 Skill '{skill_name}' 注入系统提示词（{len(skill_content)}字符）")
-                        else:
-                            logger.warning(f"⚠️ 未找到 Skill: {skill_key}")
-                    except Exception as skill_err:
-                        logger.warning(f"⚠️ 加载 Skill 失败: {skill_err}")
+                except Exception as skill_err:
+                    logger.warning(f"⚠️ 加载 Skill 失败: {skill_err}")
                 
                 if not system_prompt_with_style and style_content:
                     system_prompt_with_style = f"""【🎨 写作风格要求 - 最高优先级】
@@ -2049,6 +2072,8 @@ async def generate_chapter_content_background(
             "model": generate_request.model,
             "narrative_perspective": generate_request.narrative_perspective,
             "skill_key": generate_request.skill_key,
+            "writing_skill_key": writing_skill_key,
+            "auxiliary_skill_keys": auxiliary_skill_keys,
         },
         db=db
     )
@@ -2292,7 +2317,8 @@ async def _run_chapter_generation_bg(
                 previous_chapter_summary=previous_summary,
                 recent_chapters_context=chapter_context.recent_chapters_context or '',
                 relevant_memories=chapter_context.relevant_memories or '',
-                quality_feedback=chapter_context.quality_feedback or ''
+                quality_feedback=chapter_context.quality_feedback or '',
+                story_skeleton=chapter_context.story_skeleton or ''
             )
         else:
             template = await PromptService.get_template("CHAPTER_GENERATION_ONE_TO_MANY", user_id, db)
@@ -2645,6 +2671,8 @@ async def _run_chapter_generation_bg(
     temp_narrative_perspective = task_input.get("narrative_perspective")
     enable_mcp = task_input.get("enable_mcp", True)
     skill_key = task_input.get("skill_key")
+    writing_skill_key = task_input.get("writing_skill_key") or skill_key
+    auxiliary_skill_keys = task_input.get("auxiliary_skill_keys", [])
     write_lock = await get_db_write_lock(user_id)
 
     # === 加载阶段 ===
@@ -2811,7 +2839,8 @@ async def _run_chapter_generation_bg(
                 previous_chapter_summary=previous_summary,
                 recent_chapters_context=chapter_context.recent_chapters_context or '',
                 relevant_memories=chapter_context.relevant_memories or '',
-                quality_feedback=chapter_context.quality_feedback or ''
+                quality_feedback=chapter_context.quality_feedback or '',
+                story_skeleton=chapter_context.story_skeleton or ''
             )
         else:
             template = await PromptService.get_template("CHAPTER_GENERATION_ONE_TO_MANY", user_id, db)
@@ -2848,42 +2877,59 @@ async def _run_chapter_generation_bg(
 
     system_prompt_with_style = None
 
-    # 🎯 默认 Skill：用户未指定时自动启用长篇写作教练
-    if not skill_key:
+    # 🎯 默认创作 Skill：用户未指定时自动启用长篇写作教练
+    # 按用户隔离：基于当前用户的可见 Skill 列表查找（含个人副本）
+    if not writing_skill_key:
         try:
-            from app.services.skill_loader import get_all_skills_cached
-            _skills = get_all_skills_cached()
-            _default_skill = next((s for s in _skills if s["template_key"] == "story-long-write"), None)
+            from app.services.skill_loader import get_all_skills_for_user
+            _skills = await get_all_skills_for_user(user_id, db)
+            _default_skill = next((s for s in _skills if s["name"] == "story-long-write"), None)
             if _default_skill:
-                skill_key = "story-long-write"
-                logger.info(f"🎯 未指定 Skill,自动启用默认写作教练: story-long-write")
+                writing_skill_key = _default_skill["template_key"]
+                logger.info(f"🎯 后台生成 - 未指定创作 Skill,自动启用默认写作教练: story-long-write (key={writing_skill_key})")
         except Exception as e:
             logger.warning(f"⚠️ 加载默认 Skill 失败: {e}")
 
-    if skill_key:
-        try:
-            from app.services.skill_loader import get_all_skills_cached
-            skills = get_all_skills_cached()
-            skill = next((s for s in skills if s["template_key"] == skill_key), None)
+    # ⚡ Skill 注入：创作类（完整工作流）+ 辅助类（只注入写作约束）
+    try:
+        from app.services.skill_loader import get_all_skills_for_user
+        skills = await get_all_skills_for_user(user_id, db)
+        skill_sections = []
+
+        if writing_skill_key:
+            skill = next((s for s in skills if s["template_key"] == writing_skill_key), None)
             if skill:
-                skill_content = skill["content"]
+                skill_content = skill.get("body") or skill["content"]
                 skill_name = skill["template_name"]
-                system_prompt_with_style = f"""【⚡ Skill 工作流：{skill_name}】
+                skill_sections.append(f"【⚡ Skill 工作流：{skill_name}】\n\n{skill_content}")
+                logger.info(f"⚡ 后台生成 - 已将创作 Skill '{skill_name}' 注入系统提示词（{len(skill_content)}字符）")
+            else:
+                logger.warning(f"⚠️ 后台生成 - 未找到创作 Skill: {writing_skill_key}")
 
-{skill_content}
+        for aux_key in (auxiliary_skill_keys or []):
+            skill = next((s for s in skills if s["template_key"] == aux_key), None)
+            if skill:
+                constraints = skill.get("writing_constraints", "")
+                if constraints:
+                    skill_name = skill["template_name"]
+                    skill_sections.append(f"【🔧 写作约束：{skill_name}】\n\n{constraints}")
+                    logger.info(f"🔧 后台生成 - 已将辅助 Skill '{skill_name}' 写作约束注入系统提示词（{len(constraints)}字符）")
+                else:
+                    logger.warning(f"⚠️ 后台生成 - 辅助 Skill '{skill['name']}' 无 writing_constraints 字段，跳过")
+            else:
+                logger.warning(f"⚠️ 后台生成 - 未找到辅助 Skill: {aux_key}")
 
-⚠️ 请严格遵循上述 Skill 工作流指令进行创作！"""
-                if style_content:
-                    system_prompt_with_style += f"""
+        if skill_sections:
+            system_prompt_with_style = "\n\n".join(skill_sections)
+            system_prompt_with_style += "\n\n⚠️ 请严格遵循上述所有 Skill 工作流指令和写作约束进行创作！"
+            if style_content:
+                system_prompt_with_style += f"""
 
 【🎨 写作风格要求 - 补充】
 
 {style_content}"""
-                logger.info(f"⚡ 后台生成 - 已将 Skill '{skill_name}' 注入系统提示词（{len(skill_content)}字符）")
-            else:
-                logger.warning(f"⚠️ 后台生成 - 未找到 Skill: {skill_key}")
-        except Exception as skill_err:
-            logger.warning(f"⚠️ 后台生成 - 加载 Skill 失败: {skill_err}")
+    except Exception as skill_err:
+        logger.warning(f"⚠️ 后台生成 - 加载 Skill 失败: {skill_err}")
 
     if not system_prompt_with_style and style_content:
         system_prompt_with_style = f"""【🎨 写作风格要求 - 最高优先级】
@@ -3794,14 +3840,18 @@ async def batch_generate_chapters_in_order(
     
     logger.info(f"📦 创建批量生成任务: {batch_id}, 章节: 第{start_number}-{end_number}章, 预估耗时: {estimated_time}分钟")
     
-    # 启动后台批量生成任务，传递model参数和skill_key
+    # 启动后台批量生成任务，传递model参数和skill参数
+    _batch_writing_skill_key = batch_request.skill_key
+    _batch_auxiliary_skill_keys = list(batch_request.auxiliary_skill_keys) if batch_request.auxiliary_skill_keys else []
+
     background_tasks.add_task(
         execute_batch_generation_in_order,
         batch_id=batch_id,
         user_id=user_id,
         ai_service=user_ai_service,
         custom_model=batch_request.model,
-        skill_key=batch_request.skill_key,
+        writing_skill_key=_batch_writing_skill_key,
+        auxiliary_skill_keys=_batch_auxiliary_skill_keys,
         enable_mcp=batch_request.enable_mcp,
         narrative_perspective=batch_request.narrative_perspective
     )
@@ -3951,7 +4001,8 @@ async def execute_batch_generation_in_order(
     user_id: str,
     ai_service: AIService,
     custom_model: Optional[str] = None,
-    skill_key: Optional[str] = None,
+    writing_skill_key: Optional[str] = None,
+    auxiliary_skill_keys: Optional[List[str]] = None,
     enable_mcp: bool = True,
     narrative_perspective: Optional[str] = None
 ):
@@ -4074,7 +4125,8 @@ async def execute_batch_generation_in_order(
                         write_lock=write_lock,
                         custom_model=custom_model,
                         previous_summary_context=last_generated_summary,
-                        skill_key=skill_key,
+                        writing_skill_key=writing_skill_key,
+                        auxiliary_skill_keys=auxiliary_skill_keys,
                         batch_id=batch_id,
                         enable_mcp=enable_mcp,
                         temp_narrative_perspective=narrative_perspective
@@ -4248,7 +4300,8 @@ async def generate_single_chapter_for_batch(
     write_lock: Lock,
     custom_model: Optional[str] = None,
     previous_summary_context: Optional[str] = None,
-    skill_key: Optional[str] = None,
+    writing_skill_key: Optional[str] = None,
+    auxiliary_skill_keys: Optional[List[str]] = None,
     batch_id: Optional[str] = None,
     enable_mcp: bool = True,
     temp_narrative_perspective: Optional[str] = None
@@ -4430,7 +4483,8 @@ async def generate_single_chapter_for_batch(
                 previous_chapter_summary=final_prev_summary,
                 recent_chapters_context=chapter_context.recent_chapters_context or '',
                 relevant_memories=chapter_context.relevant_memories or '',
-                quality_feedback=chapter_context.quality_feedback or ''
+                quality_feedback=chapter_context.quality_feedback or '',
+                story_skeleton=chapter_context.story_skeleton or ''
             )
         else:
             # 第一章，使用无前置内容模板
@@ -4466,43 +4520,59 @@ async def generate_single_chapter_for_batch(
     # 🎨 将 Skill / 写作风格注入到系统提示词（批量生成）
     system_prompt_with_style = None
 
-    # 🎯 默认 Skill：用户未指定时自动启用长篇写作教练
-    if not skill_key:
+    # 🎯 默认创作 Skill：用户未指定时自动启用长篇写作教练
+    # 按用户隔离：基于当前用户的可见 Skill 列表查找（含个人副本）
+    if not writing_skill_key:
         try:
-            from app.services.skill_loader import get_all_skills_cached
-            _skills = get_all_skills_cached()
-            _default_skill = next((s for s in _skills if s["template_key"] == "story-long-write"), None)
+            from app.services.skill_loader import get_all_skills_for_user
+            _skills = await get_all_skills_for_user(user_id, db_session)
+            _default_skill = next((s for s in _skills if s["name"] == "story-long-write"), None)
             if _default_skill:
-                skill_key = "story-long-write"
-                logger.info(f"🎯 未指定 Skill,自动启用默认写作教练: story-long-write")
+                writing_skill_key = _default_skill["template_key"]
+                logger.info(f"🎯 批量生成 - 未指定创作 Skill,自动启用默认写作教练: story-long-write (key={writing_skill_key})")
         except Exception as e:
             logger.warning(f"⚠️ 加载默认 Skill 失败: {e}")
 
-    # ⚡ Skill 支持
-    if skill_key:
-        try:
-            from app.services.skill_loader import get_all_skills_cached
-            skills = get_all_skills_cached()
-            skill = next((s for s in skills if s["template_key"] == skill_key), None)
+    # ⚡ Skill 注入：创作类（完整工作流）+ 辅助类（只注入写作约束）
+    try:
+        from app.services.skill_loader import get_all_skills_for_user
+        skills = await get_all_skills_for_user(user_id, db_session)
+        skill_sections = []
+
+        if writing_skill_key:
+            skill = next((s for s in skills if s["template_key"] == writing_skill_key), None)
             if skill:
-                skill_content = skill["content"]
+                skill_content = skill.get("body") or skill["content"]
                 skill_name = skill["template_name"]
-                system_prompt_with_style = f"""【⚡ Skill 工作流：{skill_name}】
+                skill_sections.append(f"【⚡ Skill 工作流：{skill_name}】\n\n{skill_content}")
+                logger.info(f"⚡ 批量生成 - 已将创作 Skill '{skill_name}' 注入系统提示词（{len(skill_content)}字符）")
+            else:
+                logger.warning(f"⚠️ 批量生成 - 未找到创作 Skill: {writing_skill_key}")
 
-{skill_content}
+        for aux_key in (auxiliary_skill_keys or []):
+            skill = next((s for s in skills if s["template_key"] == aux_key), None)
+            if skill:
+                constraints = skill.get("writing_constraints", "")
+                if constraints:
+                    skill_name = skill["template_name"]
+                    skill_sections.append(f"【🔧 写作约束：{skill_name}】\n\n{constraints}")
+                    logger.info(f"🔧 批量生成 - 已将辅助 Skill '{skill_name}' 写作约束注入系统提示词（{len(constraints)}字符）")
+                else:
+                    logger.warning(f"⚠️ 批量生成 - 辅助 Skill '{skill['name']}' 无 writing_constraints 字段，跳过")
+            else:
+                logger.warning(f"⚠️ 批量生成 - 未找到辅助 Skill: {aux_key}")
 
-⚠️ 请严格遵循上述 Skill 工作流指令进行创作！"""
-                if style_content:
-                    system_prompt_with_style += f"""
+        if skill_sections:
+            system_prompt_with_style = "\n\n".join(skill_sections)
+            system_prompt_with_style += "\n\n⚠️ 请严格遵循上述所有 Skill 工作流指令和写作约束进行创作！"
+            if style_content:
+                system_prompt_with_style += f"""
 
 【🎨 写作风格要求 - 补充】
 
 {style_content}"""
-                logger.info(f"⚡ 批量生成 - 已将 Skill '{skill_name}' 注入系统提示词（{len(skill_content)}字符）")
-            else:
-                logger.warning(f"⚠️ 批量生成 - 未找到 Skill: {skill_key}")
-        except Exception as skill_err:
-            logger.warning(f"⚠️ 批量生成 - 加载 Skill 失败: {skill_err}")
+    except Exception as skill_err:
+        logger.warning(f"⚠️ 批量生成 - 加载 Skill 失败: {skill_err}")
 
     if not system_prompt_with_style and style_content:
         system_prompt_with_style = f"""【🎨 写作风格要求 - 最高优先级】

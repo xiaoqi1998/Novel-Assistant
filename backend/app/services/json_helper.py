@@ -361,6 +361,107 @@ def _fix_multiple_objects_as_value(text: str) -> str:
     return text
 
 
+def _truncate_and_close(text: str) -> str:
+    """
+    截断 JSON 到最后一个合法元素边界，并自动补全闭合括号。
+
+    当 AI 输出被截断（流式超时、token 耗尽）或 JSON 中间部分损坏时，
+    逐步从后往前找到可以截断的位置，丢弃损坏的尾部，补全闭合括号。
+
+    策略：
+    1. 从后往前扫描，找到最后一个 , 或 : 的位置（这些是元素分隔符）
+    2. 截断到该位置之前（丢弃不完整的元素）
+    3. 补全未闭合的括号和字符串
+    """
+    if not text:
+        return text
+
+    # 先尝试找到最后一个合法的截断点
+    # 合法截断点：字符串值结束后的逗号、数组/对象元素结束后的逗号
+    # 从后往前找，跳过空白和尾部垃圾
+
+    best_result = text  # 默认不截断
+
+    # 从后往前逐步尝试截断
+    # 找所有可能的截断位置：逗号后紧跟 { 或 " 或 [ 或数字
+    # 或 逗号后换行
+    truncate_positions = []
+
+    for i in range(len(text) - 1, 0, -1):
+        c = text[i]
+        # 逗号是元素分隔符，可能是好的截断点
+        if c == ',':
+            # 检查逗号前面是否在字符串内（粗略判断）
+            # 逗号后面跳过空白后应该是下一个元素的开始
+            j = i + 1
+            while j < len(text) and text[j] in ' \t\n\r':
+                j += 1
+            if j < len(text) and text[j] in ('"', '{', '[', 't', 'f', 'n') or text[j].isdigit() or text[j] == '-':
+                # 这是一个合法的元素分隔逗号，截断到这里（保留逗号前的元素）
+                truncate_positions.append(i)
+        # 冒号后面跟值也是截断点（丢弃不完整的键值对）
+        elif c == ':':
+            j = i + 1
+            while j < len(text) and text[j] in ' \t\n\r':
+                j += 1
+            if j < len(text) and text[j] in ('"', '{', '[', 't', 'f', 'n') or text[j].isdigit() or text[j] == '-':
+                truncate_positions.append(i)
+
+    # 依次尝试每个截断位置
+    for pos in truncate_positions:
+        candidate = text[:pos]  # 截断到逗号/冒号之前
+
+        # 重新计算栈状态
+        stack = []
+        in_string = False
+        k = 0
+        while k < len(candidate):
+            ch = candidate[k]
+            if ch == '"':
+                if not in_string:
+                    in_string = True
+                else:
+                    num_bs = 0
+                    m = k - 1
+                    while m >= 0 and candidate[m] == '\\':
+                        num_bs += 1
+                        m -= 1
+                    if num_bs % 2 == 0:
+                        in_string = False
+                k += 1
+                continue
+            if in_string:
+                k += 1
+                continue
+            if ch in ('{', '['):
+                stack.append(ch)
+            elif ch == '}' and stack and stack[-1] == '{':
+                stack.pop()
+            elif ch == ']' and stack and stack[-1] == '[':
+                stack.pop()
+            k += 1
+
+        # 闭合未闭合的字符串
+        if in_string:
+            candidate += '"'
+
+        # 补全未闭合的括号
+        close_map = {'{': '}', '[': ']'}
+        for opener in reversed(stack):
+            candidate += close_map[opener]
+
+        # 尝试解析
+        try:
+            json.loads(candidate)
+            logger.info(f"✅ 截断修复成功：截断到位置 {pos}，丢弃了 {len(text) - pos} 个尾部字符")
+            return candidate
+        except json.JSONDecodeError:
+            continue
+
+    # 所有截断位置都失败，返回原文
+    return best_result
+
+
 def clean_json_response(text: str) -> str:
     """清洗 AI 返回的 JSON（改进版 - 流式安全）"""
     try:
@@ -408,15 +509,17 @@ def clean_json_response(text: str) -> str:
             logger.debug(f"   跳过前{start}个字符")
             text = text[start:]
         
-        # 改进的括号匹配算法（更严格的字符串处理）
+        # 改进的括号匹配算法（更严格的字符串处理 + 不匹配修复 + 自动补全）
         stack = []
         i = 0
         end = -1
         in_string = False
-        
+        # 记录需要插入的闭合括号（用于修复不匹配的括号）
+        insertions = []  # [(position, char)]
+
         while i < len(text):
             c = text[i]
-            
+
             # 处理字符串状态
             if c == '"':
                 if not in_string:
@@ -429,19 +532,19 @@ def clean_json_response(text: str) -> str:
                     while j >= 0 and text[j] == '\\':
                         num_backslashes += 1
                         j -= 1
-                    
+
                     # 偶数个反斜杠表示引号未被转义，字符串结束
                     if num_backslashes % 2 == 0:
                         in_string = False
-                
+
                 i += 1
                 continue
-            
+
             # 在字符串内部，跳过所有字符
             if in_string:
                 i += 1
                 continue
-            
+
             # 处理括号（只有在字符串外部才有效）
             if c == '{' or c == '[':
                 stack.append(c)
@@ -453,8 +556,23 @@ def clean_json_response(text: str) -> str:
                         logger.debug(f"✅ 找到JSON结束位置: {end}")
                         break
                 elif len(stack) > 0:
-                    # 括号不匹配，可能是损坏的JSON，尝试继续
-                    logger.warning(f"⚠️ 括号不匹配：遇到 }} 但栈顶是 {stack[-1]}")
+                    # 括号不匹配：栈顶是 [ 但遇到了 }
+                    # 尝试修复：先闭合栈顶的 [ → ]，然后匹配当前的 }
+                    logger.warning(f"⚠️ 括号不匹配：遇到 }} 但栈顶是 {stack[-1]}，尝试修复")
+                    # 在当前位置前插入 ] 来闭合栈顶的 [
+                    if stack[-1] == '[':
+                        insertions.append((i, ']'))
+                        stack.pop()
+                        # 现在栈顶可能是 {，再次检查
+                        if len(stack) > 0 and stack[-1] == '{':
+                            stack.pop()
+                            if len(stack) == 0:
+                                # 需要同时插入 ] 和 }
+                                end = i + 1  # 原来的 } 还在
+                                break
+                        # 否则继续扫描
+                    else:
+                        logger.warning(f"⚠️ 无法修复的括号不匹配，跳过此 }}")
                 else:
                     # 栈为空遇到 }，忽略多余的闭合括号
                     logger.warning(f"⚠️ 遇到多余的 }}，忽略")
@@ -466,26 +584,64 @@ def clean_json_response(text: str) -> str:
                         logger.debug(f"✅ 找到JSON结束位置: {end}")
                         break
                 elif len(stack) > 0:
-                    # 括号不匹配，可能是损坏的JSON，尝试继续
-                    logger.warning(f"⚠️ 括号不匹配：遇到 ] 但栈顶是 {stack[-1]}")
+                    # 括号不匹配：栈顶是 { 但遇到了 ]
+                    # 尝试修复：先闭合栈顶的 { → }，然后匹配当前的 ]
+                    logger.warning(f"⚠️ 括号不匹配：遇到 ] 但栈顶是 {stack[-1]}，尝试修复")
+                    if stack[-1] == '{':
+                        insertions.append((i, '}'))
+                        stack.pop()
+                        if len(stack) > 0 and stack[-1] == '[':
+                            stack.pop()
+                            if len(stack) == 0:
+                                end = i + 1
+                                break
+                    else:
+                        logger.warning(f"⚠️ 无法修复的括号不匹配，跳过此 ]")
                 else:
                     # 栈为空遇到 ]，忽略多余的闭合括号
                     logger.warning(f"⚠️ 遇到多余的 ]，忽略")
-            
+
             i += 1
-        
+
         # 检查未闭合的字符串
         if in_string:
             logger.warning(f"⚠️ 字符串未闭合，JSON可能不完整")
-        
+
+        # 应用括号插入修复
+        if insertions:
+            # 从后往前插入，避免位置偏移
+            sorted_insertions = sorted(insertions, key=lambda x: x[0], reverse=True)
+            text_list = list(text)
+            for pos, char in sorted_insertions:
+                text_list.insert(pos, char)
+            text = ''.join(text_list)
+            logger.info(f"✅ 插入了{len(insertions)}个修复括号")
+
         # 提取结果
         if end > 0:
+            # 如果有插入，end 位置需要调整
+            if insertions:
+                offset = sum(1 for pos, _ in insertions if pos < end)
+                end += offset
             result = text[:end]
             logger.debug(f"✅ JSON清洗完成，结果长度: {len(result)}")
         else:
-            result = text
-            logger.warning(f"⚠️ 未找到JSON结束位置，返回全部内容（长度: {len(result)}）")
-            logger.debug(f"   栈状态: {stack}")
+            # 未找到结束位置，尝试自动补全未闭合的括号
+            if stack or in_string:
+                result = text
+                # 先闭合未闭合的字符串
+                if in_string:
+                    result += '"'
+                    logger.info(f"✅ 自动补全未闭合字符串")
+                # 从内到外补全未闭合的括号
+                close_map = {'{': '}', '[': ']'}
+                for opener in reversed(stack):
+                    result += close_map[opener]
+                logger.info(f"✅ 自动补全了{len(stack)}个未闭合括号: {''.join(close_map[o] for o in reversed(stack))}")
+                stack = []  # 栈已清空
+            else:
+                result = text
+                logger.warning(f"⚠️ 未找到JSON结束位置，返回全部内容（长度: {len(result)}）")
         
         # 验证清洗后的结果
         try:
@@ -518,9 +674,23 @@ def clean_json_response(text: str) -> str:
                     json.loads(result)
                     logger.info(f"✅ 二次修复后JSON验证成功")
                 except json.JSONDecodeError as e3:
-                    logger.error(f"❌ 所有修复后JSON仍然无效: {e3}")
-                    logger.debug(f"   结果预览: {safe_preview(result, 500)}")
-                    logger.debug(f"   结果结尾长度: {min(len(result), 200)}")
+                    # 修复4：截断到最后一个合法元素边界并补全闭合括号
+                    # 处理 AI 输出截断或中间损坏的场景
+                    logger.warning(f"⚠️ 尝试截断修复...")
+                    truncated = _truncate_and_close(result)
+                    if truncated != result:
+                        try:
+                            json.loads(truncated)
+                            logger.info(f"✅ 截断修复后JSON验证成功")
+                            result = truncated
+                        except json.JSONDecodeError as e4:
+                            logger.error(f"❌ 所有修复后JSON仍然无效: {e4}")
+                            logger.debug(f"   结果预览: {safe_preview(result, 500)}")
+                            logger.debug(f"   结果结尾长度: {min(len(result), 200)}")
+                    else:
+                        logger.error(f"❌ 所有修复后JSON仍然无效: {e3}")
+                        logger.debug(f"   结果预览: {safe_preview(result, 500)}")
+                        logger.debug(f"   结果结尾长度: {min(len(result), 200)}")
         
         return result
         

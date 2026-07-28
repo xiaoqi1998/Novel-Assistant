@@ -91,12 +91,27 @@ class ReviewConfirmRequest(BaseModel):
 
 
 def _get_skill_content() -> Optional[str]:
-    """获取 story-full-review Skill 内容"""
+    """获取 story-full-review Skill 内容（系统预置，仅用于回退）"""
     try:
         skills = get_all_skills_cached()
         for s in skills:
             if s["template_key"] == REVIEW_SKILL_KEY:
                 return s["content"]
+        logger.warning(f"未找到 Skill: {REVIEW_SKILL_KEY}")
+        return None
+    except Exception as e:
+        logger.error(f"加载 Skill 失败: {e}")
+        return None
+
+
+async def _get_skill_content_for_user(user_id: str, db: AsyncSession) -> Optional[str]:
+    """获取 story-full-review Skill 内容（按用户隔离，优先个人副本）"""
+    try:
+        from app.services.skill_loader import get_all_skills_for_user
+        skills = await get_all_skills_for_user(user_id, db)
+        for s in skills:
+            if s.get("template_key") == REVIEW_SKILL_KEY:
+                return s.get("content")
         logger.warning(f"未找到 Skill: {REVIEW_SKILL_KEY}")
         return None
     except Exception as e:
@@ -258,8 +273,8 @@ async def start_review(
     根据选择的章节范围，使用 story-full-review Skill 进行审查，
     输出详细的修改建议报告。
     """
-    # 获取 Skill 内容
-    skill_content = _get_skill_content()
+    # 获取 Skill 内容（按用户隔离，优先个人副本）
+    skill_content = await _get_skill_content_for_user(user.user_id, db)
     if not skill_content:
         async def error_gen():
             yield await SSEResponse.send_error("未找到全文审查 Skill，请检查 Skill 配置")
@@ -428,7 +443,7 @@ async def apply_modifications(
     用户确认审查报告后，AI根据报告内容对原文进行修改，
     输出修改后的文本。
     """
-    skill_content = _get_skill_content()
+    skill_content = await _get_skill_content_for_user(user.user_id, db)
     if not skill_content:
         async def error_gen():
             yield await SSEResponse.send_error("未找到全文审查 Skill")
@@ -635,7 +650,8 @@ async def start_review_background(
         raise HTTPException(status_code=401, detail="未登录")
 
     # 校验 Skill 存在（提前失败，避免排队后才发现）
-    skill_content = _get_skill_content()
+    # 按用户隔离：基于当前用户的可见 Skill 检查（含个人副本）
+    skill_content = await _get_skill_content_for_user(user_id, db)
     if not skill_content:
         raise HTTPException(status_code=500, detail="未找到全文审查 Skill，请检查 Skill 配置")
 
@@ -717,7 +733,8 @@ async def start_review_background(
                     return
 
                 # 重新获取 Skill 内容（避免使用闭包里可能过期的引用）
-                bg_skill_content = _get_skill_content()
+                # 按用户隔离：基于后台任务所有者的可见 Skill 加载
+                bg_skill_content = await _get_skill_content_for_user(bg_user_id, bg_db)
                 if not bg_skill_content:
                     await tracker.error("未找到全文审查 Skill")
                     return

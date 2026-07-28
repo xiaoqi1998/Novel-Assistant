@@ -21,6 +21,7 @@ class User(Base):
     newapi_user_id = Column(Integer, nullable=True, index=True, comment="New API 用户ID（签发后回填）")
     newapi_key = Column(String(200), nullable=True, comment="New API 专属API Key (sk-xxx)")
     newapi_access_token = Column(String(100), nullable=True, comment="New API access_token（用于代理调用充值/订阅等 selfRoute 接口）")
+    register_ip = Column(String(64), nullable=True, index=True, comment="注册时的客户端IP（用于限制每IP注册数量）")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), comment="创建时间")
     last_login = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), comment="最后登录时间")
     

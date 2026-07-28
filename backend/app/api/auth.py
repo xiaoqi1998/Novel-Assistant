@@ -34,6 +34,47 @@ def get_china_now():
     return datetime.now(CHINA_TZ)
 
 
+def _get_client_ip(request: Request) -> str:
+    """获取客户端真实 IP，处理反向代理（Nginx/Caddy）。
+
+    优先级：X-Forwarded-For 首个 > X-Real-IP > request.client.host
+    """
+    x_forwarded_for = request.headers.get("X-Forwarded-For")
+    if x_forwarded_for:
+        # X-Forwarded-For 可能是 "client, proxy1, proxy2" 格式，取第一个
+        ip = x_forwarded_for.split(",")[0].strip()
+        if ip:
+            return ip
+    x_real_ip = request.headers.get("X-Real-IP")
+    if x_real_ip:
+        return x_real_ip.strip()
+    return request.client.host if request.client else "unknown"
+
+
+async def _check_register_ip_limit(ip: str):
+    """检查该 IP 已注册的用户数是否超限，超限抛 HTTPException。
+
+    通过 func.count 查询 users 表中 register_ip == ip 的记录数。
+    旧用户 register_ip 为 NULL 不计入。
+    """
+    limit = settings.REGISTER_IP_LIMIT
+    if not limit or limit <= 0:
+        return  # 0 表示不限制
+
+    from sqlalchemy import func as sa_func
+
+    async with await _get_global_session() as session:
+        result = await session.execute(
+            select(sa_func.count(UserModel.user_id)).where(UserModel.register_ip == ip)
+        )
+        count = result.scalar() or 0
+        if count >= limit:
+            raise HTTPException(
+                status_code=429,
+                detail=f"该网络环境已注册的账号数量达到上限（{limit} 个），请联系管理员"
+            )
+
+
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["认证"])
@@ -47,6 +88,7 @@ class LocalLoginResponse(BaseModel):
     success: bool
     message: str
     user: Optional[dict] = None
+    gift_info: Optional[dict] = None  # 注册赠送信息（仅注册成功时返回）
 
 
 class NewApiLoginRequest(BaseModel):
@@ -124,16 +166,23 @@ async def _find_or_create_from_newapi(
     display_name: str,
     role: int,
     password: str,
-) -> UserDTO:
+    register_ip: Optional[str] = None,
+) -> tuple[UserDTO, Optional[dict]]:
     """根据 New API user_id 查找或创建墨笔本地用户，并确保 newapi_key 存在。
 
     - 已存在：更新基本信息与最后登录时间，必要时提升管理员状态
     - 不存在：创建新本地用户，user_id = newapi_{id}，is_admin 根据 role 映射
     - newapi_key 缺失时用用户凭据自动签发（独立 session，异常自吞不阻断登录）
+    - register_ip 仅在创建新用户时记录（登录不更新）
+    - 新用户：调用 update_user_quota 覆盖为 NEW_API_GIFT_QUOTA，并返回 gift_info
+
+    Returns:
+        (UserDTO, gift_info) — gift_info 仅新用户注册时非 None
     """
     is_admin = role in _admin_roles()
     user_id = f"newapi_{newapi_user_id}"
     final_display_name = (display_name or username).strip() or username
+    is_new_user = False  # 标记是否为新注册用户（用于触发赠送额度覆盖）
 
     async with await _get_global_session() as session:
         result = await session.execute(
@@ -152,6 +201,7 @@ async def _find_or_create_from_newapi(
             user_dict = user.to_dict()
             has_newapi_key = bool(user.newapi_key)
         else:
+            is_new_user = True
             user = UserModel(
                 user_id=user_id,
                 username=username,
@@ -162,6 +212,7 @@ async def _find_or_create_from_newapi(
                 # linuxdo_id 字段 NOT NULL，复用填 newapi_{id}（语义已迁移）
                 linuxdo_id=user_id,
                 newapi_user_id=newapi_user_id,
+                register_ip=register_ip,
                 created_at=datetime.now(),
                 last_login=datetime.now(),
             )
@@ -225,7 +276,30 @@ async def _find_or_create_from_newapi(
     except Exception as e:
         logger.warning(f"[New API 登录] 同步用户 Settings 失败: {e}")
 
-    return UserDTO(**user_dict)
+    # 新用户注册：覆盖 New API 服务端默认赠送额度为墨笔配置的 NEW_API_GIFT_QUOTA
+    # 这样无论 New API 后台 QuotaForNewUser 设为多少，墨笔注册都按本地配置赠送
+    gift_info: Optional[dict] = None
+    if is_new_user and settings.NEW_API_ENABLED:
+        try:
+            from app.services.newapi_client import newapi_client
+            gift_quota = settings.NEW_API_GIFT_QUOTA
+            await newapi_client.update_user_quota(newapi_user_id, gift_quota)
+            # 估算约字数：deepseek-v4-pro 输入约 $0.27/百万token，输出约 $1.1/百万token
+            # 按混合均价 $0.5/百万token 估算，1 token ≈ 1.5 中文字符
+            # 字数 ≈ gift_quota / 0.5 * 1_000_000 * 1.5
+            estimated_words = int(gift_quota / 0.5 * 1_000_000 * 1.5)
+            gift_info = {
+                "quota": gift_quota,
+                "estimated_words": estimated_words,
+                "message": f"注册成功！已赠送 ${gift_quota} 写作额度",
+            }
+            logger.info(
+                f"🎁 [New API 注册] 用户 {user_id} 赠送额度 ${gift_quota}（约 {estimated_words} 字）"
+            )
+        except Exception as e:
+            logger.warning(f"[New API 注册] 覆盖赠送额度失败: {e}")
+
+    return UserDTO(**user_dict), gift_info
 
 
 # 占位符 / 默认值识别：这些值视为"用户未自定义"，可被 New API 配置覆盖
@@ -382,7 +456,7 @@ async def newapi_login(request: NewApiLoginRequest, response: Response):
 
 
 @router.post("/newapi/register", response_model=LocalLoginResponse)
-async def newapi_register(request: NewApiRegisterRequest, response: Response):
+async def newapi_register(request: NewApiRegisterRequest, response: Response, http_request: Request):
     """New API 账号注册（代理 New API POST /api/user/register，成功后自动登录）"""
     if not settings.NEW_API_ENABLED:
         raise HTTPException(status_code=403, detail="New API 注册未启用")
@@ -393,6 +467,10 @@ async def newapi_register(request: NewApiRegisterRequest, response: Response):
     if len(request.password) < 8:
         raise HTTPException(status_code=400, detail="密码至少 8 位")
 
+    # IP 注册限制：每 IP 最多 REGISTER_IP_LIMIT 个用户
+    client_ip = _get_client_ip(http_request)
+    await _check_register_ip_limit(client_ip)
+
     try:
         from app.services.newapi_client import newapi_client
         await newapi_client.register_user(
@@ -401,6 +479,8 @@ async def newapi_register(request: NewApiRegisterRequest, response: Response):
             email=request.email,
             verification_code=request.verification_code,
         )
+    except HTTPException:
+        raise
     except NewAPIRequestError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -424,16 +504,22 @@ async def newapi_register(request: NewApiRegisterRequest, response: Response):
             success=True, message="注册成功，请使用新账号登录", user=None
         )
 
-    user = await _find_or_create_from_newapi(
+    user, gift_info = await _find_or_create_from_newapi(
         newapi_user_id,
         username,
         newapi_user.get("display_name") or username,
         int(newapi_user.get("role", 1)),
         request.password,
+        register_ip=client_ip,
     )
     _set_login_cookies(response, user.user_id)
-    logger.info(f"✅ [New API 注册] 用户 {user.user_id} 注册并自动登录成功")
-    return LocalLoginResponse(success=True, message="注册成功，已自动登录", user=user.dict())
+    logger.info(f"✅ [New API 注册] 用户 {user.user_id} 注册并自动登录成功（IP: {client_ip}）")
+    return LocalLoginResponse(
+        success=True,
+        message="注册成功，已自动登录",
+        user=user.dict(),
+        gift_info=gift_info,
+    )
 
 
 # ==================== 路由：会话维持 ====================
