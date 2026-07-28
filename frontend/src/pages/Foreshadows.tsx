@@ -17,6 +17,7 @@ import type {
   Foreshadow, ForeshadowCreate, ForeshadowUpdate, ForeshadowStats,
   ForeshadowStatus, ForeshadowCategory, Chapter, Character
 } from '../types';
+import useIsMobile from '../utils/useIsMobile';
 
 const { TextArea } = Input;
 const { Option } = Select;
@@ -43,6 +44,7 @@ const CATEGORY_CONFIG: Record<string, { label: string; color: string }> = {
 
 export default function Foreshadows() {
   const { projectId } = useParams<{ projectId: string }>();
+  const isMobile = useIsMobile();
   const [loading, setLoading] = useState(false);
   const [foreshadows, setForeshadows] = useState<Foreshadow[]>([]);
   const [stats, setStats] = useState<ForeshadowStats | null>(null);
@@ -509,37 +511,37 @@ export default function Foreshadows() {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* 统计卡片 */}
       {stats && (
-        <Row gutter={16} style={{ marginBottom: 16 }}>
-          <Col span={3}>
+        <Row gutter={isMobile ? [8, 8] : 16} style={{ marginBottom: 16 }}>
+          <Col span={isMobile ? 12 : 3}>
             <Card size="small">
               <Statistic title="总计" value={stats.total} />
             </Card>
           </Col>
-          <Col span={3}>
+          <Col span={isMobile ? 12 : 3}>
             <Card size="small">
               <Statistic title="待埋入" value={stats.pending} valueStyle={{ color: token.colorTextSecondary }} />
             </Card>
           </Col>
-          <Col span={3}>
+          <Col span={isMobile ? 12 : 3}>
             <Card size="small">
               <Statistic title="已埋入" value={stats.planted} valueStyle={{ color: token.colorSuccess }} />
             </Card>
           </Col>
-          <Col span={3}>
+          <Col span={isMobile ? 12 : 3}>
             <Card size="small">
               <Statistic title="已回收" value={stats.resolved} valueStyle={{ color: token.colorPrimary }} />
             </Card>
           </Col>
-          <Col span={3}>
+          <Col span={isMobile ? 12 : 3}>
             <Card size="small">
               <Statistic title="长线伏笔" value={stats.long_term_count} valueStyle={{ color: token.colorInfo }} />
             </Card>
           </Col>
-          <Col span={3}>
+          <Col span={isMobile ? 12 : 3}>
             <Card size="small">
-              <Statistic 
-                title="超期未回收" 
-                value={stats.overdue_count} 
+              <Statistic
+                title="超期未回收"
+                value={stats.overdue_count}
                 valueStyle={{ color: stats.overdue_count > 0 ? token.colorError : token.colorTextSecondary }}
                 prefix={stats.overdue_count > 0 ? <WarningOutlined /> : null}
               />
@@ -574,7 +576,7 @@ export default function Foreshadows() {
       />
 
       {/* 工具栏 */}
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 8 : 0 }}>
         <Space>
           <Select
             placeholder="状态筛选"
@@ -658,7 +660,7 @@ export default function Foreshadows() {
           rowKey="id"
           loading={loading}
           pagination={false}
-          scroll={{ y: tableScrollY }}
+          scroll={{ x: 800, y: tableScrollY }}
           locale={{
             emptyText: <Empty description="暂无伏笔，点击右上角添加" />,
           }}
@@ -702,7 +704,7 @@ export default function Foreshadows() {
           form.resetFields();
         }}
         onOk={() => form.submit()}
-        width={800}
+        width={isMobile ? 'calc(100vw - 32px)' : 800}
         destroyOnClose
       >
         <Form

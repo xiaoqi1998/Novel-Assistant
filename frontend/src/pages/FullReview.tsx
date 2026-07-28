@@ -24,6 +24,7 @@ import { eventBus } from '../store/eventBus';
 import { useThemeMode } from '../theme/useThemeMode';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import { notify } from '../utils/notification';
+import useIsMobile from '../utils/useIsMobile';
 import './FullReview.css';
 
 const { Title, Text } = Typography;
@@ -52,6 +53,7 @@ const FullReview: React.FC = () => {
   const { token } = theme.useToken();
   const { resolvedMode } = useThemeMode();
   const isDarkMode = resolvedMode === 'dark';
+  const isMobile = useIsMobile();
 
   const [step, setStep] = useState<ReviewStep>('select');
   const [scope, setScope] = useState<ReviewScope>('single');
@@ -936,7 +938,7 @@ const FullReview: React.FC = () => {
                         <Text type="secondary" style={{ fontSize: 12 }}>
                           {item.created_at ? new Date(item.created_at).toLocaleString('zh-CN') : ''}
                         </Text>
-                        <Text type="secondary" ellipsis style={{ maxWidth: 600 }}>
+                        <Text type="secondary" ellipsis style={{ maxWidth: isMobile ? '100%' : 600 }}>
                           {item.preview}
                         </Text>
                       </Space>

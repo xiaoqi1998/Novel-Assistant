@@ -6,6 +6,7 @@ import { BellOutlined, CheckCircleOutlined, DeleteOutlined, EditOutlined, EyeInv
 import { announcementApi, authApi, settingsApi } from '../services/api';
 import type { Announcement, AnnouncementCreate, AnnouncementLevel, AnnouncementStatus, AnnouncementStatusResponse, AnnouncementUpdate, SystemSMTPSettings, SystemSMTPSettingsUpdate, User } from '../types';
 import MarkdownRenderer from '../components/MarkdownRenderer';
+import useIsMobile from '../utils/useIsMobile';
 
 const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
@@ -74,6 +75,7 @@ const toIsoStringOrNull = (value?: Dayjs | null) => {
 
 export default function SystemSettingsPage() {
   const { token } = theme.useToken();
+  const isMobile = useIsMobile();
   const [form] = Form.useForm<SystemSMTPSettingsUpdate>();
   const [announcementForm] = Form.useForm<AnnouncementFormValues>();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -780,7 +782,7 @@ export default function SystemSettingsPage() {
         confirmLoading={announcementSaving}
         okText={editingAnnouncement ? '保存修改' : '创建公告'}
         cancelText="取消"
-        width={1200}
+        width={isMobile ? 'calc(100vw - 32px)' : 1200}
         destroyOnClose
       >
         <Form form={announcementForm} layout="vertical" onFinish={handleSaveAnnouncement} preserve={false}>

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, type CSSProperties } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Card, Tag, Button, Space, message, Typography, theme } from 'antd';
+import { Card, Tag, Button, Space, message, Typography, theme, Alert } from 'antd';
 import {
   ArrowLeftOutlined,
   ApartmentOutlined,
@@ -22,6 +22,7 @@ import {
 import type { Node, Edge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { alphaColor } from '../utils/color';
+import useIsMobile from '../utils/useIsMobile';
 
 const { Text } = Typography;
 
@@ -565,6 +566,7 @@ export default function RelationshipGraph() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const { token } = theme.useToken();
+  const isMobile = useIsMobile();
 
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [, setLoading] = useState(false);
@@ -1150,7 +1152,7 @@ export default function RelationshipGraph() {
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
-          padding: 12,
+          padding: isMobile ? 8 : 12,
         }}
         title={
           <Space>
@@ -1163,7 +1165,7 @@ export default function RelationshipGraph() {
             </Tag>
           </Space>
         }
-        extra={
+        extra={isMobile ? null : (
           <Space direction="vertical" size={6} style={{ alignItems: 'flex-end' }}>
             <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 14, fontSize: 12, flexWrap: 'wrap' }}>
               {/* 节点图例 */}
@@ -1227,9 +1229,26 @@ export default function RelationshipGraph() {
               </div>
             )}
           </Space>
-        }
+        )}
       >
-        <div style={{ flex: 1, minHeight: 0 }} className="relationship-graph-flow">
+        {isMobile && (
+          <Alert
+            type="info"
+            showIcon
+            message="关系图谱在小屏设备上体验不佳"
+            description="建议在电脑端查看，或使用左上角缩放控件放大、双指拖拽平移浏览。"
+            style={{ marginBottom: 8 }}
+          />
+        )}
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflowX: isMobile ? 'auto' : 'hidden',
+            minWidth: isMobile ? 320 : 0,
+          }}
+          className="relationship-graph-flow"
+        >
           <style>
             {`
               .relationship-graph-flow .react-flow__handle {
@@ -1312,11 +1331,11 @@ export default function RelationshipGraph() {
 <div
   style={{
     position: 'fixed',
-    right: 24,
-    top: 80,
-    width: 400,
-    height: 'calc(100vh - 100px)',
-    maxHeight: 700,
+    right: isMobile ? 16 : 24,
+    top: isMobile ? 64 : 80,
+    width: isMobile ? 'calc(100vw - 32px)' : 400,
+    height: isMobile ? 'calc(100vh - 80px)' : 'calc(100vh - 100px)',
+    maxHeight: isMobile ? 'none' : 700,
     zIndex: 1000,
     display: 'flex',
     flexDirection: 'column',
@@ -1538,12 +1557,12 @@ export default function RelationshipGraph() {
         <div
           style={{
             position: 'fixed',
-            right: 20,
-            top: 80,
+            right: isMobile ? 16 : 20,
+            top: isMobile ? 64 : 80,
             zIndex: 1000,
           }}
         >
-          <Card size="small" style={{ width: 300, borderRadius: 10, boxShadow: `0 6px 18px ${alphaColor(token.colorTextBase, 0.2)}` }}>
+          <Card size="small" style={{ width: isMobile ? 'calc(100vw - 32px)' : 300, borderRadius: 10, boxShadow: `0 6px 18px ${alphaColor(token.colorTextBase, 0.2)}` }}>
             <Space align="start">
               <TrophyOutlined style={{ color: token.colorWarning, marginTop: 4 }} />
               <div>

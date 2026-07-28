@@ -27,3 +27,14 @@
 .full-review-page .ant-alert {
   margin-bottom: 16px;
 }
+
+@media (max-width: 768px) {
+  .full-review-page {
+    padding: 12px;
+    max-width: 100%;
+  }
+
+  .full-review-header {
+    margin-bottom: 16px;
+  }
+}

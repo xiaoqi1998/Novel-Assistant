@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { Button, Table, Modal, Form, Input, Tag, Space, message, Popconfirm, Card, theme, Empty, Badge, Tooltip, Select, Switch, Typography } from 'antd';
 import type { FormInstance } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined, ThunderboltOutlined, FileTextOutlined, SearchOutlined, InfoCircleOutlined, UndoOutlined } from '@ant-design/icons';
+import useIsMobile from '../utils/useIsMobile';
 
 const { TextArea } = Input;
 const { Text } = Typography;
@@ -208,6 +209,7 @@ function ReferencesEditor({ form, tooltip }: ReferencesEditorProps) {
 
 export default function SkillManage() {
   const { token } = theme.useToken();
+  const isMobile = useIsMobile();
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -685,6 +687,7 @@ export default function SkillManage() {
             loading={loading}
             pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `共 ${total} 个 Skill` }}
             size="middle"
+            scroll={{ x: 1000 }}
             style={{ background: token.colorBgContainer }}
           />
         </div>
@@ -695,7 +698,7 @@ export default function SkillManage() {
         title="SKILL.md 原始内容"
         open={viewModalVisible}
         onCancel={() => setViewModalVisible(false)}
-        width={800}
+        width={isMobile ? 'calc(100vw - 32px)' : 800}
         footer={<Button onClick={() => setViewModalVisible(false)}>关闭</Button>}
         styles={{ body: { maxHeight: '60vh', overflowY: 'auto' } }}
       >
@@ -717,7 +720,7 @@ export default function SkillManage() {
         title={editingSkill?.is_system_default ? "编辑系统预置 Skill（将创建个人副本）" : "编辑 Skill"}
         open={editModalVisible}
         onCancel={() => setEditModalVisible(false)}
-        width={900}
+        width={isMobile ? 'calc(100vw - 32px)' : 900}
         footer={
           <Space>
             <Button onClick={() => setEditModalVisible(false)}>取消</Button>
@@ -781,7 +784,7 @@ export default function SkillManage() {
         title="添加新 Skill"
         open={createModalVisible}
         onCancel={() => setCreateModalVisible(false)}
-        width={900}
+        width={isMobile ? 'calc(100vw - 32px)' : 900}
         footer={
           <Space>
             <Button onClick={() => setCreateModalVisible(false)}>取消</Button>

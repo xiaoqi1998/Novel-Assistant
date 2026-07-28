@@ -315,7 +315,7 @@ export default function Outline() {
       
       modalApi.confirm({
         title: '编辑大纲',
-        width: 800,
+        width: isMobile ? 'calc(100vw - 32px)' : 800,
         centered: true,
         styles: {
           body: {
@@ -652,7 +652,7 @@ export default function Outline() {
           <Tag color="blue">当前已有 {outlines.length} 卷</Tag>
         </Space>
       ) : 'AI生成大纲',
-      width: 700,
+      width: isMobile ? 'calc(100vw - 32px)' : 700,
       centered: true,
       content: (
         <Form
@@ -824,7 +824,7 @@ export default function Outline() {
 
     modalApi.confirm({
       title: '手动创建大纲',
-      width: 600,
+      width: isMobile ? 'calc(100vw - 32px)' : 600,
       centered: true,
       content: (
         <Form
@@ -943,7 +943,7 @@ export default function Outline() {
               setIsExpanding(false);
               modalApi.warning({
                 title: '请按顺序展开大纲',
-                width: 600,
+                width: isMobile ? 'calc(100vw - 32px)' : 600,
                 centered: true,
                 content: (
                   <div>
@@ -998,7 +998,7 @@ export default function Outline() {
             <span>展开大纲为多章</span>
           </Space>
         ),
-        width: 600,
+        width: isMobile ? 'calc(100vw - 32px)' : 600,
         centered: true,
         content: (
           <div>
@@ -1383,7 +1383,7 @@ export default function Outline() {
           <span>批量展开所有大纲</span>
         </Space>
       ),
-      width: 600,
+      width: isMobile ? 'calc(100vw - 32px)' : 600,
       centered: true,
       content: (
         <div>

@@ -15,6 +15,7 @@ import {
 } from '@ant-design/icons';
 import { getProjectTasks, cancelTask, cancelBatchTask, deleteTask, clearProjectTasks, type TaskStatus } from '../services/backgroundTaskService';
 import { eventBus } from '../store/eventBus';
+import useIsMobile from '../utils/useIsMobile';
 
 const COLLAPSED_KEY = 'mobinovel_task_panel_collapsed';
 const POSITION_KEY = 'mobinovel_task_panel_position';
@@ -79,6 +80,7 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const { token } = theme.useToken();
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   // 刚完成的任务 ID 集合（5 秒内醒目高亮，过后淡化）
   const [recentlyCompletedIds, setRecentlyCompletedIds] = useState<Set<string>>(new Set());
   // 前一次任务状态快照，用于检测 running/pending → completed 的转换
@@ -483,7 +485,7 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
         position: 'fixed',
         // 拖拽后使用 top/left 定位，未拖拽时使用默认的 bottom/right
         ...(position ? { top: position.y, left: position.x } : { bottom: 10, right: 23 }),
-        width: collapsed ? 260 : 400,
+        width: collapsed ? Math.min(260, window.innerWidth - 32) : (isMobile ? Math.min(400, window.innerWidth - 32) : 400),
         maxHeight: collapsed ? 60 : 500,
         zIndex: 1000,
         boxShadow: token.boxShadowSecondary,

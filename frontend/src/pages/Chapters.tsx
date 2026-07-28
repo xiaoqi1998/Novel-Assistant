@@ -18,6 +18,7 @@ import PartialRegenerateModal from '../components/PartialRegenerateModal';
 import WritingAssistantPanel from '../components/WritingAssistantPanel';
 import InspirationButton from '../components/InspirationButton';
 import { formatWordCount } from '../utils/format';
+import useIsMobile from '../utils/useIsMobile';
 
 const { TextArea } = Input;
 
@@ -119,7 +120,7 @@ export default function Chapters() {
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm();
   const [editorForm] = Form.useForm();
-  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  const isMobile = useIsMobile();
   const contentTextAreaRef = useRef<TextAreaRef>(null);
   const [writingStyles, setWritingStyles] = useState<WritingStyle[]>([]);
   const [selectedStyleId, setSelectedStyleId] = useState<number | undefined>();
@@ -196,21 +197,6 @@ export default function Chapters() {
   } | null>(null);
   const batchPollingIntervalRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    let timeoutId: number | undefined;
-    const handleResize = () => {
-      if (timeoutId) window.clearTimeout(timeoutId);
-      timeoutId = window.setTimeout(() => {
-        setIsMobile(window.innerWidth <= 768);
-      }, 150);
-    };
-
-    window.addEventListener('resize', handleResize);
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      if (timeoutId) window.clearTimeout(timeoutId);
-    };
-  }, []);
 
   // 处理文本选中 - 检测选中文本并显示浮动工具栏
   const handleTextSelection = useCallback(() => {
@@ -1125,7 +1111,7 @@ export default function Chapters() {
 
     const instance = modal.confirm({
       title: 'AI创作章节内容',
-      width: 700,
+      width: isMobile ? 'calc(100vw - 32px)' : 700,
       centered: true,
       content: (
         <div style={{ marginTop: 16 }}>
@@ -1622,7 +1608,7 @@ export default function Chapters() {
 
     modal.confirm({
       title: '手动创建章节',
-      width: 600,
+      width: isMobile ? 'calc(100vw - 32px)' : 600,
       centered: true,
       content: (
         <Form
@@ -1708,7 +1694,7 @@ export default function Chapters() {
           modal.confirm({
             title: '章节序号冲突',
             icon: <InfoCircleOutlined style={{ color: token.colorError }} />,
-            width: 500,
+            width: isMobile ? 'calc(100vw - 32px)' : 500,
             centered: true,
             content: (
               <div>
@@ -3396,8 +3382,8 @@ export default function Chapters() {
                 <Select
                   mode="multiple"
                   placeholder="默认启用「长篇网文写作」"
-                  value={batchSelectedSkillKeys}
-                  onChange={setBatchSelectedSkillKeys}
+                  value={batchSelectedAuxiliarySkillKeys}
+                  onChange={setBatchSelectedAuxiliarySkillKeys}
                   allowClear
                   showSearch
                   optionFilterProp="label"

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Card, Button, Modal, Form, Select, InputNumber, Input, message, Progress, Tag, Space, Divider, Typography, theme } from 'antd';
 import { EditOutlined, PlusOutlined, DeleteOutlined, TrophyOutlined } from '@ant-design/icons';
 import axios from 'axios';
+import useIsMobile from '../utils/useIsMobile';
 
 const { TextArea } = Input;
 const { Text, Paragraph } = Typography;
@@ -45,6 +46,7 @@ export const CharacterCareerCard: React.FC<Props> = ({
     onUpdate
 }) => {
     const { token } = theme.useToken();
+    const isMobile = useIsMobile();
     const [mainCareer, setMainCareer] = useState<CareerDetail | null>(null);
     const [subCareers, setSubCareers] = useState<CareerDetail[]>([]);
     const [allCareers, setAllCareers] = useState<Career[]>([]);
@@ -159,6 +161,7 @@ export const CharacterCareerCard: React.FC<Props> = ({
             title: '确认删除',
             content: '确定要移除这个副职业吗？',
             centered: true,
+            width: isMobile ? 'calc(100vw - 32px)' : undefined,
             onOk: async () => {
                 try {
                     await axios.delete(
@@ -310,6 +313,7 @@ export const CharacterCareerCard: React.FC<Props> = ({
                 open={isMainModalOpen}
                 onCancel={() => setIsMainModalOpen(false)}
                 footer={null}
+                width={isMobile ? 'calc(100vw - 32px)' : undefined}
             >
                 <Form form={mainForm} layout="vertical" onFinish={handleSetMainCareer}>
                     <Form.Item label="选择主职业" name="career_id" rules={[{ required: true }]}>
@@ -342,6 +346,7 @@ export const CharacterCareerCard: React.FC<Props> = ({
                 open={isSubModalOpen}
                 onCancel={() => setIsSubModalOpen(false)}
                 footer={null}
+                width={isMobile ? 'calc(100vw - 32px)' : undefined}
             >
                 <Form form={subForm} layout="vertical" onFinish={handleAddSubCareer}>
                     <Form.Item label="选择副职业" name="career_id" rules={[{ required: true }]}>
@@ -374,6 +379,7 @@ export const CharacterCareerCard: React.FC<Props> = ({
                 open={isProgressModalOpen}
                 onCancel={() => setIsProgressModalOpen(false)}
                 footer={null}
+                width={isMobile ? 'calc(100vw - 32px)' : undefined}
             >
                 {selectedCareer && (
                     <Form form={progressForm} layout="vertical" onFinish={handleUpdateProgress}>

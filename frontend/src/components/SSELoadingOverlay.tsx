@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Spin, Button, theme, Tooltip } from 'antd';
 import { LoadingOutlined, StopOutlined, MinusOutlined } from '@ant-design/icons';
+import useIsMobile from '../utils/useIsMobile';
 
 export interface SSELoadingOverlayProps {
   /** 是否显示（overlay 模式惯用字段） */
@@ -68,6 +69,7 @@ export const SSELoadingOverlay: React.FC<SSELoadingOverlayProps> = ({
   onMinimize,
 }) => {
   const { token } = theme.useToken();
+  const isMobile = useIsMobile();
   const isVisible = visible ?? loading ?? false;
 
   const startTimeRef = useRef<number | null>(null);
@@ -273,10 +275,10 @@ export const SSELoadingOverlay: React.FC<SSELoadingOverlayProps> = ({
         footer={null}
         closable={false}
         centered
-        width={500}
+        width={isMobile ? 'calc(100vw - 32px)' : 500}
         maskClosable={false}
         keyboard={false}
-        styles={{ body: { padding: '40px 40px 32px' } }}
+        styles={{ body: { padding: isMobile ? '24px 16px' : '40px 40px 32px' } }}
       >
         {content}
       </Modal>
@@ -297,15 +299,17 @@ export const SSELoadingOverlay: React.FC<SSELoadingOverlayProps> = ({
         justifyContent: 'center',
         alignItems: 'center',
         zIndex: 9999,
+        padding: isMobile ? 16 : 0,
       }}
     >
       <div
         style={{
           background: token.colorBgElevated,
           borderRadius: 12,
-          padding: '40px 60px',
-          minWidth: 400,
-          maxWidth: 600,
+          padding: isMobile ? '24px 20px' : '40px 60px',
+          minWidth: isMobile ? 0 : 400,
+          maxWidth: isMobile ? '100%' : 600,
+          width: isMobile ? '100%' : undefined,
           boxShadow: token.boxShadowSecondary,
         }}
       >

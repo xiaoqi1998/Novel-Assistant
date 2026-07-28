@@ -22,6 +22,7 @@ import {
 } from '@ant-design/icons';
 import { ssePost } from '../utils/sseClient';
 import { SSELoadingOverlay } from './SSELoadingOverlay';
+import useIsMobile from '../utils/useIsMobile';
 
 const { TextArea } = Input;
 const { Panel } = Collapse;
@@ -56,6 +57,7 @@ const ChapterRegenerationModal: React.FC<ChapterRegenerationModalProps> = ({
 }) => {
   const [form] = Form.useForm();
   const [modal, contextHolder] = Modal.useModal();
+  const isMobile = useIsMobile();
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState<'idle' | 'generating' | 'success' | 'error'>('idle');
@@ -241,7 +243,7 @@ const ChapterRegenerationModal: React.FC<ChapterRegenerationModalProps> = ({
       title={`重新生成章节 - 第${chapterNumber}章：${chapterTitle}`}
       open={visible}
       onCancel={handleCancel}
-      width={800}
+      width={isMobile ? 'calc(100vw - 32px)' : 800}
       centered
       footer={
         status === 'success' ? null : (

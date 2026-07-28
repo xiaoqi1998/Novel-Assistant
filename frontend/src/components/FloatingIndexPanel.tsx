@@ -3,6 +3,7 @@ import { Drawer, Input, List, Typography, Empty, Tag, theme } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 import type { Chapter } from '../types';
 import { eventBus } from '../store/eventBus';
+import useIsMobile from '../utils/useIsMobile';
 
 const { Link } = Typography;
 
@@ -26,6 +27,7 @@ export default function FloatingIndexPanel({
   onChapterSelect,
 }: FloatingIndexPanelProps) {
   const { token } = theme.useToken();
+  const isMobile = useIsMobile();
   const [searchTerm, setSearchTerm] = useState('');
 
   // 通过事件总线通知 FloatingTaskPanel 等组件 Drawer 的开关状态
@@ -62,7 +64,7 @@ export default function FloatingIndexPanel({
       placement="right"
       onClose={onClose}
       open={visible}
-      width={320}
+      width={isMobile ? '85%' : 320}
       zIndex={1040}
       styles={{
         body: { padding: 0 },

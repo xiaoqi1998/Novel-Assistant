@@ -447,7 +447,7 @@ export default function Characters() {
       // 显示预览对话框
       modal.confirm({
         title: '导入预览',
-        width: 500,
+        width: isMobile ? 'calc(100vw - 32px)' : 500,
         centered: true,
         content: (
           <div>
@@ -481,7 +481,7 @@ export default function Characters() {
               // 显示导入结果
               modal.success({
                 title: '导入完成',
-                width: 600,
+                width: isMobile ? 'calc(100vw - 32px)' : 600,
                 centered: true,
                 content: (
                   <div>
@@ -582,7 +582,7 @@ export default function Characters() {
   const showGenerateModal = () => {
     modal.confirm({
       title: 'AI生成角色',
-      width: 600,
+      width: isMobile ? 'calc(100vw - 32px)' : 600,
       centered: true,
       content: (
         <Form form={generateForm} layout="vertical" style={{ marginTop: 16 }}>
@@ -620,7 +620,7 @@ export default function Characters() {
   const showGenerateOrgModal = () => {
     modal.confirm({
       title: 'AI生成组织',
-      width: 600,
+      width: isMobile ? 'calc(100vw - 32px)' : 600,
       centered: true,
       content: (
         <Form form={generateOrgForm} layout="vertical" style={{ marginTop: 16 }}>
@@ -1071,7 +1071,7 @@ export default function Characters() {
             <>
               {/* 编辑角色 - 第一行：名称、定位、年龄、性别 */}
               <Row gutter={12}>
-                <Col span={8}>
+                <Col span={isMobile ? 24 : 8}>
                   <Form.Item
                     label="角色名称"
                     name="name"
@@ -1156,7 +1156,7 @@ export default function Characters() {
                           </Select>
                         </Form.Item>
                       </Col>
-                      <Col span={8}>
+                      <Col span={isMobile ? 24 : 8}>
                         <Form.Item label="当前阶段" name="main_career_stage" tooltip="主职业当前修炼到的阶段" style={{ marginBottom: 12 }}>
                           <InputNumber
                             min={1}
@@ -1259,7 +1259,7 @@ export default function Characters() {
                     <Input placeholder="组织名称" />
                   </Form.Item>
                 </Col>
-                <Col span={8}>
+                <Col span={isMobile ? 24 : 8}>
                   <Form.Item
                     label="组织类型"
                     name="organization_type"
@@ -1432,7 +1432,7 @@ export default function Characters() {
             <>
               {/* 角色基本信息 - 第一行：名称、定位、年龄、性别 */}
               <Row gutter={12}>
-                <Col span={8}>
+                <Col span={isMobile ? 24 : 8}>
                   <Form.Item
                     label="角色名称"
                     name="name"
@@ -1505,7 +1505,7 @@ export default function Characters() {
                           </Select>
                         </Form.Item>
                       </Col>
-                      <Col span={8}>
+                      <Col span={isMobile ? 24 : 8}>
                         <Form.Item label="当前阶段" name="main_career_stage" tooltip="主职业当前修炼到的阶段" style={{ marginBottom: 12 }}>
                           <InputNumber
                             min={1}
@@ -1608,7 +1608,7 @@ export default function Characters() {
                     <Input placeholder="组织名称" />
                   </Form.Item>
                 </Col>
-                <Col span={8}>
+                <Col span={isMobile ? 24 : 8}>
                   <Form.Item
                     label="组织类型"
                     name="organization_type"
@@ -1675,7 +1675,7 @@ export default function Characters() {
         open={isImportModalOpen}
         onCancel={() => setIsImportModalOpen(false)}
         footer={null}
-        width={500}
+        width={isMobile ? 'calc(100vw - 32px)' : 500}
         centered
       >
         <div style={{ textAlign: 'center', padding: '40px 20px' }}>

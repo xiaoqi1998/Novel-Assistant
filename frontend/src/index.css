@@ -356,3 +356,17 @@ body {
   }
 }
 
+/* ========== 全局移动端 Modal/Drawer 兜底,防止固定宽度溢出 ========== */
+@media (max-width: 576px) {
+  .ant-modal {
+    max-width: calc(100vw - 32px) !important;
+  }
+  .ant-modal-centered .ant-modal {
+    top: 16px;
+  }
+  .ant-modal .ant-modal-body {
+    max-height: calc(100vh - 140px);
+    overflow-y: auto;
+  }
+}
+

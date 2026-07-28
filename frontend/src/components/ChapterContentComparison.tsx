@@ -3,6 +3,7 @@ import { Modal, Button, Card, Statistic, Row, Col, message, theme } from 'antd';
 import { CheckOutlined, CloseOutlined, SwapOutlined } from '@ant-design/icons';
 import ReactDiffViewer from 'react-diff-viewer-continued';
 import { useThemeMode } from '../theme/useThemeMode';
+import useIsMobile from '../utils/useIsMobile';
 
 interface ChapterContentComparisonProps {
   visible: boolean;
@@ -29,8 +30,9 @@ const ChapterContentComparison: React.FC<ChapterContentComparisonProps> = ({
 }) => {
   const { token } = theme.useToken();
   const { resolvedMode } = useThemeMode();
+  const isMobile = useIsMobile();
   const [applying, setApplying] = useState(false);
-  const [viewMode, setViewMode] = useState<'split' | 'unified'>('split');
+  const [viewMode, setViewMode] = useState<'split' | 'unified'>(isMobile ? 'unified' : 'split');
   const [modal, contextHolder] = Modal.useModal();
 
   const originalWordCount = originalContent.length;
@@ -160,9 +162,9 @@ const ChapterContentComparison: React.FC<ChapterContentComparisonProps> = ({
       title={`内容对比 - ${chapterTitle}`}
       open={visible}
       onCancel={onClose}
-      width="95%"
+      width={isMobile ? 'calc(100vw - 32px)' : '95%'}
       centered
-      style={{ maxWidth: 1600 }}
+      style={{ maxWidth: isMobile ? '100%' : 1600 }}
       footer={[
         <Button
           key="discard"
@@ -239,7 +241,7 @@ const ChapterContentComparison: React.FC<ChapterContentComparisonProps> = ({
         <ReactDiffViewer
           oldValue={originalContent}
           newValue={newContent}
-          splitView={viewMode === 'split'}
+          splitView={viewMode === 'split' && !isMobile}
           leftTitle="原内容"
           rightTitle="新内容"
           showDiffOnly={false}

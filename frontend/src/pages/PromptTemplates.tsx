@@ -286,7 +286,7 @@ export default function PromptTemplates() {
       if (result.converted_templates && result.converted_templates.length > 0) {
         modal.info({
           title: '导入完成',
-          width: 600,
+          width: isMobile ? 'calc(100vw - 32px)' : 600,
           centered: true,
           content: (
             <div>

@@ -3,6 +3,7 @@ import { Card, Input, Button, Tag, List, Typography, Space, Spin, message, Toolt
 import { SendOutlined, RobotOutlined, UserOutlined, ThunderboltOutlined, StopOutlined, CopyOutlined, DeleteOutlined } from '@ant-design/icons';
 import axios from 'axios';
 import MarkdownRenderer from '../components/MarkdownRenderer';
+import useIsMobile from '../utils/useIsMobile';
 
 const { TextArea } = Input;
 const { Title, Text, Paragraph } = Typography;
@@ -25,6 +26,7 @@ const MAX_HISTORY_MESSAGES = 50;
 
 const SkillChat: React.FC = () => {
   const { token } = theme.useToken();
+  const isMobile = useIsMobile();
   const [skills, setSkills] = useState<Skill[]>([]);
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -105,6 +107,7 @@ const SkillChat: React.FC = () => {
       okText: '清空',
       okType: 'danger',
       cancelText: '取消',
+      width: isMobile ? 'calc(100vw - 32px)' : undefined,
       onOk: () => {
         setMessages([]);
         try { localStorage.removeItem(CHAT_HISTORY_KEY); } catch { /* ignore */ }
@@ -214,7 +217,7 @@ const SkillChat: React.FC = () => {
     return (
       <div style={{ height: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column', padding: '0 16px', minWidth: 0, overflow: 'hidden' }}>
         {/* 顶部栏 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: '1px solid #f0f0f0' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: '1px solid #f0f0f0', flexWrap: isMobile ? 'wrap' : 'nowrap' }}>
           <Button size="small" onClick={() => { setSelectedSkill(null); setMessages([]); try { localStorage.removeItem(CHAT_HISTORY_KEY); } catch { /* ignore */ } }}>← 返回</Button>
           <ThunderboltOutlined style={{ color: '#1890ff' }} />
           <Text strong>{selectedSkill.template_name}</Text>
@@ -226,7 +229,7 @@ const SkillChat: React.FC = () => {
                 fontSize: 12,
                 flex: 1,
                 minWidth: 0,
-                maxWidth: 420,
+                maxWidth: isMobile ? '100%' : 420,
               }}
               ellipsis
             >
@@ -241,7 +244,7 @@ const SkillChat: React.FC = () => {
             disabled={messages.length === 0 || loading}
             style={{ marginLeft: 'auto' }}
           >
-            清空对话
+            {isMobile ? '' : '清空对话'}
           </Button>
         </div>
 

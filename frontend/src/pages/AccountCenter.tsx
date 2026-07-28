@@ -10,6 +10,7 @@ import {
   QuestionCircleOutlined,
 } from '@ant-design/icons';
 import { newApi } from '../services/api';
+import useIsMobile from '../utils/useIsMobile';
 import './AccountCenter.css';
 
 interface BalanceData {
@@ -89,6 +90,7 @@ function formatDateTime(iso?: string): string {
 }
 
 export default function AccountCenter() {
+  const isMobile = useIsMobile();
   const [balance, setBalance] = useState<BalanceData | null>(null);
   const [status, setStatus] = useState<StatusData | null>(null);
   const [topupInfo, setTopupInfo] = useState<TopupInfo | null>(null);
@@ -428,6 +430,7 @@ export default function AccountCenter() {
         confirmLoading={recharging}
         onCancel={() => setRechargeModalOpen(false)}
         onOk={confirmRecharge}
+        width={isMobile ? 'calc(100vw - 32px)' : undefined}
       >
         <div style={{ marginBottom: 12 }}>请选择支付方式：</div>
         <Radio.Group

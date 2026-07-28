@@ -3,6 +3,7 @@ import type { FC } from 'react';
 import { Modal, Input, Button, Space, Radio, InputNumber, Card, message, Alert, Spin, Typography, Divider, theme } from 'antd';
 import { ThunderboltOutlined, CheckOutlined, ReloadOutlined, EditOutlined, LoadingOutlined } from '@ant-design/icons';
 import { chapterApi } from '../services/api';
+import useIsMobile from '../utils/useIsMobile';
 
 const { TextArea } = Input;
 const { Text, Paragraph } = Typography;
@@ -38,6 +39,7 @@ export const PartialRegenerateModal: FC<PartialRegenerateModalProps> = ({
   onApply,
 }) => {
   const { token } = theme.useToken();
+  const isMobile = useIsMobile();
   const [userInstructions, setUserInstructions] = useState('');
   const [lengthMode, setLengthMode] = useState<LengthMode>('similar');
   const [customWordCount, setCustomWordCount] = useState<number>(selectedText.length);
@@ -190,7 +192,7 @@ export const PartialRegenerateModal: FC<PartialRegenerateModalProps> = ({
       }
       open={visible}
       onCancel={handleCancel}
-      width={800}
+      width={isMobile ? 'calc(100vw - 32px)' : 800}
       centered
       maskClosable={!isGenerating}
       closable={!isGenerating}

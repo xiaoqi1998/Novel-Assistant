@@ -4,6 +4,7 @@ import { ThunderboltOutlined, PlusOutlined, EditOutlined, DeleteOutlined, Trophy
 import { useParams } from 'react-router-dom';
 import api from '../services/api';
 import { SSELoadingOverlay } from '../components/SSELoadingOverlay';
+import useIsMobile from '../utils/useIsMobile';
 
 const { TextArea } = Input;
 const { Title, Text, Paragraph } = Typography;
@@ -31,6 +32,7 @@ interface Career {
 
 export default function Careers() {
     const { projectId } = useParams<{ projectId: string }>();
+    const isMobile = useIsMobile();
     const [mainCareers, setMainCareers] = useState<Career[]>([]);
     const [subCareers, setSubCareers] = useState<Career[]>([]);
     const [, setLoading] = useState(true);
@@ -324,6 +326,7 @@ export default function Careers() {
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
+                    flexDirection: isMobile ? 'column' : 'row',
                     flexWrap: 'wrap',
                     gap: '12px'
                 }}>
@@ -371,7 +374,7 @@ export default function Careers() {
                     form.resetFields();
                 }}
                 footer={null}
-                width={700}
+                width={isMobile ? 'calc(100vw - 32px)' : 700}
             >
                 <Form form={form} layout="vertical" onFinish={handleSubmit}>
                     <Row gutter={16}>

@@ -37,6 +37,7 @@ import { adminApi } from '../services/api';
 import type { User } from '../types';
 import UserMenu from '../components/UserMenu';
 import { alphaColor } from '../utils/color';
+import useIsMobile from '../utils/useIsMobile';
 
 const { Title, Text } = Typography;
 
@@ -185,7 +186,7 @@ export default function UserManagement() {
               </p>
             </div>
           ),
-          width: 500,
+          width: isMobile ? 'calc(100vw - 32px)' : 500,
           centered: true,
         });
       }
@@ -260,7 +261,7 @@ export default function UserManagement() {
     }
   };
 
-  const isMobile = window.innerWidth <= 768;
+  const isMobile = useIsMobile();
 
   // 表格列定义
   const columns = [

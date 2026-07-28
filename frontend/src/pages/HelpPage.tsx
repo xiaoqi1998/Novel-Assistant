@@ -40,6 +40,7 @@ import {
   UnorderedListOutlined,
 } from '@ant-design/icons';
 import { alphaColor } from '../utils/color';
+import useIsMobile from '../utils/useIsMobile';
 
 const { Title, Paragraph, Text } = Typography;
 
@@ -204,6 +205,7 @@ const LAST_UPDATED = '2026-07-27';
 export default function HelpPage() {
   const { token } = theme.useToken();
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const [activeFaq, setActiveFaq] = useState<string[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -265,7 +267,7 @@ export default function HelpPage() {
   ];
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', paddingBottom: 64 }}>
+    <div style={{ maxWidth: isMobile ? '100%' : 1100, margin: '0 auto', paddingBottom: 64, paddingInline: isMobile ? 12 : 0 }}>
       {/* 顶部 Hero */}
       <Card
         className="glass-card"
@@ -290,8 +292,8 @@ export default function HelpPage() {
               </Text>
             </Space>
           </Col>
-          <Col>
-            <Space>
+          <Col xs={24} md="auto">
+            <Space wrap>
               <Button
                 icon={<RocketOutlined />}
                 onClick={() => {

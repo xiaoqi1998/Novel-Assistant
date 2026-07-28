@@ -3,3 +3,9 @@
   margin: 0 auto;
   padding: 16px;
 }
+
+@media (max-width: 768px) {
+  .account-center {
+    padding: 12px;
+  }
+}

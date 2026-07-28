@@ -9,6 +9,7 @@ import {
 } from '@ant-design/icons';
 import { characterArcApi } from '../services/api';
 import type { CharacterArc, CharacterArcCreate } from '../types';
+import useIsMobile from '../utils/useIsMobile';
 
 const { TextArea } = Input;
 
@@ -48,6 +49,7 @@ export function CharacterArcPanel({ characterId, projectId }: CharacterArcPanelP
   const [editingArc, setEditingArc] = useState<CharacterArc | null>(null);
   const [generating, setGenerating] = useState(false);
   const [form] = Form.useForm();
+  const isMobile = useIsMobile();
 
   const loadArcs = useCallback(async () => {
     if (!characterId) return;
@@ -200,7 +202,7 @@ export function CharacterArcPanel({ characterId, projectId }: CharacterArcPanelP
         onOk={handleSubmit}
         okText="保存"
         cancelText="取消"
-        width={560}
+        width={isMobile ? 'calc(100vw - 32px)' : 560}
         styles={{ body: { maxHeight: '60vh', overflowY: 'auto' } }}
       >
         <Form form={form} layout="vertical">

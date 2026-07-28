@@ -1256,7 +1256,7 @@ export default function PromptWorkshop() {
           reviewForm.resetFields();
         }}
         footer={null}
-        width={700}
+        width={isMobile ? 'calc(100vw - 32px)' : 700}
         centered
       >
         {reviewingSubmission && (
@@ -1324,7 +1324,7 @@ export default function PromptWorkshop() {
           addOfficialForm.resetFields();
         }}
         footer={null}
-        width={600}
+        width={isMobile ? 'calc(100vw - 32px)' : 600}
         centered
       >
         <Form
@@ -1394,7 +1394,7 @@ export default function PromptWorkshop() {
           editForm.resetFields();
         }}
         footer={null}
-        width={600}
+        width={isMobile ? 'calc(100vw - 32px)' : 600}
         centered
       >
         <Form

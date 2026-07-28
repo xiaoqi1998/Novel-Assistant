@@ -3,6 +3,7 @@ import { PlusOutlined } from '@ant-design/icons';
 import { useState, useEffect, useCallback } from 'react';
 import type { ExpansionPlanData, Character } from '../types';
 import { characterApi } from '../services/api';
+import useIsMobile from '../utils/useIsMobile';
 
 const { TextArea } = Input;
 
@@ -24,6 +25,7 @@ export default function ExpansionPlanEditor({
   onCancel
 }: ExpansionPlanEditorProps) {
   const [form] = Form.useForm();
+  const isMobile = useIsMobile();
   const [loading, setLoading] = useState(false);
   
   // 关键事件标签输入
@@ -165,7 +167,7 @@ export default function ExpansionPlanEditor({
       title="编辑章节规划"
       open={visible}
       onCancel={handleCancel}
-      width={700}
+      width={isMobile ? 'calc(100vw - 32px)' : 700}
       centered
       footer={[
         <Button key="cancel" onClick={handleCancel} disabled={loading}>

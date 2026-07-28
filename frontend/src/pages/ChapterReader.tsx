@@ -20,6 +20,7 @@ import AnnotatedText, { type MemoryAnnotation } from '../components/AnnotatedTex
 import MemorySidebar from '../components/MemorySidebar';
 import { useThemeMode } from '../theme/useThemeMode';
 import { getThemeConfig, type ResolvedThemeMode } from '../theme/themeConfig';
+import useIsMobile from '../utils/useIsMobile';
 
 interface ChapterData {
   id: string;
@@ -73,6 +74,7 @@ const ChapterReader: React.FC = () => {
 
   const { token } = theme.useToken();
   const { resolvedMode } = useThemeMode();
+  const isMobile = useIsMobile();
 
   // 阅读器主题：默认跟随全局 resolvedMode，用户可手动切换
   const [readerTheme, setReaderTheme] = useState<ResolvedThemeMode>(resolvedMode);
@@ -361,10 +363,10 @@ const ChapterReader: React.FC = () => {
           borderTop: 0,
         }}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Space>
-            <Button icon={<ArrowLeftOutlined />} onClick={handleBackClick}>
-              返回
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: isMobile ? 'wrap' : 'nowrap', gap: isMobile ? 8 : 0 }}>
+          <Space wrap={isMobile}>
+            <Button icon={<ArrowLeftOutlined />} onClick={handleBackClick} title="返回">
+              {isMobile ? null : '返回'}
             </Button>
             <Button
               icon={<LeftOutlined />}
@@ -372,9 +374,18 @@ const ChapterReader: React.FC = () => {
               disabled={!navigation?.previous}
               title={navigation?.previous ? `上一章: ${navigation.previous.title}` : '已是第一章'}
             >
-              {window.innerWidth < 768 ? null : '上一章'}
+              {isMobile ? null : '上一章'}
             </Button>
-            <span style={{ fontSize: 16, fontWeight: 600 }}>
+            <span style={{
+              fontSize: isMobile ? 14 : 16,
+              fontWeight: 600,
+              flex: isMobile ? '1 1 100%' : '0 0 auto',
+              order: isMobile ? 99 : 0,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              minWidth: 0,
+            }}>
               第{chapter.chapter_number}章: {chapter.title}
             </span>
             <Button
@@ -383,25 +394,26 @@ const ChapterReader: React.FC = () => {
               disabled={!navigation?.next}
               title={navigation?.next ? `下一章: ${navigation.next.title}` : '已是最后一章'}
             >
-              {window.innerWidth < 768 ? null : '下一章'}
+              {isMobile ? null : '下一章'}
             </Button>
           </Space>
 
-          <Space>
+          <Space wrap={isMobile}>
             <Button
               icon={<ReloadOutlined />}
               onClick={handleReanalyze}
               loading={analyzing}
               disabled={analyzing}
+              title={analyzing ? '分析中...' : '重新分析'}
             >
-              {analyzing ? '分析中...' : '重新分析'}
+              {isMobile ? null : (analyzing ? '分析中...' : '重新分析')}
             </Button>
             <Tooltip title={`阅读器主题：${readerTheme === 'dark' ? '深色' : '浅色'}（点击切换）`}>
               <Button
                 icon={readerTheme === 'dark' ? <MoonOutlined /> : <BulbOutlined />}
                 onClick={handleToggleReaderTheme}
               >
-                {readerTheme === 'dark' ? '深色' : '浅色'}
+                {isMobile ? null : (readerTheme === 'dark' ? '深色' : '浅色')}
               </Button>
             </Tooltip>
             {hasAnnotations && (
@@ -412,11 +424,11 @@ const ChapterReader: React.FC = () => {
                   checkedChildren={<EyeOutlined />}
                   unCheckedChildren={<EyeInvisibleOutlined />}
                 />
-                <span style={{ fontSize: 13, color: token.colorTextSecondary }}>显示标注</span>
+                {!isMobile && <span style={{ fontSize: 13, color: token.colorTextSecondary }}>显示标注</span>}
                 <Button
                   icon={<MenuOutlined />}
                   onClick={() => setSidebarVisible(true)}
-                  style={{ display: window.innerWidth < 768 ? 'inline-block' : 'none' }}
+                  style={{ display: isMobile ? 'inline-block' : 'none' }}
                 >
                   分析
                 </Button>
@@ -496,13 +508,13 @@ const ChapterReader: React.FC = () => {
           style={{
             flex: 1,
             overflowY: 'auto',
-            padding: '32px 48px',
-            maxWidth: hasAnnotations ? 'calc(100% - 400px)' : '100%',
+            padding: isMobile ? '16px 12px 32px' : '32px 48px',
+            maxWidth: (!isMobile && hasAnnotations) ? 'calc(100% - 400px)' : '100%',
             background: readerTheme === 'dark' ? '#0a0a0a' : '#F5F3FF',
           }}
         >
           <Card>
-            <div style={{ maxWidth: 800, margin: '0 auto' }}>
+            <div style={{ maxWidth: isMobile ? '100%' : 800, margin: '0 auto' }}>
               {!hasAnnotations && (
                 <Alert
                   message="暂无分析数据"
@@ -547,27 +559,29 @@ const ChapterReader: React.FC = () => {
 
               {/* 底部翻页按钮 */}
               <div style={{ marginTop: 48, paddingTop: 24, borderTop: `1px solid ${token.colorBorderSecondary}` }}>
-                <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                <Space style={{ width: '100%', justifyContent: 'space-between', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 8 : 8 }}>
                   <Button
-                    size="large"
+                    size={isMobile ? 'middle' : 'large'}
                     icon={<LeftOutlined />}
                     onClick={handlePreviousChapter}
                     disabled={!navigation?.previous}
+                    block={isMobile}
                   >
                     {navigation?.previous
-                      ? `上一章: 第${navigation.previous.chapter_number}章 ${navigation.previous.title}`
+                      ? (isMobile ? `上一章: 第${navigation.previous.chapter_number}章` : `上一章: 第${navigation.previous.chapter_number}章 ${navigation.previous.title}`)
                       : '已是第一章'}
                   </Button>
                   <Button
-                    size="large"
+                    size={isMobile ? 'middle' : 'large'}
                     type="primary"
                     icon={<RightOutlined />}
                     onClick={handleNextChapter}
                     disabled={!navigation?.next}
                     iconPosition="end"
+                    block={isMobile}
                   >
                     {navigation?.next
-                      ? `下一章: 第${navigation.next.chapter_number}章 ${navigation.next.title}`
+                      ? (isMobile ? `下一章: 第${navigation.next.chapter_number}章` : `下一章: 第${navigation.next.chapter_number}章 ${navigation.next.title}`)
                       : '已是最后一章'}
                   </Button>
                 </Space>
@@ -578,7 +592,7 @@ const ChapterReader: React.FC = () => {
         </ConfigProvider>
 
         {/* 右侧：记忆侧边栏（桌面端） */}
-        {hasAnnotations && annotationsData && window.innerWidth >= 768 && (
+        {hasAnnotations && annotationsData && !isMobile && (
           <div
             style={{
               width: 400,
