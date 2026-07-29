@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams, Outlet, NavLink } from 'react-router-dom';
-import { Layout, Typography, Button, Spin, theme, Grid } from 'antd';
+import { Layout, Typography, Button, Spin, theme, Grid, Dropdown, message } from 'antd';
 import {
   ArrowLeftOutlined,
   SettingOutlined,
@@ -8,6 +8,8 @@ import {
   EditOutlined,
   CheckSquareOutlined,
   ThunderboltOutlined,
+  DownloadOutlined,
+  PictureOutlined,
 } from '@ant-design/icons';
 import { shortStoryApi } from '../services/api';
 import { showErrorToast } from '../utils/errorHandler';
@@ -32,6 +34,7 @@ export default function ShortStoryDetail() {
   const { token } = theme.useToken();
   const { currentStory, setCurrentStory, loading, setLoading } = useShortStoryStore();
   const [collapsed, setCollapsed] = useState(isMobile);
+  const [coverLoading, setCoverLoading] = useState(false);
 
   const loadStory = async () => {
     if (!storyId) return;
@@ -58,6 +61,20 @@ export default function ShortStoryDetail() {
     { key: 'content', icon: <EditOutlined />, label: '正文创作', path: 'content' },
     { key: 'polish', icon: <CheckSquareOutlined />, label: '精修笔记', path: 'polish' },
   ];
+
+  const handleGenerateCover = async () => {
+    if (!currentStory) return;
+    try {
+      setCoverLoading(true);
+      const res = await shortStoryApi.generateCover(currentStory.id);
+      setCurrentStory({ ...currentStory, cover_image_url: res.cover_image_url });
+      message.success('封面已生成');
+    } catch (error) {
+      showErrorToast(error, '生成封面失败');
+    } finally {
+      setCoverLoading(false);
+    }
+  };
 
   if (loading || !currentStory) {
     return (
@@ -151,6 +168,36 @@ export default function ShortStoryDetail() {
             </NavLink>
           ))}
         </div>
+
+        {!collapsed && (
+          <div style={{ padding: '12px 16px', borderTop: `1px solid ${token.colorBorderSecondary}` }}>
+            <Dropdown
+              menu={{
+                items: [
+                  { key: 'markdown', label: '导出 Markdown' },
+                  { key: 'txt', label: '导出 TXT' },
+                ],
+                onClick: ({ key }) => {
+                  if (key === 'markdown') shortStoryApi.exportMarkdown(currentStory.id);
+                  else if (key === 'txt') shortStoryApi.exportTxt(currentStory.id);
+                },
+              }}
+            >
+              <Button icon={<DownloadOutlined />} block>
+                导出
+              </Button>
+            </Dropdown>
+            <Button
+              icon={<PictureOutlined />}
+              block
+              loading={coverLoading}
+              onClick={handleGenerateCover}
+              style={{ marginTop: 8 }}
+            >
+              生成封面
+            </Button>
+          </div>
+        )}
       </Sider>
 
       <Content style={{ background: token.colorBgLayout, overflow: 'auto' }}>

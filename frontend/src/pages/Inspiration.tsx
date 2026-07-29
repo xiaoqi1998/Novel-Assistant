@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Card, Input, Button, Space, Typography, message, Spin, Modal, theme } from 'antd';
-import { SendOutlined, ArrowLeftOutlined, ReloadOutlined } from '@ant-design/icons';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Card, Input, Button, Space, Typography, message, Spin, Modal, theme, Segmented } from 'antd';
+import { SendOutlined, ArrowLeftOutlined, ReloadOutlined, BookOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { inspirationApi } from '../services/api';
 import { AIProjectGenerator, type GenerationConfig } from '../components/AIProjectGenerator';
+import ShortStoryInspiration from './ShortStoryInspiration';
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -50,6 +51,10 @@ const CACHE_EXPIRY = 24 * 60 * 60 * 1000;
 
 const Inspiration: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const [mode, setMode] = useState<'long' | 'short'>(() => {
+    return searchParams.get('mode') === 'short' ? 'short' : 'long';
+  });
   const [currentStep, setCurrentStep] = useState<Step>('idea');
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const { token } = theme.useToken();
@@ -1064,12 +1069,44 @@ const Inspiration: React.FC = () => {
     </>
   );
 
+  if (mode === 'short') {
+    return (
+      <div style={{ minHeight: '100dvh', background: token.colorBgBase, paddingTop: 8 }}>
+        <div style={{ maxWidth: 800, margin: '0 auto', padding: '0 16px' }}>
+          <Segmented
+            value={mode}
+            onChange={(v) => setMode(v as 'long' | 'short')}
+            options={[
+              { label: '长篇小说', value: 'long', icon: <BookOutlined /> },
+              { label: '短故事', value: 'short', icon: <ThunderboltOutlined /> },
+            ]}
+            block
+            style={{ marginBottom: 16 }}
+          />
+        </div>
+        <ShortStoryInspiration onBack={() => navigate('/')} />
+      </div>
+    );
+  }
+
   return (
     <div style={{
       minHeight: '100dvh',
       background: token.colorBgBase,
     }}>
       {contextHolder}
+      <div style={{ maxWidth: 800, margin: '0 auto', padding: '16px 16px 0' }}>
+        <Segmented
+          value={mode}
+          onChange={(v) => setMode(v as 'long' | 'short')}
+          options={[
+            { label: '长篇小说', value: 'long', icon: <BookOutlined /> },
+            { label: '短故事', value: 'short', icon: <ThunderboltOutlined /> },
+          ]}
+          block
+          style={{ marginBottom: 8 }}
+        />
+      </div>
       <style>
         {`
           @keyframes fadeInUp {

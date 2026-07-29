@@ -12,6 +12,7 @@ import {
   message,
   Space,
   Tag,
+  Modal,
 } from 'antd';
 import { SaveOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import { shortStoryApi } from '../../services/api';
@@ -50,6 +51,12 @@ export default function Setup() {
   const [characters, setCharacters] = useState<ShortStoryCharacter[]>([]);
   const [clues, setClues] = useState<string[]>([]);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [generatingLogline, setGeneratingLogline] = useState(false);
+  const [generatingTwist, setGeneratingTwist] = useState(false);
+  const [loglineOptions, setLoglineOptions] = useState<string[]>([]);
+  const [loglineModalOpen, setLoglineModalOpen] = useState(false);
+  const [twistOptions, setTwistOptions] = useState<Array<{ twist_type: string; twist_content: string; clues: string[] }>>([]);
+  const [twistModalOpen, setTwistModalOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -137,6 +144,37 @@ export default function Setup() {
     scheduleAutoSave();
   };
 
+  const handleGenerateLogline = async () => {
+    try {
+      setGeneratingLogline(true);
+      const values = form.getFieldsValue();
+      const res = await shortStoryApi.generateLoglines(story.id, {
+        title: values.title,
+        emotion_goal: values.emotion_goal,
+        genre: values.genre,
+      });
+      setLoglineOptions(res.options || []);
+      setLoglineModalOpen(true);
+    } catch (error) {
+      showErrorToast(error, 'AI生成梗概失败');
+    } finally {
+      setGeneratingLogline(false);
+    }
+  };
+
+  const handleGenerateTwist = async () => {
+    try {
+      setGeneratingTwist(true);
+      const res = await shortStoryApi.generateTwists(story.id);
+      setTwistOptions(res.options || []);
+      setTwistModalOpen(true);
+    } catch (error) {
+      showErrorToast(error, 'AI设计反转失败');
+    } finally {
+      setGeneratingTwist(false);
+    }
+  };
+
   return (
     <div style={{ padding: 24, maxWidth: 900, margin: '0 auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -160,7 +198,18 @@ export default function Setup() {
           <Form.Item name="title" label="故事标题" rules={[{ required: true }]}>
             <Input maxLength={200} />
           </Form.Item>
-          <Form.Item name="logline" label="一句话梗概" tooltip="主角+困境+反转+情绪落点">
+          <Form.Item
+            name="logline"
+            label={
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                一句话梗概
+                <Button size="small" type="link" loading={generatingLogline} onClick={handleGenerateLogline} style={{ padding: 0 }}>
+                  AI生成
+                </Button>
+              </span>
+            }
+            tooltip="主角+困境+反转+情绪落点"
+          >
             <TextArea rows={2} maxLength={500} showCount />
           </Form.Item>
           <Space style={{ width: '100%' }} size="middle">
@@ -207,7 +256,18 @@ export default function Setup() {
           <Form.Item name="twist_type" label="反转类型">
             <Select options={TWIST_TYPES.map((t) => ({ value: t, label: t }))} allowClear />
           </Form.Item>
-          <Form.Item name="twist_content" label="反转内容" tooltip="亮出什么底牌？如何剥洋葱式揭露？">
+          <Form.Item
+            name="twist_content"
+            label={
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                反转内容
+                <Button size="small" type="link" loading={generatingTwist} onClick={handleGenerateTwist} style={{ padding: 0 }}>
+                  AI设计反转
+                </Button>
+              </span>
+            }
+            tooltip="亮出什么底牌？如何剥洋葱式揭露？"
+          >
             <TextArea rows={3} maxLength={1000} showCount />
           </Form.Item>
 
@@ -314,6 +374,78 @@ export default function Setup() {
           </Button>
         </Card>
       </Form>
+
+      <Modal
+        title="AI生成梗概选项"
+        open={loglineModalOpen}
+        onCancel={() => setLoglineModalOpen(false)}
+        footer={null}
+      >
+        {loglineOptions.map((opt, idx) => (
+          <div
+            key={idx}
+            style={{
+              padding: 12,
+              marginBottom: 8,
+              background: '#fafafa',
+              borderRadius: 6,
+              cursor: 'pointer',
+              border: '1px solid #f0f0f0',
+            }}
+            onClick={() => {
+              form.setFieldsValue({ logline: opt });
+              setLoglineModalOpen(false);
+              scheduleAutoSave();
+              message.success('已填入梗概');
+            }}
+          >
+            <Text>{opt}</Text>
+          </div>
+        ))}
+      </Modal>
+
+      <Modal
+        title="AI设计反转选项"
+        open={twistModalOpen}
+        onCancel={() => setTwistModalOpen(false)}
+        footer={null}
+      >
+        {twistOptions.map((opt, idx) => (
+          <div
+            key={idx}
+            style={{
+              padding: 12,
+              marginBottom: 8,
+              background: '#fafafa',
+              borderRadius: 6,
+              cursor: 'pointer',
+              border: '1px solid #f0f0f0',
+            }}
+            onClick={() => {
+              form.setFieldsValue({ twist_type: opt.twist_type, twist_content: opt.twist_content });
+              setClues(opt.clues || []);
+              setTwistModalOpen(false);
+              scheduleAutoSave();
+              message.success('已填入反转设计');
+            }}
+          >
+            <div>
+              <Tag color="red">{opt.twist_type}</Tag>
+            </div>
+            <div style={{ marginTop: 6 }}>
+              <Text>{opt.twist_content}</Text>
+            </div>
+            {opt.clues && opt.clues.length > 0 && (
+              <div style={{ marginTop: 6 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>铺垫线索：</Text>
+                {opt.clues.map((c, i) => (
+                  <Tag key={i} color="blue" style={{ marginBottom: 4 }}>{c}</Tag>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </Modal>
     </div>
   );
 }

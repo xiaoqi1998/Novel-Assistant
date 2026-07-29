@@ -46,6 +46,7 @@ export default function Polish() {
   const [notes, setNotes] = useState(story.polish_notes || '');
   const [saving, setSaving] = useState(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [polishing, setPolishing] = useState(false);
 
   useEffect(() => {
     try {
@@ -89,6 +90,28 @@ export default function Polish() {
     scheduleAutoSave();
   };
 
+  const handlePolish = async () => {
+    try {
+      setPolishing(true);
+      await shortStoryApi.polish(story.id);
+      message.success('正文已AI润色更新');
+      const now = new Date();
+      const timestamp = `${now.toLocaleDateString('zh-CN')} ${now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
+      const newRecord = `[${timestamp}] AI润色正文：已完成全文AI精修润色`;
+      const newNotes = notes ? `${notes}\n${newRecord}` : newRecord;
+      setNotes(newNotes);
+      const updated = await shortStoryApi.update(story.id, {
+        polish_checklist: JSON.stringify(checklist),
+        polish_notes: newNotes,
+      });
+      updateCurrentStory(updated);
+    } catch (error) {
+      showErrorToast(error, 'AI润色失败');
+    } finally {
+      setPolishing(false);
+    }
+  };
+
   // 按类别分组
   const grouped: Record<string, PolishChecklistItem[]> = {};
   checklist.forEach((item) => {
@@ -104,9 +127,14 @@ export default function Polish() {
     <div style={{ padding: 24, maxWidth: 900, margin: '0 auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}>精修笔记</Title>
-        <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={() => handleSave(true)}>
-          保存
-        </Button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <Button loading={polishing} onClick={handlePolish}>
+            AI润色正文
+          </Button>
+          <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={() => handleSave(true)}>
+            保存
+          </Button>
+        </div>
       </div>
 
       <Alert

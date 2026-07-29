@@ -1,9 +1,16 @@
 """短故事管理API"""
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, delete
+from pydantic import BaseModel
+from typing import Optional
+from urllib.parse import quote
 import json
 import re
+import os
+import asyncio
+from datetime import datetime
 
 from app.database import get_db
 from app.models.short_story import ShortStory
@@ -13,6 +20,9 @@ from app.schemas.short_story import (
     ShortStoryResponse,
     ShortStoryListResponse
 )
+from app.services.ai_service import AIService
+from app.services.short_story_ai_service import ShortStoryAIService
+from app.api.settings import get_user_ai_service
 from app.logger import get_logger
 
 logger = get_logger(__name__)
@@ -267,4 +277,401 @@ async def delete_short_story(
         raise
     except Exception as e:
         logger.error(f"删除短故事失败: {str(e)}", exc_info=True)
+        raise
+
+
+# ============ AI 生成端点 ============
+
+class GenerateLoglinesRequest(BaseModel):
+    title: Optional[str] = None
+    emotion_goal: Optional[str] = None
+    genre: Optional[str] = None
+    user_idea: Optional[str] = None
+
+
+@router.post("/{story_id}/generate-loglines", summary="AI生成一句话梗概")
+async def generate_loglines(
+    story_id: str,
+    req: GenerateLoglinesRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    ai_service: AIService = Depends(get_user_ai_service),
+):
+    try:
+        user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="未登录")
+
+        result = await db.execute(
+            select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+        )
+        story = result.scalar_one_or_none()
+        if not story:
+            raise HTTPException(status_code=404, detail="短故事不存在")
+
+        options = await ShortStoryAIService.generate_loglines(
+            ai_service=ai_service,
+            title=req.title or story.title or "",
+            emotion_goal=req.emotion_goal or story.emotion_goal or "",
+            genre=req.genre or story.genre or "",
+            user_idea=req.user_idea or story.logline or "",
+        )
+        return {"options": options}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"AI生成梗概失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"生成失败: {str(e)}")
+
+
+@router.post("/{story_id}/generate-twists", summary="AI生成核心反转设计")
+async def generate_twists(
+    story_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    ai_service: AIService = Depends(get_user_ai_service),
+):
+    try:
+        user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="未登录")
+
+        result = await db.execute(
+            select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+        )
+        story = result.scalar_one_or_none()
+        if not story:
+            raise HTTPException(status_code=404, detail="短故事不存在")
+
+        options = await ShortStoryAIService.generate_twists(
+            ai_service=ai_service,
+            title=story.title or "",
+            logline=story.logline or "",
+            emotion_goal=story.emotion_goal or "",
+        )
+        return {"options": options}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"AI生成反转失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"生成失败: {str(e)}")
+
+
+class GenerateSegmentRequest(BaseModel):
+    segment_stage: str  # hook / escalation / climax / resolution
+
+
+@router.post("/{story_id}/generate-segment", summary="AI生成分段正文")
+async def generate_segment(
+    story_id: str,
+    req: GenerateSegmentRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    ai_service: AIService = Depends(get_user_ai_service),
+):
+    try:
+        user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="未登录")
+
+        result = await db.execute(
+            select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+        )
+        story = result.scalar_one_or_none()
+        if not story:
+            raise HTTPException(status_code=404, detail="短故事不存在")
+
+        # 解析分段
+        try:
+            segments = json.loads(story.segments) if story.segments else []
+        except (json.JSONDecodeError, TypeError):
+            segments = json.loads(_build_default_segments(story.target_words or 12000))
+
+        target_segment = None
+        for seg in segments:
+            if seg.get("stage") == req.segment_stage:
+                target_segment = seg
+                break
+
+        if not target_segment:
+            raise HTTPException(status_code=400, detail=f"未找到段落: {req.segment_stage}")
+
+        story_data = {
+            "title": story.title,
+            "logline": story.logline,
+            "emotion_goal": story.emotion_goal,
+            "twist_content": story.twist_content,
+            "twist_type": story.twist_type,
+            "twist_clues": story.twist_clues,
+            "characters": story.characters,
+            "target_platform": story.target_platform,
+            "target_words": story.target_words,
+        }
+
+        content = await ShortStoryAIService.generate_segment_content(
+            ai_service=ai_service,
+            story_data=story_data,
+            segment=target_segment,
+            existing_content=story.content or "",
+        )
+        return {"content": content}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"AI生成分段失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"生成失败: {str(e)}")
+
+
+@router.post("/{story_id}/polish", summary="AI精修润色正文")
+async def polish_story(
+    story_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    ai_service: AIService = Depends(get_user_ai_service),
+):
+    try:
+        user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="未登录")
+
+        result = await db.execute(
+            select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+        )
+        story = result.scalar_one_or_none()
+        if not story:
+            raise HTTPException(status_code=404, detail="短故事不存在")
+
+        if not story.content:
+            raise HTTPException(status_code=400, detail="正文为空，无法精修")
+
+        polished = await ShortStoryAIService.polish_content(
+            ai_service=ai_service,
+            title=story.title or "",
+            emotion_goal=story.emotion_goal or "",
+            twist_content=story.twist_content or "",
+            content=story.content,
+        )
+
+        # 更新正文
+        story.content = polished
+        story.current_words = _count_chinese_and_punctuation(polished)
+        story.segments, _ = _recalc_segments_from_content(
+            polished, story.target_words or 12000, story.segments
+        )
+        story.status = "polishing"
+        await db.commit()
+        await db.refresh(story)
+        return {"content": polished, "current_words": story.current_words}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"AI精修失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"精修失败: {str(e)}")
+
+
+# ============ 导出端点 ============
+
+@router.get("/{story_id}/export-markdown", summary="导出短故事为Markdown")
+async def export_markdown(
+    story_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="未登录")
+
+        result = await db.execute(
+            select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+        )
+        story = result.scalar_one_or_none()
+        if not story:
+            raise HTTPException(status_code=404, detail="短故事不存在")
+
+        # 构建安全文件名
+        safe_title = re.sub(r'[^\w\u4e00-\u9fa5\s\-_，。、]', '', story.title)[:50].strip() or "短故事"
+        safe_title = safe_title.replace(' ', '_')
+
+        status_map = {"planning": "规划中", "writing": "创作中", "polishing": "精修中", "completed": "已完结"}
+        export_time = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+        md = f"""# {story.title}
+
+> **类型**: 短故事
+> **状态**: {status_map.get(story.status, story.status)}
+> **字数**: {story.current_words} 字
+> **目标字数**: {story.target_words} 字
+> **情绪目标**: {story.emotion_goal or '未设定'}
+> **导出时间**: {export_time}
+
+---
+
+## 故事设定
+
+**一句话梗概**: {story.logline or '未设定'}
+
+**核心反转**: {story.twist_content or '未设定'}
+
+**反转类型**: {story.twist_type or '未设定'}
+
+**题材标签**: {story.genre or '未设定'}
+
+**目标平台**: {story.target_platform or '未设定'}
+
+---
+
+## 正文
+
+{story.content or '（暂无正文）'}
+"""
+
+        encoded_filename = quote(f"{safe_title}.md")
+        return Response(
+            content=md,
+            media_type="text/markdown; charset=utf-8",
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"导出短故事Markdown失败: {str(e)}", exc_info=True)
+        raise
+
+
+@router.get("/{story_id}/export-txt", summary="导出短故事为TXT")
+async def export_txt(
+    story_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="未登录")
+
+        result = await db.execute(
+            select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+        )
+        story = result.scalar_one_or_none()
+        if not story:
+            raise HTTPException(status_code=404, detail="短故事不存在")
+
+        safe_title = re.sub(r'[^\w\u4e00-\u9fa5\s\-_，。、]', '', story.title)[:50].strip() or "短故事"
+        safe_title = safe_title.replace(' ', '_')
+
+        txt = f"""{story.title}
+
+{story.content or '（暂无正文）'}
+"""
+        encoded_filename = quote(f"{safe_title}.txt")
+        return Response(
+            content=txt,
+            media_type="text/plain; charset=utf-8",
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"导出短故事TXT失败: {str(e)}", exc_info=True)
+        raise
+
+
+# ============ 封面生成端点 ============
+
+@router.post("/{story_id}/generate-cover", summary="生成短故事封面")
+async def generate_cover(
+    story_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="未登录")
+
+        result = await db.execute(
+            select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+        )
+        story = result.scalar_one_or_none()
+        if not story:
+            raise HTTPException(status_code=404, detail="短故事不存在")
+
+        if story.cover_status == "generating":
+            raise HTTPException(status_code=409, detail="封面正在生成中，请稍候")
+
+        # 延迟导入，避免循环依赖
+        from app.services.cover_generation_service import (
+            CoverGenerationService, GENERATED_COVER_STORAGE_DIR,
+            GENERATED_COVER_PUBLIC_PREFIX, COVER_WIDTH, COVER_HEIGHT
+        )
+        from app.services.prompt_service import PromptService
+        from app.api.settings import get_user_ai_service_from_db
+        from sqlalchemy import select as sa_select
+        from app.models.settings import Settings
+
+        # 获取用户设置
+        settings_result = await db.execute(
+            sa_select(Settings).where(Settings.user_id == user_id)
+        )
+        settings = settings_result.scalar_one_or_none()
+        if not settings:
+            raise HTTPException(status_code=400, detail="请先在设置中配置封面生成参数")
+
+        if not settings.cover_enabled:
+            raise HTTPException(status_code=400, detail="封面生成未启用，请先在设置中开启")
+
+        # 构建封面提示词（复用 PromptService）
+        cover_prompt = await PromptService.build_novel_cover_prompt(story, user_id, db)
+
+        story.cover_status = "generating"
+        story.cover_prompt = cover_prompt
+        await db.commit()
+
+        try:
+            service = CoverGenerationService()
+            provider = service._build_provider(settings)
+            cover_result = await provider.generate_cover(
+                prompt=cover_prompt,
+                model=settings.cover_image_model,
+                width=COVER_WIDTH,
+                height=COVER_HEIGHT,
+            )
+
+            # 保存文件
+            from datetime import datetime as dt
+            user_dir = GENERATED_COVER_STORAGE_DIR / user_id
+            user_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = dt.utcnow().strftime("%Y%m%d%H%M%S")
+            safe_ext = cover_result.get("file_extension", "png")
+            filename = f"{story_id}_{timestamp}.{safe_ext}"
+            file_path = user_dir / filename
+            file_path.write_bytes(cover_result["content"])
+
+            cover_url = f"{GENERATED_COVER_PUBLIC_PREFIX}/{quote(user_id)}/{quote(filename)}"
+
+            story.cover_image_url = cover_url
+            story.cover_status = "ready"
+            await db.commit()
+            await db.refresh(story)
+
+            return {
+                "cover_status": "ready",
+                "cover_image_url": cover_url,
+                "cover_prompt": cover_prompt,
+                "message": "封面生成成功",
+            }
+        except Exception as e:
+            story.cover_status = "failed"
+            await db.commit()
+            logger.error(f"封面生成失败: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"封面生成失败: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"生成短故事封面失败: {str(e)}", exc_info=True)
         raise

@@ -1027,6 +1027,40 @@ export const shortStoryApi = {
   // 删除短故事
   delete: (id: string) =>
     api.delete<unknown, { message: string }>(`/short-stories/${id}`),
+
+  // AI生成一句话梗概
+  generateLoglines: (id: string, params?: { title?: string; emotion_goal?: string; genre?: string; user_idea?: string }) =>
+    api.post<unknown, { options: string[] }>(`/short-stories/${id}/generate-loglines`, params || {}),
+
+  // AI生成核心反转设计
+  generateTwists: (id: string) =>
+    api.post<unknown, { options: Array<{ twist_type: string; twist_content: string; clues: string[] }> }>(`/short-stories/${id}/generate-twists`),
+
+  // AI生成分段正文
+  generateSegment: (id: string, segmentStage: string) =>
+    api.post<unknown, { content: string }>(`/short-stories/${id}/generate-segment`, { segment_stage: segmentStage }),
+
+  // AI精修润色
+  polish: (id: string) =>
+    api.post<unknown, { content: string; current_words: number }>(`/short-stories/${id}/polish`),
+
+  // 导出Markdown
+  exportMarkdown: (id: string) => {
+    window.open(`/api/short-stories/${id}/export-markdown`, '_blank');
+  },
+
+  // 导出TXT
+  exportTxt: (id: string) => {
+    window.open(`/api/short-stories/${id}/export-txt`, '_blank');
+  },
+
+  // 生成封面
+  generateCover: (id: string) =>
+    api.post<unknown, { cover_status: string; cover_image_url: string; cover_prompt: string; message: string }>(`/short-stories/${id}/generate-cover`),
+};
+export const shortInspirationApi = {
+  generateOptions: (data: { step: string; context: Record<string, string> }) =>
+    api.post<unknown, { prompt: string; options: unknown[] }>('/short-inspiration/generate-options', data),
 };
 export const inspirationApi = {
   // 生成选项建议

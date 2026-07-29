@@ -62,6 +62,8 @@ export default function Content() {
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contentRef = useRef<string>(content);
+  const [generatingSegment, setGeneratingSegment] = useState<string | null>(null);
+  const [polishing, setPolishing] = useState(false);
 
   useEffect(() => {
     contentRef.current = content;
@@ -121,6 +123,35 @@ export default function Content() {
       .catch((err) => showErrorToast(err, '更新分段状态失败'));
   };
 
+  const handleGenerateSegment = async (stage: string) => {
+    try {
+      setGeneratingSegment(stage);
+      const res = await shortStoryApi.generateSegment(story.id, stage);
+      const newContent = contentRef.current + (contentRef.current ? '\n\n' : '') + res.content;
+      setContent(newContent);
+      scheduleAutoSave();
+      message.success('已生成本段内容');
+    } catch (error) {
+      showErrorToast(error, 'AI生成分段失败');
+    } finally {
+      setGeneratingSegment(null);
+    }
+  };
+
+  const handlePolish = async () => {
+    try {
+      setPolishing(true);
+      const res = await shortStoryApi.polish(story.id);
+      setContent(res.content);
+      scheduleAutoSave();
+      message.success('已精修全文');
+    } catch (error) {
+      showErrorToast(error, 'AI精修失败');
+    } finally {
+      setPolishing(false);
+    }
+  };
+
   return (
     <div style={{ padding: 24, maxWidth: 1200, margin: '0 auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -133,6 +164,9 @@ export default function Content() {
           )}
           <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={() => handleSave(true)}>
             保存
+          </Button>
+          <Button loading={polishing} onClick={handlePolish}>
+            AI精修全文
           </Button>
         </div>
       </div>
@@ -214,6 +248,15 @@ export default function Content() {
                   目标 {formatWordCount(seg.target_words)} 字（{Math.round(seg.target_ratio * 100)}%）
                 </Text>
                 <Progress percent={segProgress} size="small" strokeColor={color} />
+                <Button
+                  size="small"
+                  type="link"
+                  loading={generatingSegment === seg.stage}
+                  onClick={() => handleGenerateSegment(seg.stage)}
+                  style={{ padding: 0, marginTop: 4, fontSize: 12 }}
+                >
+                  AI生成
+                </Button>
               </div>
             );
           })}
