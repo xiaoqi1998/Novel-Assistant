@@ -20,6 +20,7 @@ from app.schemas.character import (
     CharacterGenerateRequest
 )
 from app.services.ai_service import AIService
+from app.services.character_arc_service import CharacterArcService
 from app.services.json_helper import loads_json
 from app.services.prompt_service import prompt_service, PromptService
 from app.services.import_export_service import ImportExportService
@@ -1347,6 +1348,17 @@ async def generate_character_stream(
             
             await db.commit()
             await db.refresh(character)
+            
+            # 自动生成角色弧光（失败不影响主流程）
+            try:
+                arc_service = CharacterArcService(user_ai_service)
+                await arc_service.generate_arc_for_character(
+                    character=character,
+                    project=project,
+                    db=db
+                )
+            except Exception as arc_error:
+                logger.warning(f"⚠️ 自动生成弧光失败: {arc_error}")
             
             logger.info(f"🎉 成功生成角色: {character.name}")
             

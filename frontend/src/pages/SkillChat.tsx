@@ -217,7 +217,7 @@ const SkillChat: React.FC = () => {
     return (
       <div style={{ height: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column', padding: '0 16px', minWidth: 0, overflow: 'hidden' }}>
         {/* 顶部栏 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: '1px solid #f0f0f0', flexWrap: isMobile ? 'wrap' : 'nowrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: `1px solid ${token.colorBorderSecondary}`, flexWrap: isMobile ? 'wrap' : 'nowrap' }}>
           <Button size="small" onClick={() => { setSelectedSkill(null); setMessages([]); try { localStorage.removeItem(CHAT_HISTORY_KEY); } catch { /* ignore */ } }}>← 返回</Button>
           <ThunderboltOutlined style={{ color: '#1890ff' }} />
           <Text strong>{selectedSkill.template_name}</Text>
@@ -264,15 +264,15 @@ const SkillChat: React.FC = () => {
             }}>
               <div style={{
                 width: 36, height: 36, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: msg.role === 'user' ? '#1890ff' : '#f0f0f0', color: msg.role === 'user' ? '#fff' : '#333',
+                background: msg.role === 'user' ? '#1890ff' : token.colorFillTertiary, color: msg.role === 'user' ? '#fff' : token.colorText,
                 flexShrink: 0,
               }}>
                 {msg.role === 'user' ? <UserOutlined /> : <RobotOutlined />}
               </div>
               <div style={{
                 maxWidth: '75%', padding: '10px 16px', borderRadius: 12,
-                background: msg.role === 'user' ? '#1890ff' : '#f5f5f5',
-                color: msg.role === 'user' ? '#fff' : '#333',
+                background: msg.role === 'user' ? '#1890ff' : token.colorFillTertiary,
+                color: msg.role === 'user' ? '#fff' : token.colorText,
               }}>
                 {msg.role === 'assistant' ? (
                   <>
@@ -305,7 +305,7 @@ const SkillChat: React.FC = () => {
         </div>
 
         {/* 输入区域 */}
-        <div style={{ padding: '12px 0', borderTop: '1px solid #f0f0f0', display: 'flex', gap: 8 }}>
+        <div style={{ padding: '12px 0', borderTop: `1px solid ${token.colorBorderSecondary}`, display: 'flex', gap: 8 }}>
           <TextArea
             value={inputValue}
             onChange={e => setInputValue(e.target.value)}

@@ -446,7 +446,9 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
 
   // 根据任务类型获取跳转路由
   const getTaskRoute = (task: TaskStatus): string => {
-    const base = `/project/${task.project_id}`;
+    // 优先使用组件已知的 projectId，避免后端数据缺失导致 undefined
+    const pid = task.project_id || projectId;
+    const base = `/project/${pid}`;
     switch (task.task_type) {
       case 'full_review':
         return `${base}/full-review`;

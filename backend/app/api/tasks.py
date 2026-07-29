@@ -71,6 +71,7 @@ async def get_tasks(
         {
             "id": t.id,
             "task_type": t.task_type,
+            "project_id": t.project_id,
             "status": t.status,
             "progress": t.progress,
             "status_message": t.status_message,
@@ -113,6 +114,7 @@ async def get_tasks(
             items.append({
                 "id": bt.id,
                 "task_type": "chapter_batch",
+                "project_id": bt.project_id,
                 "status": bt.status,
                 "progress": progress,
                 "status_message": status_message,

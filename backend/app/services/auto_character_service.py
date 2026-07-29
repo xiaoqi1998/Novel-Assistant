@@ -8,6 +8,7 @@ from app.models.character import Character
 from app.models.relationship import CharacterRelationship, Organization, OrganizationMember, RelationshipType
 from app.models.project import Project
 from app.services.ai_service import AIService
+from app.services.character_arc_service import CharacterArcService
 from app.services.prompt_service import PromptService
 from app.logger import get_logger
 
@@ -519,6 +520,21 @@ class AutoCharacterService:
                         project_id=project_id,
                         db=db
                     )
+                
+                # 自动生成角色弧光（失败不影响主流程）
+                try:
+                    if progress_callback:
+                        await progress_callback(
+                            f"✨ [{idx+1}/{len(missing_names)}] 生成角色弧光：{char_name}..."
+                        )
+                    arc_service = CharacterArcService(self.ai_service)
+                    await arc_service.generate_arc_for_character(
+                        character=character,
+                        project=project,
+                        db=db
+                    )
+                except Exception as arc_error:
+                    logger.warning(f"    ⚠️ 自动生成弧光失败: {arc_error}")
                 
                 if progress_callback:
                     await progress_callback(
