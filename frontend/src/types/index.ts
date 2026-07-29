@@ -233,6 +233,104 @@ export interface WorldBuildingResponse {
   rules: string;
 }
 
+// 短故事类型定义
+export interface ShortStory {
+  id: string;
+  title: string;
+  logline?: string;
+  genre?: string;
+  target_platform?: string;
+  target_words?: number;
+  current_words: number;
+  status: 'planning' | 'writing' | 'polishing' | 'completed';
+  emotion_goal?: string;
+  emotion_goal_desc?: string;
+  twist_type?: string;
+  twist_content?: string;
+  twist_clues?: string;
+  emotion_curve?: string;
+  characters?: string;
+  content?: string;
+  segments?: string;
+  polish_notes?: string;
+  polish_checklist?: string;
+  cover_image_url?: string;
+  cover_prompt?: string;
+  cover_status?: 'none' | 'generating' | 'ready' | 'failed';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ShortStoryCreate {
+  title: string;
+  logline?: string;
+  genre?: string;
+  target_platform?: string;
+  target_words?: number;
+  emotion_goal?: string;
+  emotion_goal_desc?: string;
+  twist_type?: string;
+  twist_content?: string;
+  twist_clues?: string;
+  emotion_curve?: string;
+  characters?: string;
+  content?: string;
+  segments?: string;
+  polish_notes?: string;
+  polish_checklist?: string;
+}
+
+export interface ShortStoryUpdate {
+  title?: string;
+  logline?: string;
+  genre?: string;
+  target_platform?: string;
+  target_words?: number;
+  emotion_goal?: string;
+  emotion_goal_desc?: string;
+  twist_type?: string;
+  twist_content?: string;
+  twist_clues?: string;
+  emotion_curve?: string;
+  characters?: string;
+  content?: string;
+  segments?: string;
+  polish_notes?: string;
+  polish_checklist?: string;
+  status?: 'planning' | 'writing' | 'polishing' | 'completed';
+}
+
+export interface EmotionNode {
+  stage: 'opening' | 'buildup' | 'twist' | 'ending';
+  emotion: string;
+  intensity: number;
+}
+
+export interface ShortStoryCharacter {
+  name: string;
+  role: 'protagonist' | 'key';
+  desc: string;
+  relationship?: string;
+}
+
+export interface StorySegment {
+  stage: 'hook' | 'escalation' | 'climax' | 'resolution';
+  label: string;
+  target_ratio: number;
+  target_words: number;
+  actual_words: number;
+  status: 'pending' | 'writing' | 'completed';
+  desc?: string;
+}
+
+export interface PolishChecklistItem {
+  id: string;
+  category: string;
+  item: string;
+  checked: boolean;
+  fix: string;
+}
+
 // 大纲类型定义
 export interface Outline {
   id: string;

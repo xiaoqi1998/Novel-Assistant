@@ -8,6 +8,9 @@ import type {
   ProjectCreate,
   ProjectUpdate,
   WorldBuildingResponse,
+  ShortStory,
+  ShortStoryCreate,
+  ShortStoryUpdate,
   Outline,
   OutlineCreate,
   OutlineUpdate,
@@ -1002,6 +1005,28 @@ export const polishApi = {
 
   polishBatch: (texts: string[]) =>
     api.post<unknown, { polished_texts: string[] }>('/polish/batch', { texts }),
+};
+
+export const shortStoryApi = {
+  // 创建短故事
+  create: (data: ShortStoryCreate) =>
+    api.post<unknown, ShortStory>('/short-stories', data),
+
+  // 获取短故事列表
+  list: (params?: { skip?: number; limit?: number }) =>
+    api.get<unknown, { total: number; items: ShortStory[] }>('/short-stories', { params }),
+
+  // 获取短故事详情
+  get: (id: string) =>
+    api.get<unknown, ShortStory>(`/short-stories/${id}`),
+
+  // 更新短故事
+  update: (id: string, data: ShortStoryUpdate) =>
+    api.put<unknown, ShortStory>(`/short-stories/${id}`, data),
+
+  // 删除短故事
+  delete: (id: string) =>
+    api.delete<unknown, { message: string }>(`/short-stories/${id}`),
 };
 export const inspirationApi = {
   // 生成选项建议

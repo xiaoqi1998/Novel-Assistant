@@ -28,6 +28,12 @@ import SkillChat from './pages/SkillChat';
 import SkillManage from './pages/SkillManage';
 import FullReview from './pages/FullReview';
 // import Polish from './pages/Polish';
+import ShortStoryWizard from './pages/ShortStoryWizard';
+import ShortStoryDetail from './pages/ShortStoryDetail';
+import ShortStorySetup from './pages/short-story/Setup';
+import ShortStoryEmotionCurve from './pages/short-story/EmotionCurve';
+import ShortStoryContent from './pages/short-story/Content';
+import ShortStoryPolish from './pages/short-story/Polish';
 import Login from './pages/Login';
 import AuthCallback from './pages/AuthCallback';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -62,6 +68,7 @@ function App() {
           </Route>
 
           <Route path="/wizard" element={<ProtectedRoute><ProjectWizardNew /></ProtectedRoute>} />
+          <Route path="/short-story-wizard" element={<ProtectedRoute><ShortStoryWizard /></ProtectedRoute>} />
           <Route path="/inspiration" element={<ProtectedRoute><Inspiration /></ProtectedRoute>} />
           <Route path="/user-management" element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />
           <Route path="/chapters/:chapterId/reader" element={<ProtectedRoute><ChapterReader /></ProtectedRoute>} />
@@ -82,6 +89,13 @@ function App() {
             <Route path="skill-chat" element={<SkillChat />} />
             <Route path="skill-manage" element={<SkillManage />} />
             <Route path="full-review" element={<FullReview />} />
+          </Route>
+          <Route path="/short-story/:storyId" element={<ProtectedRoute><ShortStoryDetail /></ProtectedRoute>}>
+            <Route index element={<Navigate to="setup" replace />} />
+            <Route path="setup" element={<ShortStorySetup />} />
+            <Route path="emotion-curve" element={<ShortStoryEmotionCurve />} />
+            <Route path="content" element={<ShortStoryContent />} />
+            <Route path="polish" element={<ShortStoryPolish />} />
           </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>

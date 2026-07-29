@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Button, Modal, message, Spin, Space, Tag, Typography, Upload, Checkbox, Tooltip, Grid, theme, notification } from 'antd';
-import { UploadOutlined } from '@ant-design/icons';
+import { Card, Button, Modal, message, Spin, Space, Tag, Typography, Upload, Checkbox, Tooltip, Grid, theme, notification, Tabs } from 'antd';
+import { UploadOutlined, BookOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { projectApi } from '../services/api';
 import { showErrorToast } from '../utils/errorHandler';
 import { toast } from '../utils/useToast';
@@ -10,6 +10,7 @@ import { useProjectSync } from '../store/hooks';
 import type { ReactNode } from 'react';
 import type { Project } from '../types';
 import BookshelfPage from './BookshelfPage';
+import ShortStoryBookshelf from './ShortStoryBookshelf';
 import { formatWordCount } from '../utils/format';
 
 const { Text } = Typography;
@@ -25,6 +26,7 @@ export default function ProjectList() {
   const isMobile = !screens.md;
   const { projects, loading } = useStore();
   const [modal, contextHolder] = Modal.useModal();
+  const [activeTab, setActiveTab] = useState<'long' | 'short'>('long');
   const [showApiTip, setShowApiTip] = useState(() => {
     try {
       return localStorage.getItem('mobinovel_bookshelf_alert_dismissed') !== 'true';
@@ -323,29 +325,59 @@ export default function ProjectList() {
     <div ref={scrollContainerRef}>
       {contextHolder}
 
-      <BookshelfPage
-        isMobile={isMobile}
-        loading={loading}
-        projects={projects}
-        showApiTip={showApiTip}
-        setShowApiTip={handleSetShowApiTip}
-        exportableProjectsCount={exportableProjects.length}
-        onOpenImportModal={() => setImportModalVisible(true)}
-        onOpenExportModal={handleOpenExportModal}
-        onGoSettings={() => navigate('/settings')}
-        onStartWizard={() => navigate('/wizard')}
-        onOpenInspiration={() => navigate('/inspiration')}
-        onEnterProject={handleEnterProject}
-        onDeleteProject={handleDelete}
-        onGenerateCover={handleGenerateCover}
-        onDownloadCover={handleDownloadCover}
-        formatWordCount={formatWordCount}
-        getProgress={getProgress}
-        getProgressColor={getProgressColor}
-        getDisplayStatus={getDisplayStatus}
-        getStatusTag={getStatusTag}
-        formatDate={formatDate}
+      <Tabs
+        activeKey={activeTab}
+        onChange={(key) => setActiveTab(key as 'long' | 'short')}
+        style={{ marginBottom: 8 }}
+        items={[
+          {
+            key: 'long',
+            label: (
+              <span>
+                <BookOutlined style={{ marginRight: 6 }} />
+                长篇小说
+              </span>
+            ),
+          },
+          {
+            key: 'short',
+            label: (
+              <span>
+                <ThunderboltOutlined style={{ marginRight: 6 }} />
+                短故事
+              </span>
+            ),
+          },
+        ]}
       />
+
+      {activeTab === 'short' ? (
+        <ShortStoryBookshelf isMobile={isMobile} />
+      ) : (
+        <BookshelfPage
+          isMobile={isMobile}
+          loading={loading}
+          projects={projects}
+          showApiTip={showApiTip}
+          setShowApiTip={handleSetShowApiTip}
+          exportableProjectsCount={exportableProjects.length}
+          onOpenImportModal={() => setImportModalVisible(true)}
+          onOpenExportModal={handleOpenExportModal}
+          onGoSettings={() => navigate('/settings')}
+          onStartWizard={() => navigate('/wizard')}
+          onOpenInspiration={() => navigate('/inspiration')}
+          onEnterProject={handleEnterProject}
+          onDeleteProject={handleDelete}
+          onGenerateCover={handleGenerateCover}
+          onDownloadCover={handleDownloadCover}
+          formatWordCount={formatWordCount}
+          getProgress={getProgress}
+          getProgressColor={getProgressColor}
+          getDisplayStatus={getDisplayStatus}
+          getStatusTag={getStatusTag}
+          formatDate={formatDate}
+        />
+      )}
 
       {/* 导入项目对话框 */}
       <Modal
