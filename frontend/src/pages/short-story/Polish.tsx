@@ -72,6 +72,8 @@ export default function Polish() {
   // AI评分相关
   const [scoreResult, setScoreResult] = useState<StoryScoreResult | null>(null);
   const [scoring, setScoring] = useState(false);
+  // 基于评分改进相关
+  const [improving, setImproving] = useState(false);
 
   useEffect(() => {
     try {
@@ -153,6 +155,35 @@ export default function Polish() {
     }
   };
 
+  const handleImprove = async () => {
+    if (!scoreResult) {
+      message.warning('请先进行AI评分，才能基于评分改进点修订正文');
+      return;
+    }
+    try {
+      setImproving(true);
+      const result = await shortStoryApi.improveFromScore(story.id);
+      // 改进后旧评分已清空，需重置展示并同步story
+      setScoreResult(null);
+      try {
+        const updated = await shortStoryApi.get(story.id);
+        updateCurrentStory(updated);
+        // 同步notes显示改进记录
+        if (updated.polish_notes) setNotes(updated.polish_notes);
+      } catch {
+        // 同步失败不影响主流程
+      }
+      message.success(
+        `已基于评分改进点修订正文（${result.original_words}字→${result.current_words}字），请重新评分验证`,
+        6
+      );
+    } catch (error) {
+      showErrorToast(error, 'AI改进失败');
+    } finally {
+      setImproving(false);
+    }
+  };
+
   const handlePolish = async () => {
     try {
       setPolishing(true);
@@ -199,8 +230,9 @@ export default function Polish() {
               type="primary"
               ghost
               icon={<TrophyOutlined />}
-              loading={scoring}
+              loading={scoring || improving}
               onClick={handleScore}
+              disabled={improving}
             >
               AI评分
             </Button>
@@ -263,7 +295,12 @@ export default function Polish() {
             </div>
           </div>
         ) : scoreResult ? (
-          <ScoreResultView result={scoreResult} onRescore={handleScore} />
+          <ScoreResultView
+            result={scoreResult}
+            onRescore={handleScore}
+            onImprove={handleImprove}
+            improving={improving}
+          />
         ) : (
           <Empty
             image={Empty.PRESENTED_IMAGE_SIMPLE}
@@ -397,7 +434,17 @@ v3：结尾增加一句留白，强化余味"
 
 // ============ AI评分结果展示组件 ============
 
-function ScoreResultView({ result, onRescore }: { result: StoryScoreResult; onRescore: () => void }) {
+function ScoreResultView({
+  result,
+  onRescore,
+  onImprove,
+  improving,
+}: {
+  result: StoryScoreResult;
+  onRescore: () => void;
+  onImprove: () => void;
+  improving: boolean;
+}) {
   const { token } = theme.useToken();
   const levelColor = LEVEL_COLOR[result.level] || token.colorText;
 
@@ -426,9 +473,22 @@ function ScoreResultView({ result, onRescore }: { result: StoryScoreResult; onRe
             {result.overall_evaluation}
           </div>
         </div>
-        <Button icon={<ReloadOutlined />} onClick={onRescore} size="small">
-          重新评分
-        </Button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
+          <Tooltip title="把评分给出的改进点（最严重问题/优先级建议/各维度问题与建议）喂给AI，让其针对性修订正文。改进后旧评分清空，需重新评分验证效果。">
+            <Button
+              type="primary"
+              icon={<CheckCircleOutlined />}
+              loading={improving}
+              onClick={onImprove}
+              size="small"
+            >
+              基于评分改进正文
+            </Button>
+          </Tooltip>
+          <Button icon={<ReloadOutlined />} onClick={onRescore} size="small" disabled={improving}>
+            重新评分
+          </Button>
+        </div>
       </div>
 
       <Divider style={{ margin: '12px 0' }} />

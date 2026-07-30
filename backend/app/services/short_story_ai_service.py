@@ -591,3 +591,134 @@ class StoryScorer:
             raise ValueError("AI评分结果维度不完整")
 
         return data
+
+
+# ============ 基于评分改进正文 Prompt ============
+
+IMPROVE_SYSTEM = """你是短故事爆款修订专家。
+你的任务是：根据AI评分给出的改进点，对短故事正文进行精准修订，提升作品质量。
+
+【修订原则】
+1. 必须严格针对评分给出的 issues（问题）、suggestions（改进建议）、top_issues（最严重问题）、improvement_priority（优先级建议）进行修改
+2. 保留原文的整体框架、核心反转、主要人物和关键情节，不要推倒重写
+3. 修订要精准到位：评分指出的问题必须解决，没问题的部分不要乱改
+4. 修订后必须仍然符合爆款方法论：黄金结构比例、情绪曲线节奏、人设标签化、台词功能性
+5. 修订后正文长度应与原文相近（允许±15%浮动），不要大幅扩写或删减
+6. 直接输出修订后的完整正文，不要加任何解释、说明或前后缀
+
+【爆款方法论备忘】
+- 黄金结构：Hook 5% + Escalation 20% + Climax 60% + Resolution 15%
+- 情绪曲线：每1000-1500字一次小冲突/揭秘，无超过500字纯说明
+- 人设：标签化（清醒大女主/极致恶毒绿茶/软饭硬吃渣男等），一眼认清阵营
+- 对话：每句台词必须具备暴露阴谋或推进爽点的功能，删日常寒暄
+- 开头：前300字必须出现核心矛盾，不写铺垫
+- 去AI味：台词口语化，删排比句和空洞形容词"""
+
+IMPROVE_USER = """请根据AI评分的改进点，对以下短故事正文进行精准修订。
+
+=== 故事设定 ===
+标题：{title}
+情绪目标：{emotion_goal}
+一句话梗概：{logline}
+核心反转：{twist_type} - {twist_content}
+题材标签：{genre}
+目标字数：{target_words}
+
+=== 当前评分 ===
+总分：{total_score}/100（{level}）
+总体评价：{overall_evaluation}
+
+=== 最严重问题（必须优先解决）===
+{top_issues}
+
+=== 按优先级排序的修改建议 ===
+{improvement_priority}
+
+=== 各维度详细问题与建议 ===
+{dimensions_detail}
+
+=== 原文正文 ===
+{content}
+
+请严格按上述改进点修订正文，直接输出修订后的完整正文，不要加任何解释。"""
+
+
+def _format_dimensions_for_improve(dimensions: list) -> str:
+    """将评分维度格式化为改进输入文本"""
+    lines = []
+    for dim in dimensions:
+        name = dim.get("name", "")
+        score = dim.get("score", 0)
+        max_score = dim.get("max_score", 0)
+        issues = dim.get("issues", [])
+        suggestions = dim.get("suggestions", [])
+
+        lines.append(f"【{name}】得分 {score}/{max_score}")
+        if issues:
+            lines.append("  问题：")
+            for i, issue in enumerate(issues, 1):
+                lines.append(f"    {i}. {issue}")
+        if suggestions:
+            lines.append("  建议：")
+            for i, s in enumerate(suggestions, 1):
+                lines.append(f"    {i}. {s}")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+class StoryImprover:
+    """基于评分结果的短故事改进器"""
+
+    @staticmethod
+    async def improve_from_score(
+        ai_service: AIService,
+        title: str,
+        content: str,
+        score_data: dict,
+        emotion_goal: str = "",
+        logline: str = "",
+        twist_type: str = "",
+        twist_content: str = "",
+        genre: str = "",
+        target_words: int = 12000,
+    ) -> str:
+        """根据AI评分结果改进正文"""
+        if not content or len(content.strip()) < 100:
+            raise ValueError("正文内容过短，无法改进（至少需要100字）")
+
+        if not score_data or "dimensions" not in score_data:
+            raise ValueError("评分数据无效，无法改进")
+
+        top_issues = score_data.get("top_issues") or []
+        improvement_priority = score_data.get("improvement_priority") or []
+        dimensions = score_data.get("dimensions") or []
+
+        if not top_issues and not improvement_priority and not any(d.get("issues") or d.get("suggestions") for d in dimensions):
+            raise ValueError("评分结果中没有需要改进的问题，无需改进")
+
+        user_prompt = IMPROVE_USER.format(
+            title=title or "未命名",
+            emotion_goal=emotion_goal or "未设定",
+            logline=logline or "未设定",
+            twist_type=twist_type or "未设定",
+            twist_content=twist_content or "未设定",
+            genre=genre or "未设定",
+            target_words=target_words,
+            total_score=score_data.get("total_score", 0),
+            level=score_data.get("level", "未评级"),
+            overall_evaluation=score_data.get("overall_evaluation", ""),
+            top_issues="\n".join(f"{i+1}. {issue}" for i, issue in enumerate(top_issues)) if top_issues else "无",
+            improvement_priority="\n".join(f"{i+1}. {s}" for i, s in enumerate(improvement_priority)) if improvement_priority else "无",
+            dimensions_detail=_format_dimensions_for_improve(dimensions),
+            content=content,
+        )
+
+        result = ""
+        async for chunk in ai_service.generate_text_stream(
+            prompt=user_prompt,
+            system_prompt=IMPROVE_SYSTEM,
+            temperature=0.55,  # 修订需要一定创造性但保持稳定
+        ):
+            result += chunk
+
+        return result.strip()

@@ -21,7 +21,7 @@ from app.schemas.short_story import (
     ShortStoryListResponse
 )
 from app.services.ai_service import AIService
-from app.services.short_story_ai_service import ShortStoryAIService, FullStoryGenerator, StoryScorer
+from app.services.short_story_ai_service import ShortStoryAIService, FullStoryGenerator, StoryScorer, StoryImprover
 from app.api.settings import get_user_ai_service
 from app.logger import get_logger
 
@@ -836,3 +836,106 @@ async def get_score(
     except Exception as e:
         logger.error(f"获取评分失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"获取失败: {str(e)}")
+
+
+@router.post("/{story_id}/improve-from-score", summary="基于AI评分改进正文")
+async def improve_from_score(
+    story_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    ai_service: AIService = Depends(get_user_ai_service),
+):
+    """根据AI评分给出的改进点（issues/suggestions/top_issues/improvement_priority）
+    自动修订正文，形成"评分→改进→再评分"的质量闭环。
+
+    流程：
+    1. 读取已保存的 score_data（评分结果）
+    2. 把改进点喂给AI，让其针对性修订正文
+    3. 保存修订后的正文，保留原文备份到 polish_notes
+    4. 清空旧评分（scored_at/score_data），提示用户重新评分
+    """
+    try:
+        user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="未登录")
+
+        result = await db.execute(
+            select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+        )
+        story = result.scalar_one_or_none()
+        if not story:
+            raise HTTPException(status_code=404, detail="短故事不存在")
+
+        if not story.content:
+            raise HTTPException(status_code=400, detail="正文为空，无法改进")
+
+        if not story.score_data:
+            raise HTTPException(status_code=400, detail="尚未评分，请先进行AI评分")
+
+        try:
+            score_data = json.loads(story.score_data)
+        except (json.JSONDecodeError, TypeError):
+            raise HTTPException(status_code=400, detail="评分数据格式错误，请重新评分")
+
+        # 保留原文备份
+        original_content = story.content
+        original_words = story.current_words or _count_chinese_and_punctuation(original_content)
+
+        improved_content = await StoryImprover.improve_from_score(
+            ai_service=ai_service,
+            title=story.title or "",
+            content=story.content,
+            score_data=score_data,
+            emotion_goal=story.emotion_goal or "",
+            logline=story.logline or "",
+            twist_type=story.twist_type or "",
+            twist_content=story.twist_content or "",
+            genre=story.genre or "",
+            target_words=story.target_words or 12000,
+        )
+
+        if not improved_content or len(improved_content.strip()) < 100:
+            raise HTTPException(status_code=500, detail="AI改进结果为空或过短，已保留原文")
+
+        # 更新正文
+        story.content = improved_content
+        story.current_words = _count_chinese_and_punctuation(improved_content)
+        story.segments, _ = _recalc_segments_from_content(
+            improved_content, story.target_words or 12000, story.segments
+        )
+        story.status = "polishing"
+
+        # 清空旧评分，提示重新评分
+        story.score_data = None
+        story.scored_at = None
+
+        # 记录改进历史到 polish_notes
+        improve_record = (
+            f"\n---\n[AI基于评分改进] 原文 {original_words}字 → 改进后 {story.current_words}字\n"
+            f"改进依据：总分 {score_data.get('total_score', '?')}/100（{score_data.get('level', '?')}）\n"
+            f"重点解决：{'; '.join((score_data.get('top_issues') or [])[:3]) or '无'}\n"
+            f"请重新评分验证改进效果。"
+        )
+        story.polish_notes = (story.polish_notes or "") + improve_record
+
+        await db.commit()
+        await db.refresh(story)
+
+        logger.info(
+            f"AI基于评分改进正文成功: story_id={story_id}, "
+            f"{original_words}字→{story.current_words}字"
+        )
+
+        return {
+            "content": improved_content,
+            "current_words": story.current_words,
+            "original_words": original_words,
+            "message": "已基于评分改进点修订正文，请重新评分验证",
+        }
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"AI基于评分改进失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"改进失败: {str(e)}")

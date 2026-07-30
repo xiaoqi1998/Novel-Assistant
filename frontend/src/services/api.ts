@@ -1070,6 +1070,15 @@ export const shortStoryApi = {
   // 获取短故事评分结果
   getScore: (id: string) =>
     api.get<unknown, StoryScoreResult>(`/short-stories/${id}/score`),
+
+  // 基于AI评分改进点修订正文（评分→改进→再评分闭环）
+  improveFromScore: (id: string) =>
+    api.post<unknown, {
+      content: string;
+      current_words: number;
+      original_words: number;
+      message: string;
+    }>(`/short-stories/${id}/improve-from-score`),
 };
 export const shortInspirationApi = {
   generateOptions: (data: { step: string; context: Record<string, string> }) =>
