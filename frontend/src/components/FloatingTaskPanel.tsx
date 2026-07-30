@@ -238,6 +238,19 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
       return next;
     });
 
+    // 通知其他组件：任务已完成（携带 task 信息，便于详情页自动刷新数据）
+    newCompletions.forEach((taskId) => {
+      const completedTask = taskList.find((t) => t.id === taskId);
+      if (completedTask) {
+        eventBus.emit('task:completed', {
+          taskId: completedTask.id,
+          taskType: completedTask.task_type,
+          projectId: completedTask.project_id,
+          status: completedTask.status,
+        });
+      }
+    });
+
     // 5 秒后：移除醒目标记，并在无活跃任务时自动收起面板
     const timer = setTimeout(() => {
       setRecentlyCompletedIds((prev) => {

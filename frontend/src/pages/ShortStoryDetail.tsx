@@ -17,6 +17,7 @@ import {
 import { shortStoryApi } from '../services/api';
 import { showErrorToast } from '../utils/errorHandler';
 import { useShortStoryStore } from '../store/shortStoryStore';
+import { eventBus } from '../store/eventBus';
 import AppSidebar, { SidebarContent, EXPANDED_SIDER_WIDTH, COLLAPSED_SIDER_WIDTH, HEADER_HEIGHT } from '../components/AppSidebar';
 import AppTopBar from '../components/AppTopBar';
 import AppFooter from '../components/AppFooter';
@@ -78,6 +79,37 @@ export default function ShortStoryDetail() {
 
   useEffect(() => {
     loadStory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storyId]);
+
+  // 监听后台任务完成事件：短故事相关任务完成后自动刷新 story
+  // （如后台评分完成后，Polish 页面能自动显示最新评分结果）
+  useEffect(() => {
+    if (!storyId) return;
+    const handleTaskCompleted = (data: unknown) => {
+      const payload = data as { taskType?: string; projectId?: string; status?: string };
+      // 仅处理短故事相关任务，且 project_id 匹配当前故事
+      const shortStoryTaskTypes = [
+        'short_story_regenerate',
+        'short_story_score',
+        'short_story_polish',
+      ];
+      if (
+        payload?.taskType &&
+        shortStoryTaskTypes.includes(payload.taskType) &&
+        payload.projectId === storyId
+      ) {
+        // 短暂延迟，确保后端已写库
+        setTimeout(() => {
+          loadStory();
+          message.success('后台任务已完成，数据已更新');
+        }, 500);
+      }
+    };
+    eventBus.on('task:completed', handleTaskCompleted);
+    return () => {
+      eventBus.off('task:completed', handleTaskCompleted);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storyId]);
 
