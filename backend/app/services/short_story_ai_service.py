@@ -347,3 +347,118 @@ class ShortStoryAIService:
         cleaned = clean_json_response(accumulated)
         data = json.loads(cleaned)
         return data
+
+
+# ============ 端到端生成 Prompt ============
+
+FULL_STORY_SYSTEM = """你是短故事爆款创作专家，精通高概念选题与黄金结构写作法。
+
+你的任务是：根据用户的核心想法，一次性生成完整的短故事成稿（包含故事设定和全文正文）。
+
+【爆款选题公式】
+极致反差/道德伦理冲突 + 强身份标签 + 迫切的危机悬念
+
+【三大黄金赛道】
+打脸复仇类、悬疑怪谈类、极致痛感类
+
+【黄金结构（必须严格执行）】
+1. 死亡黄金钩子（前5%）：不写任何铺垫，第一句将读者推入冲突现场
+2. 冲突激化与打压（20%）：反派极致嚣张，主角劣势隐忍，压抑读者情绪到最高点
+3. 绝地反击与多重反转（60%）：剥洋葱式揭露真相，打一下→反派反扑→再揭露更大真相
+4. 极致爽点与收尾（15%）：反派惨烈下场，主角清醒独立走向新人生
+
+【情绪曲线法则】
+- 每1000-1500字必须有一次小冲突或小揭秘
+- 不能有超过500字的纯说明性废话
+- 波浪式情绪过山车：压抑→释放→新危机→再压抑→爆点
+
+【人设与对话法则】
+- 人设高度标签化：清醒大女主、极致恶毒绿茶、软饭硬吃渣男
+- 删除所有日常寒暄，每句台词必须具备暴露阴谋或推进爽点的功能
+- 台词口语化，删除排比句和空洞形容词
+
+【输出格式】
+必须返回如下JSON结构（content字段为完整正文，不要分段输出，是一个完整字符串）：
+{
+  "title": "故事标题（不超过30字，要有爆点）",
+  "logline": "一句话梗概（主角+困境+反转+情绪落点）",
+  "emotion_goal": "情绪目标（从：意难平/反转震撼/爽感释放/治愈温暖/细思极恐/共鸣感动 中选一个）",
+  "twist_type": "反转类型（身份反转/视角反转/动机反转/时间线反转）",
+  "twist_content": "核心反转内容描述",
+  "twist_clues": ["铺垫线索1", "铺垫线索2", "铺垫线索3"],
+  "genre": "题材标签（如：追妻/重生复仇/霸总/悬疑等）",
+  "content": "完整正文（{}字左右，直接输出故事内容，不要加任何解释、标记、分段标题）"
+}
+
+注意：content字段必须是完整的故事正文，不能有"第一章"之类的标题，不能有AI解释说明，直接就是故事内容本身。"""
+
+FULL_STORY_USER = """请根据以下要求创作一个完整的短故事：
+
+【用户想法】{initial_idea}
+{extra_requirements}
+
+【目标字数】{target_words}字
+
+请严格按照黄金结构创作，直接输出JSON结果。content字段必须是完整的、可直接发布的短故事正文。"""
+
+
+class FullStoryGenerator:
+    """端到端短故事生成器"""
+
+    @staticmethod
+    async def generate_full_story(
+        ai_service: AIService,
+        initial_idea: str,
+        target_words: int = 12000,
+        emotion_goal: str = "",
+        target_platform: str = "知乎盐言",
+    ) -> dict:
+        """一次性生成完整短故事（设定+全文）
+
+        Args:
+            initial_idea: 用户的核心想法
+            target_words: 目标字数
+            emotion_goal: 情绪目标（可选，未指定则AI自选）
+            target_platform: 目标平台
+
+        Returns:
+            dict: {title, logline, emotion_goal, twist_type, twist_content,
+                   twist_clues, genre, content}
+        """
+        extra = ""
+        if emotion_goal:
+            extra += f"\n【指定情绪目标】{emotion_goal}"
+        if target_platform:
+            extra += f"\n【目标平台】{target_platform}"
+
+        user_prompt = FULL_STORY_USER.format(
+            initial_idea=initial_idea,
+            extra_requirements=extra,
+            target_words=target_words,
+        )
+
+        accumulated = ""
+        async for chunk in ai_service.generate_text_stream(
+            prompt=user_prompt,
+            system_prompt=FULL_STORY_SYSTEM,
+            temperature=0.75,
+        ):
+            accumulated += chunk
+
+        cleaned = clean_json_response(accumulated)
+        data = json.loads(cleaned)
+
+        # 校验必要字段
+        required = ["title", "logline", "content"]
+        for field in required:
+            if field not in data or not data[field]:
+                raise ValueError(f"AI生成结果缺少必要字段: {field}")
+
+        # 兜底默认值
+        data.setdefault("emotion_goal", emotion_goal or "爽感释放")
+        data.setdefault("twist_type", "")
+        data.setdefault("twist_content", "")
+        data.setdefault("twist_clues", [])
+        data.setdefault("genre", "")
+
+        return data

@@ -21,7 +21,7 @@ from app.schemas.short_story import (
     ShortStoryListResponse
 )
 from app.services.ai_service import AIService
-from app.services.short_story_ai_service import ShortStoryAIService
+from app.services.short_story_ai_service import ShortStoryAIService, FullStoryGenerator
 from app.api.settings import get_user_ai_service
 from app.logger import get_logger
 
@@ -675,3 +675,82 @@ async def generate_cover(
     except Exception as e:
         logger.error(f"生成短故事封面失败: {str(e)}", exc_info=True)
         raise
+
+
+# ============ 端到端生成端点 ============
+
+class GenerateFullStoryRequest(BaseModel):
+    initial_idea: str
+    target_words: int = 12000
+    emotion_goal: Optional[str] = None
+    target_platform: str = "知乎盐言"
+
+
+@router.post("/generate-full", summary="AI一键生成完整短故事（设定+全文）")
+async def generate_full_story(
+    req: GenerateFullStoryRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    ai_service: AIService = Depends(get_user_ai_service),
+):
+    """输入想法，AI一次性生成完整短故事（设定+全文），自动创建记录"""
+    try:
+        user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="未登录")
+
+        if not req.initial_idea or not req.initial_idea.strip():
+            raise HTTPException(status_code=400, detail="请输入故事想法")
+
+        # 调用AI生成完整短故事
+        story_data = await FullStoryGenerator.generate_full_story(
+            ai_service=ai_service,
+            initial_idea=req.initial_idea.strip(),
+            target_words=req.target_words,
+            emotion_goal=req.emotion_goal or "",
+            target_platform=req.target_platform,
+        )
+
+        # 创建短故事记录
+        import uuid
+        story_id = str(uuid.uuid4())
+        target_words = req.target_words
+
+        new_story = ShortStory(
+            id=story_id,
+            user_id=user_id,
+            title=story_data["title"],
+            logline=story_data.get("logline", ""),
+            genre=story_data.get("genre", ""),
+            target_platform=req.target_platform,
+            target_words=target_words,
+            current_words=0,
+            emotion_goal=story_data.get("emotion_goal", req.emotion_goal or ""),
+            twist_type=story_data.get("twist_type", ""),
+            twist_content=story_data.get("twist_content", ""),
+            twist_clues=json.dumps(story_data.get("twist_clues", []), ensure_ascii=False),
+            content=story_data.get("content", ""),
+            segments=_build_default_segments(target_words),
+            polish_checklist=_build_default_polish_checklist(),
+            status="writing",
+        )
+
+        # 计算字数和分段
+        content = story_data.get("content", "")
+        new_story.current_words = _count_chinese_and_punctuation(content)
+        new_story.segments, _ = _recalc_segments_from_content(
+            content, target_words, new_story.segments
+        )
+
+        db.add(new_story)
+        await db.commit()
+        await db.refresh(new_story)
+        return new_story
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.error(f"AI生成结果解析失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"AI生成结果格式错误: {str(e)}")
+    except Exception as e:
+        logger.error(f"AI生成完整短故事失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"生成失败: {str(e)}")

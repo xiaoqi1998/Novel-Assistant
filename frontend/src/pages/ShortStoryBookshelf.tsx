@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, Button, Spin, Empty, Tag, Dropdown, message, Modal, theme, Typography } from 'antd';
-import { PlusOutlined, ThunderboltOutlined, BookOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons';
+import { PlusOutlined, ThunderboltOutlined, BookOutlined, DeleteOutlined } from '@ant-design/icons';
 import { shortStoryApi } from '../services/api';
 import { showErrorToast } from '../utils/errorHandler';
 import { formatWordCount } from '../utils/format';
@@ -102,13 +102,13 @@ export default function ShortStoryBookshelf({ isMobile }: Props) {
   const createMenuItems = [
     {
       key: 'wizard',
-      label: '从表单创建',
-      icon: <EditOutlined />,
+      label: 'AI 生成短故事',
+      icon: <ThunderboltOutlined />,
       onClick: () => navigate('/short-story-wizard'),
     },
     {
       key: 'inspiration',
-      label: '从灵感模式创建',
+      label: '灵感模式生成',
       icon: <ThunderboltOutlined />,
       onClick: () => navigate('/inspiration?mode=short'),
     },

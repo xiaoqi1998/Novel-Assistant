@@ -1057,6 +1057,10 @@ export const shortStoryApi = {
   // 生成封面
   generateCover: (id: string) =>
     api.post<unknown, { cover_status: string; cover_image_url: string; cover_prompt: string; message: string }>(`/short-stories/${id}/generate-cover`),
+
+  // AI一键生成完整短故事（设定+全文）
+  generateFull: (data: { initial_idea: string; target_words?: number; emotion_goal?: string; target_platform?: string }) =>
+    api.post<unknown, ShortStory>('/short-stories/generate-full', data),
 };
 export const shortInspirationApi = {
   generateOptions: (data: { step: string; context: Record<string, string> }) =>
