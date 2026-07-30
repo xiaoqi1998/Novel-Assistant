@@ -275,20 +275,18 @@ export default function Polish() {
           <Button loading={polishing} onClick={handlePolish}>
             AI润色正文
           </Button>
-          <Tooltip title="基于爆款方法论5维AI评分：选题/结构/情绪/人设对话/完成度。点击后台评分，可关闭页面，完成后右下角浮窗提示">
-            <Dropdown menu={{ items: scoreMenuItems }} trigger={['click']} placement="bottomRight">
-              <Button
-                type="primary"
-                ghost
-                icon={<TrophyOutlined />}
-                loading={scoring || improving || autoScoring}
-                disabled={improving || autoScoring}
-                onClick={handleScoreBackground}
-              >
-                AI评分 <DownOutlined />
-              </Button>
-            </Dropdown>
-          </Tooltip>
+          <Dropdown.Button
+            type="primary"
+            ghost
+            loading={scoring || improving || autoScoring}
+            disabled={improving || autoScoring}
+            onClick={handleScoreBackground}
+            menu={{ items: scoreMenuItems }}
+            placement="bottomRight"
+            icon={<DownOutlined />}
+          >
+            <TrophyOutlined /> AI评分
+          </Dropdown.Button>
           <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={() => handleSave(true)}>
             保存
           </Button>
