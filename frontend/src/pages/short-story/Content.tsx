@@ -158,13 +158,7 @@ export default function Content() {
   const handleRegenerate = async () => {
     try {
       setRegenerating(true);
-      await shortStoryApi.generateFull({
-        initial_idea: story.logline || story.title || '重写故事',
-        target_words: story.target_words || 12000,
-        emotion_goal: story.emotion_goal || undefined,
-        target_platform: story.target_platform || '知乎盐言',
-      });
-      // 刷新当前故事以获取新生成的内容
+      await shortStoryApi.regenerate(story.id);
       await reload();
       message.success('已重新生成全文');
     } catch (error) {

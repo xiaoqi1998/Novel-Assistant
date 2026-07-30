@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, Button, Spin, Empty, Tag, Dropdown, message, Modal, theme, Typography } from 'antd';
-import { PlusOutlined, ThunderboltOutlined, BookOutlined, DeleteOutlined } from '@ant-design/icons';
+import { PlusOutlined, ThunderboltOutlined, BookOutlined, DeleteOutlined, DownloadOutlined } from '@ant-design/icons';
 import { shortStoryApi } from '../services/api';
 import { showErrorToast } from '../utils/errorHandler';
 import { formatWordCount } from '../utils/format';
@@ -50,6 +50,13 @@ export default function ShortStoryBookshelf({ isMobile }: Props) {
 
   useEffect(() => {
     loadStories();
+  }, []);
+
+  // 切回标签页时自动刷新列表
+  useEffect(() => {
+    const handleFocus = () => loadStories();
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
   }, []);
 
   const handleEnter = (story: ShortStory) => {
@@ -193,6 +200,25 @@ export default function ShortStoryBookshelf({ isMobile }: Props) {
                 bodyStyle={{ padding: 0 }}
                 onClick={() => handleEnter(story)}
                 actions={[
+                  <Dropdown
+                    key="export"
+                    menu={{
+                      items: [
+                        { key: 'markdown', label: 'Markdown' },
+                        { key: 'txt', label: 'TXT' },
+                      ],
+                      onClick: ({ key, domEvent }) => {
+                        domEvent.stopPropagation();
+                        if (key === 'markdown') shortStoryApi.exportMarkdown(story.id);
+                        else if (key === 'txt') shortStoryApi.exportTxt(story.id);
+                      },
+                    }}
+                    trigger={['click']}
+                  >
+                    <DownloadOutlined
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </Dropdown>,
                   <DeleteOutlined
                     key="delete"
                     onClick={(e) => {

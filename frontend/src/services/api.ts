@@ -1065,6 +1065,10 @@ export const shortStoryApi = {
   generateFull: (data: { initial_idea: string; target_words?: number; emotion_goal?: string; target_platform?: string }) =>
     api.post<unknown, ShortStory>('/short-stories/generate-full', data),
 
+  // AI重新生成现有短故事（更新当前记录而非新建）
+  regenerate: (id: string) =>
+    api.post<unknown, ShortStory>(`/short-stories/${id}/regenerate`),
+
   // AI评分短故事（5维评分：选题/结构/情绪/人设对话/完成度）
   score: (id: string) =>
     api.post<unknown, StoryScoreResult>(`/short-stories/${id}/score`),

@@ -896,7 +896,91 @@ async def generate_full_story(
         raise HTTPException(status_code=500, detail=f"生成失败: {str(e)}")
 
 
-# ============ AI 评分端点 ============
+@router.post("/{story_id}/regenerate", summary="AI重新生成现有短故事的正文（更新而非新建）")
+async def regenerate_story(
+    story_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    ai_service: AIService = Depends(get_user_ai_service),
+):
+    """对已有短故事重新AI生成正文，更新当前记录而非创建新记录。
+
+    保留原story_id，覆盖title/logline/content等字段。
+    """
+    try:
+        user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="未登录")
+
+        result = await db.execute(
+            select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+        )
+        story = result.scalar_one_or_none()
+        if not story:
+            raise HTTPException(status_code=404, detail="短故事不存在")
+
+        initial_idea = story.logline or story.title or "重写一个精彩短故事"
+        logger.info(
+            f"开始AI重新生成短故事: story_id={story_id}, idea={initial_idea[:50]}, "
+            f"target_words={story.target_words}"
+        )
+
+        try:
+            story_data = await FullStoryGenerator.generate_full_story(
+                ai_service=ai_service,
+                initial_idea=initial_idea,
+                target_words=story.target_words or 12000,
+                emotion_goal=story.emotion_goal or "",
+                target_platform=story.target_platform or "知乎盐言",
+                emotion_curve=story.emotion_curve or "",
+            )
+        except Exception as ai_err:
+            logger.error(
+                f"AI重新生成调用失败，保留原文: story_id={story_id}, error={str(ai_err)}",
+                exc_info=True,
+            )
+            raise HTTPException(status_code=500, detail=f"AI重新生成失败，原文未改动: {str(ai_err)}")
+
+        if not story_data or not story_data.get("title") or not story_data.get("content"):
+            raise HTTPException(status_code=500, detail="AI生成结果不完整，原文未改动")
+
+        # 更新现有记录
+        old_words = story.current_words or 0
+        story.title = story_data["title"]
+        story.logline = story_data.get("logline", story.logline)
+        story.genre = story_data.get("genre", story.genre)
+        story.emotion_goal = story_data.get("emotion_goal", story.emotion_goal)
+        story.twist_type = story_data.get("twist_type", story.twist_type)
+        story.twist_content = story_data.get("twist_content", story.twist_content)
+        story.twist_clues = json.dumps(story_data.get("twist_clues", []), ensure_ascii=False)
+        if story_data.get("characters"):
+            story.characters = json.dumps(story_data.get("characters", []), ensure_ascii=False)
+        story.content = story_data.get("content", "")
+        story.current_words = _count_chinese_and_punctuation(story.content)
+        story.segments, _ = _recalc_segments_from_content(
+            story.content, story.target_words or 12000, story.segments
+        )
+        # 清空旧评分（内容已变）
+        story.score_data = None
+        story.scored_at = None
+        story.status = "writing"
+
+        await db.commit()
+        await db.refresh(story)
+
+        logger.info(
+            f"AI重新生成成功: story_id={story_id}, {old_words}字→{story.current_words}字"
+        )
+        return story
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"AI重新生成失败(已回滚): story_id={story_id}, error={str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"重新生成失败: {str(e)}")
 
 @router.post("/{story_id}/score", summary="AI评分短故事（5维评分）")
 async def score_story(
