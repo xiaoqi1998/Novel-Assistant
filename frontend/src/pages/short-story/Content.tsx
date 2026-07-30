@@ -12,6 +12,7 @@ import {
   Tooltip,
   theme,
   Grid,
+  Modal,
 } from 'antd';
 import { SaveOutlined, CheckCircleOutlined, ClockCircleOutlined, ReloadOutlined, RobotOutlined } from '@ant-design/icons';
 import { shortStoryApi } from '../../services/api';
@@ -20,6 +21,11 @@ import { useShortStoryStore } from '../../store/shortStoryStore';
 import { formatWordCount } from '../../utils/format';
 import RevisionPreviewModal from '../../components/RevisionPreviewModal';
 import { SSELoadingOverlay } from '../../components/SSELoadingOverlay';
+import {
+  loadStoryContentDraft,
+  saveStoryContentDraft,
+  clearStoryContentDraft,
+} from '../../utils/shortStoryDraft';
 import type { ShortStory, StorySegment, RevisionPreview } from '../../types';
 
 const { Title, Text } = Typography;
@@ -62,7 +68,9 @@ export default function Content() {
   const [segments, setSegments] = useState<StorySegment[]>([]);
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const [lastDraftSaveTime, setLastDraftSaveTime] = useState<number | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contentRef = useRef<string>(content);
   const [generatingSegment, setGeneratingSegment] = useState<string | null>(null);
   const [polishing, setPolishing] = useState(false);
@@ -80,6 +88,7 @@ export default function Content() {
     contentRef.current = content;
   }, [content]);
 
+  // 加载时检测未保存的本地草稿（与服务器版本不同时提示恢复）
   useEffect(() => {
     try {
       const parsed = story.segments ? JSON.parse(story.segments) : [];
@@ -89,7 +98,33 @@ export default function Content() {
     } catch {
       setSegments([]);
     }
-    setContent(story.content || '');
+    const serverContent = story.content || '';
+    setContent(serverContent);
+
+    // 检测本地草稿
+    const draft = loadStoryContentDraft(story.id);
+    if (draft && draft.content !== serverContent) {
+      const draftTime = new Date(draft.savedAt).toLocaleString('zh-CN');
+      Modal.confirm({
+        title: '检测到未保存的正文草稿',
+        content: `是否恢复本地草稿？草稿保存时间：${draftTime}`,
+        okText: '恢复草稿',
+        cancelText: '使用服务器版本',
+        centered: true,
+        onOk: () => {
+          setContent(draft.content);
+          setLastDraftSaveTime(draft.savedAt);
+          message.info('已恢复本地草稿');
+        },
+        onCancel: () => {
+          clearStoryContentDraft(story.id);
+          message.info('已丢弃草稿，使用服务器版本');
+        },
+      });
+    } else if (draft) {
+      // 草稿与服务器内容一致，清理无用草稿
+      clearStoryContentDraft(story.id);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [story.id]);
 
@@ -105,6 +140,9 @@ export default function Content() {
       });
       updateCurrentStory(updated);
       setLastSaved(new Date());
+      // 服务器保存成功后清除本地草稿
+      clearStoryContentDraft(story.id);
+      setLastDraftSaveTime(null);
       if (showMessage) message.success('已保存');
     } catch (error) {
       showErrorToast(error, '保存失败');
@@ -118,10 +156,28 @@ export default function Content() {
     saveTimerRef.current = setTimeout(() => handleSave(false), 2000);
   };
 
+  // 草稿防抖保存（与API保存并行，网络失败时仍有本地备份）
+  const scheduleDraftSave = () => {
+    if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    draftTimerRef.current = setTimeout(() => {
+      saveStoryContentDraft(story.id, contentRef.current);
+      setLastDraftSaveTime(Date.now());
+    }, 1000);
+  };
+
   const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setContent(e.target.value);
     scheduleAutoSave();
+    scheduleDraftSave();
   };
+
+  // 组件卸载时清理定时器
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    };
+  }, []);
 
   const handleSegmentStatusChange = (index: number, status: StorySegment['status']) => {
     const newSegs = [...segments];
@@ -224,6 +280,13 @@ export default function Content() {
             <Text type="secondary" style={{ fontSize: 12 }}>
               {saving ? '保存中...' : `已保存 ${lastSaved.toLocaleTimeString('zh-CN')}`}
             </Text>
+          )}
+          {lastDraftSaveTime && !lastSaved && (
+            <Tooltip title="本地草稿已自动保存，网络恢复后可手动点保存或刷新页面恢复">
+              <Text type="warning" style={{ fontSize: 12 }}>
+                📝 草稿已备份 {new Date(lastDraftSaveTime).toLocaleTimeString('zh-CN')}
+              </Text>
+            </Tooltip>
           )}
           <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={() => handleSave(true)}>
             保存
