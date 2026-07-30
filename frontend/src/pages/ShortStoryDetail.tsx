@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, Outlet, Link, useLocation } from 'react-router-dom';
-import { Layout, Typography, Button, Spin, theme, Dropdown, message, Result, Drawer } from 'antd';
+import { Layout, Typography, Button, Spin, theme, Dropdown, message, Result, Drawer, Modal } from 'antd';
 import type { MenuProps } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -11,6 +11,8 @@ import {
   ThunderboltOutlined,
   DownloadOutlined,
   PictureOutlined,
+  FileTextOutlined,
+  FileMarkdownOutlined,
 } from '@ant-design/icons';
 import { shortStoryApi } from '../services/api';
 import { showErrorToast } from '../utils/errorHandler';
@@ -43,6 +45,8 @@ export default function ShortStoryDetail() {
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [coverLoading, setCoverLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'markdown' | 'txt'>('markdown');
 
   // 切回桌面端时自动关闭抽屉
   useEffect(() => {
@@ -125,6 +129,39 @@ export default function ShortStoryDetail() {
     } finally {
       setCoverLoading(false);
     }
+  };
+
+  // 导出确认弹窗（对齐长篇小说 Chapters.tsx 的导出体验）
+  const handleOpenExport = (format: 'markdown' | 'txt') => {
+    setExportFormat(format);
+    setExportModalOpen(true);
+  };
+
+  const handleConfirmExport = () => {
+    if (!currentStory) return;
+    try {
+      if (exportFormat === 'markdown') {
+        shortStoryApi.exportMarkdown(currentStory.id);
+      } else {
+        shortStoryApi.exportTxt(currentStory.id);
+      }
+      message.success('开始下载导出文件');
+      setExportModalOpen(false);
+    } catch (error) {
+      showErrorToast(error, '导出失败，请重试');
+    }
+  };
+
+  // 导出格式说明
+  const exportFormatMeta: Record<'markdown' | 'txt', { label: string; tip: string }> = {
+    markdown: {
+      label: 'Markdown 电子书（推荐）',
+      tip: '含元信息头（类型/状态/字数/情绪目标）、故事设定（梗概/反转/题材/平台）、正文，可在 VS Code / Typora 大纲栏快速跳转，可转换为 EPUB/PDF。',
+    },
+    txt: {
+      label: 'TXT 纯文本',
+      tip: '仅标题+正文，纯文本格式，便于复制粘贴到其他平台或再次拆书导入。',
+    },
   };
 
   // 加载失败显示重试（对齐长篇小说）
@@ -249,8 +286,8 @@ export default function ShortStoryDetail() {
                 { key: 'txt', label: '导出 TXT' },
               ],
               onClick: ({ key }) => {
-                if (key === 'markdown') shortStoryApi.exportMarkdown(currentStory.id);
-                else if (key === 'txt') shortStoryApi.exportTxt(currentStory.id);
+                if (key === 'markdown') handleOpenExport('markdown');
+                else if (key === 'txt') handleOpenExport('txt');
               },
             }}
           >
@@ -400,6 +437,66 @@ export default function ShortStoryDetail() {
 
       {/* 底部版本条 */}
       <AppFooter sidebarWidth={mobile ? 0 : desktopSiderWidth} />
+
+      {/* 导出确认弹窗（对齐长篇小说 Chapters.tsx 的导出体验） */}
+      <Modal
+        title="导出短故事"
+        open={exportModalOpen}
+        onCancel={() => setExportModalOpen(false)}
+        onOk={handleConfirmExport}
+        okText="确定导出"
+        cancelText="取消"
+        centered
+      >
+        <div style={{ marginBottom: 12 }}>
+          <Text strong>《{currentStory.title}》</Text>
+          <Text type="secondary" style={{ marginLeft: 8 }}>
+            共 {currentStory.current_words} 字
+          </Text>
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            gap: 12,
+            marginBottom: 16,
+          }}
+        >
+          {(['markdown', 'txt'] as const).map((fmt) => {
+            const meta = exportFormatMeta[fmt];
+            const selected = exportFormat === fmt;
+            return (
+              <div
+                key={fmt}
+                onClick={() => setExportFormat(fmt)}
+                style={{
+                  flex: 1,
+                  padding: 12,
+                  border: `2px solid ${selected ? token.colorPrimary : token.colorBorderSecondary}`,
+                  borderRadius: 8,
+                  cursor: 'pointer',
+                  background: selected ? alphaColor(token.colorPrimary, 0.06) : 'transparent',
+                  transition: 'all 0.2s',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  {fmt === 'markdown' ? (
+                    <FileMarkdownOutlined style={{ color: token.colorPrimary, fontSize: 18 }} />
+                  ) : (
+                    <FileTextOutlined style={{ color: token.colorTextSecondary, fontSize: 18 }} />
+                  )}
+                  <Text strong>{meta.label}</Text>
+                </div>
+                <Text type="secondary" style={{ fontSize: 12, lineHeight: 1.5 }}>
+                  {meta.tip}
+                </Text>
+              </div>
+            );
+          })}
+        </div>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          导出后将以文件下载方式保存到本地。
+        </Text>
+      </Modal>
     </Layout>
   );
 }

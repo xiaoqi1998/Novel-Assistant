@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Button, Spin, Empty, Tag, Dropdown, message, Modal, theme, Typography } from 'antd';
-import { PlusOutlined, ThunderboltOutlined, BookOutlined, DeleteOutlined, DownloadOutlined } from '@ant-design/icons';
+import { Card, Button, Spin, Empty, Tag, Dropdown, message, Modal, theme, Typography, Result } from 'antd';
+import { PlusOutlined, ThunderboltOutlined, BookOutlined, DeleteOutlined, DownloadOutlined, ReloadOutlined, FileTextOutlined, FileMarkdownOutlined } from '@ant-design/icons';
 import { shortStoryApi } from '../services/api';
 import { showErrorToast } from '../utils/errorHandler';
 import { formatWordCount } from '../utils/format';
@@ -34,14 +34,21 @@ export default function ShortStoryBookshelf({ isMobile }: Props) {
   const { token } = theme.useToken();
   const [stories, setStories] = useState<ShortStory[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [modal, contextHolder] = Modal.useModal();
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'markdown' | 'txt'>('markdown');
+  const [exportTargetStory, setExportTargetStory] = useState<ShortStory | null>(null);
 
   const loadStories = async () => {
     try {
       setLoading(true);
+      setLoadError(null);
       const result = await shortStoryApi.list({ limit: 100 });
       setStories(result.items || []);
     } catch (error) {
+      const msg = error instanceof Error ? error.message : '加载失败';
+      setLoadError(msg);
       showErrorToast(error, '加载短故事列表失败');
     } finally {
       setLoading(false);
@@ -81,6 +88,41 @@ export default function ShortStoryBookshelf({ isMobile }: Props) {
         }
       },
     });
+  };
+
+  // 导出确认弹窗（对齐短故事详情页和长篇小说的导出体验）
+  const handleOpenExport = (story: ShortStory, format: 'markdown' | 'txt') => {
+    setExportTargetStory(story);
+    setExportFormat(format);
+    setExportModalOpen(true);
+  };
+
+  const handleConfirmExport = () => {
+    if (!exportTargetStory) return;
+    try {
+      if (exportFormat === 'markdown') {
+        shortStoryApi.exportMarkdown(exportTargetStory.id);
+      } else {
+        shortStoryApi.exportTxt(exportTargetStory.id);
+      }
+      message.success('开始下载导出文件');
+      setExportModalOpen(false);
+      setExportTargetStory(null);
+    } catch (error) {
+      showErrorToast(error, '导出失败，请重试');
+    }
+  };
+
+  // 导出格式说明
+  const exportFormatMeta: Record<'markdown' | 'txt', { label: string; tip: string }> = {
+    markdown: {
+      label: 'Markdown 电子书（推荐）',
+      tip: '含元信息头（类型/状态/字数/情绪目标）、故事设定（梗概/反转/题材/平台）、正文，可在 VS Code / Typora 大纲栏快速跳转，可转换为 EPUB/PDF。',
+    },
+    txt: {
+      label: 'TXT 纯文本',
+      tip: '仅标题+正文，纯文本格式，便于复制粘贴到其他平台或再次拆书导入。',
+    },
   };
 
   const getProgress = (current: number, target: number) => {
@@ -125,6 +167,27 @@ export default function ShortStoryBookshelf({ isMobile }: Props) {
     return (
       <div style={{ textAlign: 'center', padding: '80px 0' }}>
         <Spin size="large" tip="加载短故事..." />
+      </div>
+    );
+  }
+
+  // 加载失败显示重试按钮（对齐短故事详情页和长篇小说）
+  if (loadError) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '80px 16px' }}>
+        <Result
+          status="error"
+          title="加载短故事列表失败"
+          subTitle={loadError}
+          extra={[
+            <Button type="primary" key="retry" icon={<ReloadOutlined />} onClick={loadStories}>
+              重试
+            </Button>,
+            <Button key="home" onClick={() => navigate('/')}>
+              返回首页
+            </Button>,
+          ]}
+        />
       </div>
     );
   }
@@ -209,8 +272,8 @@ export default function ShortStoryBookshelf({ isMobile }: Props) {
                       ],
                       onClick: ({ key, domEvent }) => {
                         domEvent.stopPropagation();
-                        if (key === 'markdown') shortStoryApi.exportMarkdown(story.id);
-                        else if (key === 'txt') shortStoryApi.exportTxt(story.id);
+                        if (key === 'markdown') handleOpenExport(story, 'markdown');
+                        else if (key === 'txt') handleOpenExport(story, 'txt');
                       },
                     }}
                     trigger={['click']}
@@ -322,6 +385,73 @@ export default function ShortStoryBookshelf({ isMobile }: Props) {
           })}
         </div>
       )}
+
+      {/* 导出确认弹窗（对齐短故事详情页和长篇小说的导出体验） */}
+      <Modal
+        title="导出短故事"
+        open={exportModalOpen}
+        onCancel={() => {
+          setExportModalOpen(false);
+          setExportTargetStory(null);
+        }}
+        onOk={handleConfirmExport}
+        okText="确定导出"
+        cancelText="取消"
+        centered
+      >
+        {exportTargetStory && (
+          <>
+            <div style={{ marginBottom: 12 }}>
+              <Text strong>《{exportTargetStory.title}》</Text>
+              <Text type="secondary" style={{ marginLeft: 8 }}>
+                共 {exportTargetStory.current_words} 字
+              </Text>
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                gap: 12,
+                marginBottom: 16,
+              }}
+            >
+              {(['markdown', 'txt'] as const).map((fmt) => {
+                const meta = exportFormatMeta[fmt];
+                const selected = exportFormat === fmt;
+                return (
+                  <div
+                    key={fmt}
+                    onClick={() => setExportFormat(fmt)}
+                    style={{
+                      flex: 1,
+                      padding: 12,
+                      border: `2px solid ${selected ? token.colorPrimary : token.colorBorderSecondary}`,
+                      borderRadius: 8,
+                      cursor: 'pointer',
+                      background: selected ? token.colorPrimaryBg : 'transparent',
+                      transition: 'all 0.2s',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                      {fmt === 'markdown' ? (
+                        <FileMarkdownOutlined style={{ color: token.colorPrimary, fontSize: 18 }} />
+                      ) : (
+                        <FileTextOutlined style={{ color: token.colorTextSecondary, fontSize: 18 }} />
+                      )}
+                      <Text strong>{meta.label}</Text>
+                    </div>
+                    <Text type="secondary" style={{ fontSize: 12, lineHeight: 1.5 }}>
+                      {meta.tip}
+                    </Text>
+                  </div>
+                );
+              })}
+            </div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              导出后将以文件下载方式保存到本地。
+            </Text>
+          </>
+        )}
+      </Modal>
     </div>
   );
 }
