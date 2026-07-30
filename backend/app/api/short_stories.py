@@ -155,6 +155,7 @@ async def get_short_stories(
             .limit(limit)
         )
         stories = result.scalars().all()
+        logger.info(f"获取短故事列表: user_id={user_id}, total={total}, returned={len(stories)}")
         return ShortStoryListResponse(total=total, items=stories)
     except HTTPException:
         raise
@@ -241,6 +242,10 @@ async def update_short_story(
 
         await db.commit()
         await db.refresh(story)
+        logger.info(
+            f"更新短故事: story_id={story_id}, fields={list(update_data.keys())}, "
+            f"current_words={story.current_words}"
+        )
         return story
     except HTTPException:
         raise
@@ -272,6 +277,7 @@ async def delete_short_story(
 
         await db.delete(story)
         await db.commit()
+        logger.info(f"删除短故事: story_id={story_id}, user_id={user_id}")
         return {"message": "删除成功"}
     except HTTPException:
         raise
@@ -316,11 +322,12 @@ async def generate_loglines(
             genre=req.genre or story.genre or "",
             user_idea=req.user_idea or story.logline or "",
         )
+        logger.info(f"AI生成梗概成功: story_id={story_id}, options_count={len(options) if isinstance(options, list) else 'N/A'}")
         return {"options": options}
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"AI生成梗概失败: {str(e)}", exc_info=True)
+        logger.error(f"AI生成梗概失败: story_id={story_id}, error={str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"生成失败: {str(e)}")
 
 
@@ -349,11 +356,12 @@ async def generate_twists(
             logline=story.logline or "",
             emotion_goal=story.emotion_goal or "",
         )
+        logger.info(f"AI生成反转成功: story_id={story_id}, options_count={len(options) if isinstance(options, list) else 'N/A'}")
         return {"options": options}
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"AI生成反转失败: {str(e)}", exc_info=True)
+        logger.error(f"AI生成反转失败: story_id={story_id}, error={str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"生成失败: {str(e)}")
 
 
@@ -408,17 +416,23 @@ async def generate_segment(
             "target_words": story.target_words,
         }
 
+        logger.info(f"开始AI生成分段: story_id={story_id}, stage={req.segment_stage}, target_words={target_segment.get('target_words')}")
         content = await ShortStoryAIService.generate_segment_content(
             ai_service=ai_service,
             story_data=story_data,
             segment=target_segment,
             existing_content=story.content or "",
         )
+        generated_words = _count_chinese_and_punctuation(content)
+        logger.info(
+            f"AI生成分段成功: story_id={story_id}, stage={req.segment_stage}, "
+            f"generated_words={generated_words}"
+        )
         return {"content": content}
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"AI生成分段失败: {str(e)}", exc_info=True)
+        logger.error(f"AI生成分段失败: story_id={story_id}, stage={req.segment_stage}, error={str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"生成失败: {str(e)}")
 
 
@@ -444,13 +458,30 @@ async def polish_story(
         if not story.content:
             raise HTTPException(status_code=400, detail="正文为空，无法精修")
 
-        polished = await ShortStoryAIService.polish_content(
-            ai_service=ai_service,
-            title=story.title or "",
-            emotion_goal=story.emotion_goal or "",
-            twist_content=story.twist_content or "",
-            content=story.content,
-        )
+        original_content = story.content
+        original_words = story.current_words or _count_chinese_and_punctuation(original_content)
+        logger.info(f"开始AI精修: story_id={story_id}, original_words={original_words}")
+
+        try:
+            polished = await ShortStoryAIService.polish_content(
+                ai_service=ai_service,
+                title=story.title or "",
+                emotion_goal=story.emotion_goal or "",
+                twist_content=story.twist_content or "",
+                content=story.content,
+            )
+        except Exception as ai_err:
+            # 错误恢复：AI精修失败时保留原文，状态不前进
+            logger.error(
+                f"AI精修调用失败，保留原文: story_id={story_id}, error={str(ai_err)}",
+                exc_info=True,
+            )
+            raise HTTPException(status_code=500, detail=f"AI精修失败，原文未改动: {str(ai_err)}")
+
+        # 校验精修结果有效性
+        if not polished or len(polished.strip()) < 50:
+            logger.warning(f"AI精修结果过短或为空，保留原文: story_id={story_id}, polished_len={len(polished) if polished else 0}")
+            raise HTTPException(status_code=500, detail="AI精修结果为空或过短，原文未改动")
 
         # 更新正文
         story.content = polished
@@ -461,11 +492,19 @@ async def polish_story(
         story.status = "polishing"
         await db.commit()
         await db.refresh(story)
+        logger.info(
+            f"AI精修成功: story_id={story_id}, {original_words}字→{story.current_words}字"
+        )
         return {"content": polished, "current_words": story.current_words}
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"AI精修失败: {str(e)}", exc_info=True)
+        # 兜底恢复：未知异常时回滚未提交的改动
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"AI精修失败(已回滚): story_id={story_id}, error={str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"精修失败: {str(e)}")
 
 
@@ -496,6 +535,7 @@ async def export_markdown(
         status_map = {"planning": "规划中", "writing": "创作中", "polishing": "精修中", "completed": "已完结"}
         export_time = datetime.now().strftime("%Y-%m-%d %H:%M")
 
+        logger.info(f"导出Markdown: story_id={story_id}, title={story.title}, words={story.current_words}")
         md = f"""# {story.title}
 
 > **类型**: 短故事
@@ -566,6 +606,7 @@ async def export_txt(
 
 {story.content or '（暂无正文）'}
 """
+        logger.info(f"导出TXT: story_id={story_id}, title={story.title}, words={story.current_words}")
         encoded_filename = quote(f"{safe_title}.txt")
         return Response(
             content=txt,
@@ -631,6 +672,7 @@ async def generate_cover(
         story.cover_status = "generating"
         story.cover_prompt = cover_prompt
         await db.commit()
+        logger.info(f"开始生成封面: story_id={story_id}, title={story.title}")
 
         try:
             service = CoverGenerationService()
@@ -658,6 +700,7 @@ async def generate_cover(
             story.cover_status = "ready"
             await db.commit()
             await db.refresh(story)
+            logger.info(f"封面生成成功: story_id={story_id}, cover_url={cover_url}")
 
             return {
                 "cover_status": "ready",
@@ -666,9 +709,13 @@ async def generate_cover(
                 "message": "封面生成成功",
             }
         except Exception as e:
+            # 错误恢复：标记封面为失败，便于用户重试
             story.cover_status = "failed"
             await db.commit()
-            logger.error(f"封面生成失败: {str(e)}", exc_info=True)
+            logger.error(
+                f"封面生成失败(已标记failed可重试): story_id={story_id}, error={str(e)}",
+                exc_info=True,
+            )
             raise HTTPException(status_code=500, detail=f"封面生成失败: {str(e)}")
     except HTTPException:
         raise
@@ -702,14 +749,37 @@ async def generate_full_story(
         if not req.initial_idea or not req.initial_idea.strip():
             raise HTTPException(status_code=400, detail="请输入故事想法")
 
-        # 调用AI生成完整短故事
-        story_data = await FullStoryGenerator.generate_full_story(
-            ai_service=ai_service,
-            initial_idea=req.initial_idea.strip(),
-            target_words=req.target_words,
-            emotion_goal=req.emotion_goal or "",
-            target_platform=req.target_platform,
+        logger.info(
+            f"开始AI一键生成完整短故事: user_id={user_id}, "
+            f"idea_len={len(req.initial_idea)}, target_words={req.target_words}, "
+            f"emotion_goal={req.emotion_goal}, platform={req.target_platform}"
         )
+
+        # 调用AI生成完整短故事（先生成，失败则不创建DB记录）
+        try:
+            story_data = await FullStoryGenerator.generate_full_story(
+                ai_service=ai_service,
+                initial_idea=req.initial_idea.strip(),
+                target_words=req.target_words,
+                emotion_goal=req.emotion_goal or "",
+                target_platform=req.target_platform,
+            )
+        except Exception as ai_err:
+            # 错误恢复：AI生成失败时不创建任何DB记录，避免脏数据
+            logger.error(
+                f"AI一键生成调用失败，未创建DB记录: user_id={user_id}, error={str(ai_err)}",
+                exc_info=True,
+            )
+            raise HTTPException(status_code=500, detail=f"AI生成失败: {str(ai_err)}")
+
+        # 校验生成结果
+        if not story_data or not story_data.get("title") or not story_data.get("content"):
+            logger.error(
+                f"AI生成结果不完整: user_id={user_id}, "
+                f"has_title={bool(story_data and story_data.get('title'))}, "
+                f"has_content={bool(story_data and story_data.get('content'))}"
+            )
+            raise HTTPException(status_code=500, detail="AI生成结果不完整（缺少标题或正文）")
 
         # 创建短故事记录
         import uuid
@@ -745,14 +815,28 @@ async def generate_full_story(
         db.add(new_story)
         await db.commit()
         await db.refresh(new_story)
+        logger.info(
+            f"AI一键生成完整短故事成功: story_id={story_id}, user_id={user_id}, "
+            f"title={new_story.title}, words={new_story.current_words}"
+        )
         return new_story
     except HTTPException:
         raise
     except ValueError as e:
-        logger.error(f"AI生成结果解析失败: {str(e)}", exc_info=True)
+        # 错误恢复：JSON解析失败时回滚
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"AI生成结果解析失败(已回滚): user_id={user_id}, error={str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"AI生成结果格式错误: {str(e)}")
     except Exception as e:
-        logger.error(f"AI生成完整短故事失败: {str(e)}", exc_info=True)
+        # 兜底恢复：未知异常时回滚
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"AI生成完整短故事失败(已回滚): user_id={user_id}, error={str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"生成失败: {str(e)}")
 
 
@@ -781,30 +865,52 @@ async def score_story(
         if not story.content:
             raise HTTPException(status_code=400, detail="正文为空，无法评分")
 
-        score_result = await StoryScorer.score_story(
-            ai_service=ai_service,
-            title=story.title or "",
-            content=story.content,
-            emotion_goal=story.emotion_goal or "",
-            logline=story.logline or "",
-            twist_type=story.twist_type or "",
-            twist_content=story.twist_content or "",
-            genre=story.genre or "",
-            target_words=story.target_words or 12000,
-        )
+        content_words = _count_chinese_and_punctuation(story.content)
+        logger.info(f"开始AI评分: story_id={story_id}, title={story.title}, words={content_words}")
+
+        # 错误恢复：保留旧评分引用，AI失败时不清空
+        old_score_data = story.score_data
+
+        try:
+            score_result = await StoryScorer.score_story(
+                ai_service=ai_service,
+                title=story.title or "",
+                content=story.content,
+                emotion_goal=story.emotion_goal or "",
+                logline=story.logline or "",
+                twist_type=story.twist_type or "",
+                twist_content=story.twist_content or "",
+                genre=story.genre or "",
+                target_words=story.target_words or 12000,
+            )
+        except Exception as ai_err:
+            # 错误恢复：AI评分失败时保留旧评分，不清空
+            logger.error(
+                f"AI评分调用失败，保留旧评分: story_id={story_id}, error={str(ai_err)}",
+                exc_info=True,
+            )
+            raise HTTPException(status_code=500, detail=f"AI评分失败，旧评分保留: {str(ai_err)}")
 
         # 保存评分到数据库
         story.score_data = json.dumps(score_result, ensure_ascii=False)
         story.scored_at = datetime.now()
         await db.commit()
 
+        logger.info(
+            f"AI评分成功: story_id={story_id}, total_score={score_result.get('total_score')}, "
+            f"level={score_result.get('level')}"
+        )
         return score_result
     except HTTPException:
         raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"AI评分失败: {str(e)}", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"AI评分失败(已回滚): story_id={story_id}, error={str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"评分失败: {str(e)}")
 
 
@@ -880,22 +986,38 @@ async def improve_from_score(
         # 保留原文备份
         original_content = story.content
         original_words = story.current_words or _count_chinese_and_punctuation(original_content)
-
-        improved_content = await StoryImprover.improve_from_score(
-            ai_service=ai_service,
-            title=story.title or "",
-            content=story.content,
-            score_data=score_data,
-            emotion_goal=story.emotion_goal or "",
-            logline=story.logline or "",
-            twist_type=story.twist_type or "",
-            twist_content=story.twist_content or "",
-            genre=story.genre or "",
-            target_words=story.target_words or 12000,
+        logger.info(
+            f"开始AI基于评分改进: story_id={story_id}, original_words={original_words}, "
+            f"old_score={score_data.get('total_score')}/100"
         )
 
+        try:
+            improved_content = await StoryImprover.improve_from_score(
+                ai_service=ai_service,
+                title=story.title or "",
+                content=story.content,
+                score_data=score_data,
+                emotion_goal=story.emotion_goal or "",
+                logline=story.logline or "",
+                twist_type=story.twist_type or "",
+                twist_content=story.twist_content or "",
+                genre=story.genre or "",
+                target_words=story.target_words or 12000,
+            )
+        except Exception as ai_err:
+            # 错误恢复：AI改进失败时保留原文和旧评分
+            logger.error(
+                f"AI改进调用失败，保留原文和旧评分: story_id={story_id}, error={str(ai_err)}",
+                exc_info=True,
+            )
+            raise HTTPException(status_code=500, detail=f"AI改进失败，原文和旧评分保留: {str(ai_err)}")
+
         if not improved_content or len(improved_content.strip()) < 100:
-            raise HTTPException(status_code=500, detail="AI改进结果为空或过短，已保留原文")
+            logger.warning(
+                f"AI改进结果过短或为空，保留原文: story_id={story_id}, "
+                f"improved_len={len(improved_content) if improved_content else 0}"
+            )
+            raise HTTPException(status_code=500, detail="AI改进结果为空或过短，原文未改动")
 
         # 更新正文
         story.content = improved_content
@@ -937,5 +1059,9 @@ async def improve_from_score(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"AI基于评分改进失败: {str(e)}", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"AI基于评分改进失败(已回滚): story_id={story_id}, error={str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"改进失败: {str(e)}")

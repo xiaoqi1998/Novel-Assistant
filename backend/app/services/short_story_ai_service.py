@@ -202,7 +202,9 @@ class ShortStoryAIService:
         cleaned = clean_json_response(accumulated)
         data = json.loads(cleaned)
         options = data.get("options", [])
-        return [str(o) for o in options if o][:6]
+        result = [str(o) for o in options if o][:6]
+        logger.debug(f"AI生成梗概完成: 返回{len(result)}个选项, 响应长度={len(accumulated)}")
+        return result
 
     @staticmethod
     async def generate_twists(
@@ -228,7 +230,9 @@ class ShortStoryAIService:
         cleaned = clean_json_response(accumulated)
         data = json.loads(cleaned)
         options = data.get("options", [])
-        return [o for o in options if isinstance(o, dict)][:6]
+        result = [o for o in options if isinstance(o, dict)][:6]
+        logger.debug(f"AI生成反转完成: 返回{len(result)}个选项, 响应长度={len(accumulated)}")
+        return result
 
     @staticmethod
     async def generate_segment_content(
@@ -283,6 +287,10 @@ class ShortStoryAIService:
         ):
             result += chunk
 
+        logger.debug(
+            f"AI生成分段完成: stage={segment.get('stage')}, "
+            f"target_words={segment.get('target_words')}, actual_chars={len(result)}"
+        )
         return result.strip()
 
     @staticmethod
@@ -307,6 +315,7 @@ class ShortStoryAIService:
         ):
             result += chunk
 
+        logger.debug(f"AI精修完成: 原文长度={len(content)}, 精修后长度={len(result)}")
         return result.strip()
 
     @staticmethod
@@ -454,6 +463,12 @@ class FullStoryGenerator:
             if field not in data or not data[field]:
                 raise ValueError(f"AI生成结果缺少必要字段: {field}")
 
+        logger.info(
+            f"AI一键生成短故事完成: title={data.get('title')}, "
+            f"content_length={len(data.get('content', ''))}, "
+            f"emotion_goal={data.get('emotion_goal')}, twist_type={data.get('twist_type')}"
+        )
+
         # 兜底默认值
         data.setdefault("emotion_goal", emotion_goal or "爽感释放")
         data.setdefault("twist_type", "")
@@ -590,6 +605,10 @@ class StoryScorer:
         if not isinstance(data["dimensions"], list) or len(data["dimensions"]) != 5:
             raise ValueError("AI评分结果维度不完整")
 
+        logger.info(
+            f"AI评分完成: total_score={data.get('total_score')}, level={data.get('level')}, "
+            f"content_length={len(content)}"
+        )
         return data
 
 
@@ -721,4 +740,8 @@ class StoryImprover:
         ):
             result += chunk
 
+        logger.info(
+            f"AI基于评分改进完成: 原文长度={len(content)}, 改进后长度={len(result)}, "
+            f"原评分={score_data.get('total_score')}/100"
+        )
         return result.strip()
