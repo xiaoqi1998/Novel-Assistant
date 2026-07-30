@@ -17,7 +17,7 @@ import {
   Divider,
   Tooltip,
 } from 'antd';
-import { SaveOutlined, CheckCircleOutlined, TrophyOutlined, ReloadOutlined } from '@ant-design/icons';
+import { SaveOutlined, CheckCircleOutlined, TrophyOutlined, ReloadOutlined, AuditOutlined } from '@ant-design/icons';
 import { shortStoryApi } from '../../services/api';
 import { showErrorToast } from '../../utils/errorHandler';
 import { useShortStoryStore } from '../../store/shortStoryStore';
@@ -74,6 +74,8 @@ export default function Polish() {
   const [scoring, setScoring] = useState(false);
   // 基于评分改进相关
   const [improving, setImproving] = useState(false);
+  // AI自动检查相关
+  const [autoChecking, setAutoChecking] = useState(false);
 
   useEffect(() => {
     try {
@@ -206,6 +208,31 @@ export default function Polish() {
     }
   };
 
+  const handleAutoCheck = async () => {
+    if (!story.content || story.content.trim().length < 100) {
+      message.warning('正文内容过短，无法检查（至少需要100字）');
+      return;
+    }
+    try {
+      setAutoChecking(true);
+      const result = await shortStoryApi.autoCheck(story.id);
+      setChecklist(result.checklist);
+      const passedCount = result.checklist.filter((i) => i.checked).length;
+      message.success(`AI自查完成：${passedCount}/${result.checklist.length} 项通过`);
+      // 同步story
+      try {
+        const updated = await shortStoryApi.get(story.id);
+        updateCurrentStory(updated);
+      } catch {
+        // 同步失败不影响主流程
+      }
+    } catch (error) {
+      showErrorToast(error, 'AI自查失败');
+    } finally {
+      setAutoChecking(false);
+    }
+  };
+
   // 按类别分组
   const grouped: Record<string, PolishChecklistItem[]> = {};
   checklist.forEach((item) => {
@@ -326,9 +353,23 @@ export default function Polish() {
         title="完稿自查清单"
         style={{ marginBottom: 16 }}
         extra={
-          <Tag color={allChecked ? 'success' : 'warning'}>
-            {checkedCount}/{totalCount}
-          </Tag>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Tooltip title="AI逐项检查自查清单，自动判断每项是否通过并给出依据">
+              <Button
+                size="small"
+                type="primary"
+                ghost
+                icon={<AuditOutlined />}
+                loading={autoChecking}
+                onClick={handleAutoCheck}
+              >
+                AI自动检查
+              </Button>
+            </Tooltip>
+            <Tag color={allChecked ? 'success' : 'warning'}>
+              {checkedCount}/{totalCount}
+            </Tag>
+          </div>
         }
       >
         {totalCount === 0 ? (
@@ -369,6 +410,14 @@ export default function Polish() {
                       >
                         {item.item}
                       </Text>
+                      {/* AI检查依据 */}
+                      {item.evidence && (
+                        <div style={{ marginTop: 4, padding: '4px 8px', background: token.colorFillAlter, borderRadius: 4, borderLeft: `3px solid ${item.checked ? token.colorSuccess : token.colorError}` }}>
+                          <Text type="secondary" style={{ fontSize: 12, fontStyle: 'italic' }}>
+                            AI依据：{item.evidence}
+                          </Text>
+                        </div>
+                      )}
                       {!item.checked && (
                         <div style={{ marginTop: 4 }}>
                           <Text type="secondary" style={{ fontSize: 12 }}>

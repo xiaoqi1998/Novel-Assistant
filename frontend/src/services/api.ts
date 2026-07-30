@@ -70,6 +70,7 @@ import type {
   BatchAnalysisStatusResponse,
   BatchAnalyzeUnanalyzedRequest,
   BatchAnalyzeUnanalyzedResponse,
+  PolishChecklistItem,
 } from '../types';
 
 interface MCPPluginSimpleCreate {
@@ -1079,6 +1080,12 @@ export const shortStoryApi = {
       original_words: number;
       message: string;
     }>(`/short-stories/${id}/improve-from-score`),
+
+  // AI自动检查自查清单（逐项检查并标记通过/不通过）
+  autoCheck: (id: string) =>
+    api.post<unknown, {
+      checklist: PolishChecklistItem[];
+    }>(`/short-stories/${id}/auto-check`),
 };
 export const shortInspirationApi = {
   generateOptions: (data: { step: string; context: Record<string, string> }) =>

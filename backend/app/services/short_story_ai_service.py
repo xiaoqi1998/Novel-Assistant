@@ -73,7 +73,7 @@ SEGMENT_USER = """故事标题：{title}
 人设速写：{characters}
 目标平台：{target_platform}
 目标总字数：{target_words}
-
+{emotion_curve_hint}
 当前要写的段落：{segment_label}
 本段目标字数：{segment_target_words}字
 本段写作要点：{segment_desc}
@@ -102,7 +102,7 @@ POLISH_USER = """以下是短故事正文，请按照精修原则进行润色：
 标题：{title}
 情绪目标：{emotion_goal}
 核心反转：{twist_content}
-
+{emotion_curve_hint}
 === 正文 ===
 {content}
 
@@ -240,6 +240,7 @@ class ShortStoryAIService:
         story_data: dict,
         segment: dict,
         existing_content: str = "",
+        emotion_curve: str = "",
     ) -> str:
         """生成指定段落的正文"""
         # 构建上下文提示
@@ -265,6 +266,8 @@ class ShortStoryAIService:
         except (json.JSONDecodeError, TypeError):
             chars_text = chars_raw or "未设定"
 
+        emotion_curve_hint = _format_emotion_curve_for_prompt(emotion_curve or story_data.get("emotion_curve", ""))
+
         user_prompt = SEGMENT_USER.format(
             title=story_data.get("title", "未定"),
             logline=story_data.get("logline", "未定"),
@@ -275,6 +278,7 @@ class ShortStoryAIService:
             characters=chars_text,
             target_platform=story_data.get("target_platform", "未定"),
             target_words=story_data.get("target_words", 12000),
+            emotion_curve_hint=emotion_curve_hint,
             segment_label=segment.get("label", ""),
             segment_target_words=segment.get("target_words", 1000),
             segment_desc=segment.get("desc", ""),
@@ -300,12 +304,15 @@ class ShortStoryAIService:
         emotion_goal: str,
         twist_content: str,
         content: str,
+        emotion_curve: str = "",
     ) -> str:
         """精修润色正文"""
+        emotion_curve_hint = _format_emotion_curve_for_prompt(emotion_curve)
         user_prompt = POLISH_USER.format(
             title=title or "未定",
             emotion_goal=emotion_goal or "未定",
             twist_content=twist_content or "未定",
+            emotion_curve_hint=emotion_curve_hint,
             content=content or "",
         )
 
@@ -504,7 +511,7 @@ STAGE2_SEGMENT_USER = """请撰写以下分段的正文：
 情绪目标：{emotion_goal}
 核心反转：{twist_type} - {twist_content}
 铺垫线索：{twist_clues}
-
+{emotion_curve_hint}
 === 人设速写 ===
 {characters}
 
@@ -529,6 +536,7 @@ class FullStoryGenerator:
         target_words: int = 12000,
         emotion_goal: str = "",
         target_platform: str = "知乎盐言",
+        emotion_curve: str = "",
     ) -> dict:
         """两阶段生成完整短故事（设定+分段正文），解决单次AI调用超时问题
 
@@ -540,6 +548,7 @@ class FullStoryGenerator:
             target_words: 目标字数
             emotion_goal: 情绪目标（可选，未指定则AI自选）
             target_platform: 目标平台
+            emotion_curve: 情绪曲线JSON（可选）
 
         Returns:
             dict: {title, logline, emotion_goal, twist_type, twist_content,
@@ -551,6 +560,10 @@ class FullStoryGenerator:
             extra += f"\n【指定情绪目标】{emotion_goal}"
         if target_platform:
             extra += f"\n【目标平台】{target_platform}"
+        # 注入情绪曲线到阶段1提示
+        emotion_curve_hint_stage1 = _format_emotion_curve_for_prompt(emotion_curve)
+        if emotion_curve_hint_stage1:
+            extra += f"\n{emotion_curve_hint_stage1}"
 
         stage1_prompt = STAGE1_SETUP_USER.format(
             initial_idea=initial_idea,
@@ -610,6 +623,9 @@ class FullStoryGenerator:
         ) if characters else "未设定"
         clues_text = "、".join(twist_clues) if twist_clues else "未设定"
 
+        # 情绪曲线提示（优先使用传入的，否则用阶段1AI生成的）
+        seg_emotion_curve_hint = _format_emotion_curve_for_prompt(emotion_curve)
+
         full_content_parts = []
         previous_ending = ""
 
@@ -631,6 +647,7 @@ class FullStoryGenerator:
                 twist_type=twist_type,
                 twist_content=twist_content,
                 twist_clues=clues_text,
+                emotion_curve_hint=seg_emotion_curve_hint,
                 characters=chars_text,
                 segment_label=seg_label,
                 segment_stage=seg_stage,
@@ -755,7 +772,7 @@ SCORE_USER = """请对以下短故事进行评分：
 核心反转：{twist_type} - {twist_content}
 题材标签：{genre}
 目标字数：{target_words}
-
+{emotion_curve_hint}
 【正文】
 {content}
 
@@ -776,11 +793,13 @@ class StoryScorer:
         twist_content: str = "",
         genre: str = "",
         target_words: int = 12000,
+        emotion_curve: str = "",
     ) -> dict:
         """对短故事进行5维评分"""
         if not content or len(content.strip()) < 100:
             raise ValueError("正文内容过短，无法评分（至少需要100字）")
 
+        emotion_curve_hint = _format_emotion_curve_for_prompt(emotion_curve)
         user_prompt = SCORE_USER.format(
             title=title or "未命名",
             emotion_goal=emotion_goal or "未设定",
@@ -789,6 +808,7 @@ class StoryScorer:
             twist_content=twist_content or "未设定",
             genre=genre or "未设定",
             target_words=target_words,
+            emotion_curve_hint=emotion_curve_hint,
             content=content,
         )
 
@@ -847,7 +867,7 @@ IMPROVE_USER = """请根据AI评分的改进点，对以下短故事正文进行
 核心反转：{twist_type} - {twist_content}
 题材标签：{genre}
 目标字数：{target_words}
-
+{emotion_curve_hint}
 === 当前评分 ===
 总分：{total_score}/100（{level}）
 总体评价：{overall_evaluation}
@@ -865,6 +885,37 @@ IMPROVE_USER = """请根据AI评分的改进点，对以下短故事正文进行
 {content}
 
 请严格按上述改进点修订正文，直接输出修订后的完整正文，不要加任何解释。"""
+
+
+def _format_emotion_curve_for_prompt(emotion_curve: str | None) -> str:
+    """将emotion_curve JSON转为AI Prompt可读的文本
+
+    emotion_curve格式: [{"stage": "opening", "emotion": "紧张/震惊", "intensity": 7}, ...]
+    """
+    if not emotion_curve:
+        return ""
+    try:
+        nodes = json.loads(emotion_curve)
+        if not isinstance(nodes, list) or not nodes:
+            return ""
+    except (json.JSONDecodeError, TypeError):
+        return ""
+
+    stage_map = {
+        "opening": "开头（Hook）",
+        "buildup": "铺垫（冲突激化）",
+        "twist": "反转（高潮）",
+        "ending": "结尾（收尾）",
+    }
+    lines = ["【情绪曲线设定】"]
+    for node in nodes:
+        stage = node.get("stage", "")
+        emotion = node.get("emotion", "")
+        intensity = node.get("intensity", 5)
+        label = stage_map.get(stage, stage)
+        lines.append(f"  {label}：情绪「{emotion}」，强度{intensity}/10")
+    lines.append("请严格按此情绪曲线设定控制各段情绪节奏。")
+    return "\n".join(lines)
 
 
 def _format_dimensions_for_improve(dimensions: list) -> str:
@@ -905,6 +956,7 @@ class StoryImprover:
         twist_content: str = "",
         genre: str = "",
         target_words: int = 12000,
+        emotion_curve: str = "",
     ) -> str:
         """根据AI评分结果改进正文"""
         if not content or len(content.strip()) < 100:
@@ -920,6 +972,7 @@ class StoryImprover:
         if not top_issues and not improvement_priority and not any(d.get("issues") or d.get("suggestions") for d in dimensions):
             raise ValueError("评分结果中没有需要改进的问题，无需改进")
 
+        emotion_curve_hint = _format_emotion_curve_for_prompt(emotion_curve)
         user_prompt = IMPROVE_USER.format(
             title=title or "未命名",
             emotion_goal=emotion_goal or "未设定",
@@ -928,6 +981,7 @@ class StoryImprover:
             twist_content=twist_content or "未设定",
             genre=genre or "未设定",
             target_words=target_words,
+            emotion_curve_hint=emotion_curve_hint,
             total_score=score_data.get("total_score", 0),
             level=score_data.get("level", "未评级"),
             overall_evaluation=score_data.get("overall_evaluation", ""),
@@ -950,3 +1004,99 @@ class StoryImprover:
             f"原评分={score_data.get('total_score')}/100"
         )
         return result.strip()
+
+
+# ============ AI 自查清单 Prompt ============
+
+CHECKLIST_SYSTEM = """你是短故事爆款质量检查专家。
+你的任务是：根据爆款方法论，对短故事正文逐项检查自查清单中的每一项，判断是否通过。
+
+【检查标准】
+1. 开头查验：前300字是否出现核心矛盾？如果开头是铺垫背景、环境描写、人物介绍而非冲突现场，则不通过。
+2. 废话查验：是否有超过3行无意义的环境/心理描写？排比句和空洞描写也算废话。
+3. 卡点查验：每个段落结尾是否勾住读者继续看？是否有让人非看下去不可的悬念？
+4. 去AI味查验：台词是否像真人说话？是否有大篇幅排比句和空洞形容词？AI常见的"不禁"、"竟然"等标记词。
+5. 情绪曲线：每1000-1500字是否有一次小冲突或小揭秘？是否有超过500字纯说明性废话？
+6. 人设查验：人设是否高度标签化？读者能否一眼认清阵营？
+7. 对话查验：每句台词是否具备暴露阴谋或推进爽点的功能？日常寒暄是否已删除？
+8. 选题查验：选题是否具备高概念？一句话能否说清爆点？
+
+【返回格式】
+必须返回如下JSON：
+{
+  "items": [
+    {"id": "opening_conflict", "checked": true, "evidence": "前300字中'他一把将她抵在墙上'直接制造冲突"},
+    {"id": "no_padding", "checked": false, "evidence": "第5段有4行纯环境描写'夕阳西下...余晖洒在...'"},
+    ...
+  ]
+}
+每个item必须包含id、checked（是否通过）、evidence（检查依据，引用正文片段）。"""
+
+CHECKLIST_USER = """请对以下短故事正文逐项检查自查清单：
+
+【情绪目标】{emotion_goal}
+【情绪曲线设定】{emotion_curve_hint}
+
+【自查清单项】
+{checklist_items}
+
+【正文】
+{content}
+
+请逐项检查，返回JSON结果。每项必须引用正文片段作为检查依据。"""
+
+
+class ChecklistChecker:
+    """AI自查清单检查器"""
+
+    @staticmethod
+    async def check_checklist(
+        ai_service: AIService,
+        content: str,
+        checklist: list[dict],
+        emotion_goal: str = "",
+        emotion_curve: str = "",
+    ) -> list[dict]:
+        """AI逐项检查自查清单，返回每项的checked和evidence"""
+        if not content or len(content.strip()) < 100:
+            raise ValueError("正文内容过短，无法检查（至少需要100字）")
+
+        if not checklist:
+            raise ValueError("自查清单为空")
+
+        # 格式化清单项
+        items_text = "\n".join(
+            f"{i+1}. id={item.get('id')}, 检查项：{item.get('item')}"
+            for i, item in enumerate(checklist)
+        )
+
+        emotion_curve_hint = _format_emotion_curve_for_prompt(emotion_curve)
+
+        user_prompt = CHECKLIST_USER.format(
+            emotion_goal=emotion_goal or "未设定",
+            emotion_curve_hint=emotion_curve_hint or "未设定",
+            checklist_items=items_text,
+            content=content,
+        )
+
+        accumulated = ""
+        async for chunk in ai_service.generate_text_stream(
+            prompt=user_prompt,
+            system_prompt=CHECKLIST_SYSTEM,
+            temperature=0.2,  # 检查需要精确稳定
+        ):
+            accumulated += chunk
+
+        cleaned = clean_json_response(accumulated)
+        data = json.loads(cleaned)
+
+        results = data.get("items", [])
+        if not isinstance(results, list):
+            raise ValueError("AI检查结果格式错误")
+
+        logger.info(
+            f"AI自查清单完成: items={len(results)}, "
+            f"passed={sum(1 for r in results if r.get('checked'))}, "
+            f"failed={sum(1 for r in results if not r.get('checked'))}"
+        )
+        return results

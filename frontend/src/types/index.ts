@@ -352,6 +352,7 @@ export interface PolishChecklistItem {
   item: string;
   checked: boolean;
   fix: string;
+  evidence?: string; // AI自动检查的依据（引用正文片段）
 }
 
 // 大纲类型定义

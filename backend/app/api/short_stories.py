@@ -21,7 +21,7 @@ from app.schemas.short_story import (
     ShortStoryListResponse
 )
 from app.services.ai_service import AIService
-from app.services.short_story_ai_service import ShortStoryAIService, FullStoryGenerator, StoryScorer, StoryImprover
+from app.services.short_story_ai_service import ShortStoryAIService, FullStoryGenerator, StoryScorer, StoryImprover, ChecklistChecker
 from app.api.settings import get_user_ai_service
 from app.logger import get_logger
 
@@ -66,6 +66,54 @@ def _build_default_polish_checklist() -> str:
         {"id": "high_concept", "category": "选题查验", "item": "选题是否具备高概念（一句话说清爆点）？", "checked": False, "fix": "公式：极致反差/道德冲突+强身份标签+迫切危机悬念"},
     ]
     return json.dumps(checklist, ensure_ascii=False)
+
+
+def _build_default_emotion_curve(emotion_goal: str = "") -> str:
+    """根据情绪目标构建默认情绪曲线
+
+    不同情绪目标对应不同的各阶段情绪和强度
+    """
+    # 根据情绪目标选择不同的默认曲线
+    curves = {
+        "意难平": [
+            {"stage": "opening", "emotion": "温馨/美好", "intensity": 6},
+            {"stage": "buildup", "emotion": "误解/错过", "intensity": 8},
+            {"stage": "twist", "emotion": "真相大白/心碎", "intensity": 10},
+            {"stage": "ending", "emotion": "意难平/遗憾", "intensity": 7},
+        ],
+        "反转震撼": [
+            {"stage": "opening", "emotion": "紧张/不安", "intensity": 7},
+            {"stage": "buildup", "emotion": "疑惑/不安", "intensity": 8},
+            {"stage": "twist", "emotion": "震撼/颠覆", "intensity": 10},
+            {"stage": "ending", "emotion": "细思极恐/回味", "intensity": 7},
+        ],
+        "爽感释放": [
+            {"stage": "opening", "emotion": "紧张/震惊", "intensity": 7},
+            {"stage": "buildup", "emotion": "愤怒/屈辱", "intensity": 9},
+            {"stage": "twist", "emotion": "爽感/震撼", "intensity": 10},
+            {"stage": "ending", "emotion": "释怀/余味", "intensity": 6},
+        ],
+        "治愈温暖": [
+            {"stage": "opening", "emotion": "低谷/孤独", "intensity": 5},
+            {"stage": "buildup", "emotion": "温暖/靠近", "intensity": 7},
+            {"stage": "twist", "emotion": "感动/双向奔赴", "intensity": 9},
+            {"stage": "ending", "emotion": "治愈/幸福", "intensity": 8},
+        ],
+        "细思极恐": [
+            {"stage": "opening", "emotion": "诡异/不安", "intensity": 6},
+            {"stage": "buildup", "emotion": "恐惧/疑虑", "intensity": 8},
+            {"stage": "twist", "emotion": "毛骨悚然/颠覆", "intensity": 10},
+            {"stage": "ending", "emotion": "细思极恐/不寒而栗", "intensity": 8},
+        ],
+        "共鸣感动": [
+            {"stage": "opening", "emotion": "平凡/日常", "intensity": 4},
+            {"stage": "buildup", "emotion": "触动/共鸣", "intensity": 7},
+            {"stage": "twist", "emotion": "感动/泪目", "intensity": 9},
+            {"stage": "ending", "emotion": "温暖/余韵", "intensity": 7},
+        ],
+    }
+    nodes = curves.get(emotion_goal, curves["爽感释放"])
+    return json.dumps(nodes, ensure_ascii=False)
 
 
 def _recalc_segments_from_content(content: str, target_words: int, existing_segments: str | None) -> tuple[str, int]:
@@ -431,6 +479,7 @@ async def generate_segment(
             story_data=story_data,
             segment=target_segment,
             existing_content=story.content or "",
+            emotion_curve=story.emotion_curve or "",
         )
         generated_words = _count_chinese_and_punctuation(content)
         logger.info(
@@ -478,6 +527,7 @@ async def polish_story(
                 emotion_goal=story.emotion_goal or "",
                 twist_content=story.twist_content or "",
                 content=story.content,
+                emotion_curve=story.emotion_curve or "",
             )
         except Exception as ai_err:
             # 错误恢复：AI精修失败时保留原文，状态不前进
@@ -772,6 +822,7 @@ async def generate_full_story(
                 target_words=req.target_words,
                 emotion_goal=req.emotion_goal or "",
                 target_platform=req.target_platform,
+                emotion_curve="",  # 一键生成时无预设情绪曲线
             )
         except Exception as ai_err:
             # 错误恢复：AI生成失败时不创建任何DB记录，避免脏数据
@@ -805,6 +856,7 @@ async def generate_full_story(
             target_words=target_words,
             current_words=0,
             emotion_goal=story_data.get("emotion_goal", req.emotion_goal or ""),
+            emotion_curve=_build_default_emotion_curve(story_data.get("emotion_goal", req.emotion_goal or "")),
             twist_type=story_data.get("twist_type", ""),
             twist_content=story_data.get("twist_content", ""),
             twist_clues=json.dumps(story_data.get("twist_clues", []), ensure_ascii=False),
@@ -892,6 +944,7 @@ async def score_story(
                 twist_content=story.twist_content or "",
                 genre=story.genre or "",
                 target_words=story.target_words or 12000,
+                emotion_curve=story.emotion_curve or "",
             )
         except Exception as ai_err:
             # 错误恢复：AI评分失败时保留旧评分，不清空
@@ -1013,6 +1066,7 @@ async def improve_from_score(
                 twist_content=story.twist_content or "",
                 genre=story.genre or "",
                 target_words=story.target_words or 12000,
+                emotion_curve=story.emotion_curve or "",
             )
         except Exception as ai_err:
             # 错误恢复：AI改进失败时保留原文和旧评分
@@ -1075,3 +1129,81 @@ async def improve_from_score(
             pass
         logger.error(f"AI基于评分改进失败(已回滚): story_id={story_id}, error={str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"改进失败: {str(e)}")
+
+
+@router.post("/{story_id}/auto-check", summary="AI自动检查自查清单")
+async def auto_check_checklist(
+    story_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    ai_service: AIService = Depends(get_user_ai_service),
+):
+    """AI逐项检查自查清单，自动标记每项是否通过，并给出检查依据"""
+    try:
+        user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="未登录")
+
+        result = await db.execute(
+            select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+        )
+        story = result.scalar_one_or_none()
+        if not story:
+            raise HTTPException(status_code=404, detail="短故事不存在")
+
+        if not story.content:
+            raise HTTPException(status_code=400, detail="正文为空，无法检查")
+
+        # 解析当前自查清单
+        try:
+            checklist = json.loads(story.polish_checklist) if story.polish_checklist else []
+        except (json.JSONDecodeError, TypeError):
+            checklist = json.loads(_build_default_polish_checklist())
+
+        if not checklist:
+            raise HTTPException(status_code=400, detail="自查清单为空")
+
+        logger.info(f"开始AI自动检查自查清单: story_id={story_id}, items={len(checklist)}")
+
+        try:
+            check_results = await ChecklistChecker.check_checklist(
+                ai_service=ai_service,
+                content=story.content,
+                checklist=checklist,
+                emotion_goal=story.emotion_goal or "",
+                emotion_curve=story.emotion_curve or "",
+            )
+        except Exception as ai_err:
+            logger.error(
+                f"AI自动检查调用失败: story_id={story_id}, error={str(ai_err)}",
+                exc_info=True,
+            )
+            raise HTTPException(status_code=500, detail=f"AI自动检查失败: {str(ai_err)}")
+
+        # 将AI检查结果合并回自查清单
+        result_map = {r.get("id"): r for r in check_results if r.get("id")}
+        for item in checklist:
+            ai_result = result_map.get(item.get("id"))
+            if ai_result:
+                item["checked"] = ai_result.get("checked", False)
+                item["evidence"] = ai_result.get("evidence", "")
+
+        # 保存更新后的清单
+        story.polish_checklist = json.dumps(checklist, ensure_ascii=False)
+        await db.commit()
+
+        logger.info(
+            f"AI自动检查完成: story_id={story_id}, "
+            f"passed={sum(1 for i in checklist if i.get('checked'))}/{len(checklist)}"
+        )
+
+        return {"checklist": checklist}
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"AI自动检查失败(已回滚): story_id={story_id}, error={str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"检查失败: {str(e)}")
