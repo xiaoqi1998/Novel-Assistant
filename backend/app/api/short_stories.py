@@ -21,7 +21,7 @@ from app.schemas.short_story import (
     ShortStoryListResponse
 )
 from app.services.ai_service import AIService
-from app.services.short_story_ai_service import ShortStoryAIService, FullStoryGenerator
+from app.services.short_story_ai_service import ShortStoryAIService, FullStoryGenerator, StoryScorer
 from app.api.settings import get_user_ai_service
 from app.logger import get_logger
 
@@ -754,3 +754,85 @@ async def generate_full_story(
     except Exception as e:
         logger.error(f"AI生成完整短故事失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"生成失败: {str(e)}")
+
+
+# ============ AI 评分端点 ============
+
+@router.post("/{story_id}/score", summary="AI评分短故事（5维评分）")
+async def score_story(
+    story_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    ai_service: AIService = Depends(get_user_ai_service),
+):
+    """对短故事进行5维AI评分，依据爆款方法论"""
+    try:
+        user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="未登录")
+
+        result = await db.execute(
+            select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+        )
+        story = result.scalar_one_or_none()
+        if not story:
+            raise HTTPException(status_code=404, detail="短故事不存在")
+
+        if not story.content:
+            raise HTTPException(status_code=400, detail="正文为空，无法评分")
+
+        score_result = await StoryScorer.score_story(
+            ai_service=ai_service,
+            title=story.title or "",
+            content=story.content,
+            emotion_goal=story.emotion_goal or "",
+            logline=story.logline or "",
+            twist_type=story.twist_type or "",
+            twist_content=story.twist_content or "",
+            genre=story.genre or "",
+            target_words=story.target_words or 12000,
+        )
+
+        # 保存评分到数据库
+        story.score_data = json.dumps(score_result, ensure_ascii=False)
+        story.scored_at = datetime.now()
+        await db.commit()
+
+        return score_result
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"AI评分失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"评分失败: {str(e)}")
+
+
+@router.get("/{story_id}/score", summary="获取已保存的AI评分")
+async def get_score(
+    story_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """获取已保存的评分结果"""
+    try:
+        user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="未登录")
+
+        result = await db.execute(
+            select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+        )
+        story = result.scalar_one_or_none()
+        if not story:
+            raise HTTPException(status_code=404, detail="短故事不存在")
+
+        if not story.score_data:
+            raise HTTPException(status_code=404, detail="尚未评分")
+
+        return json.loads(story.score_data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取评分失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取失败: {str(e)}")

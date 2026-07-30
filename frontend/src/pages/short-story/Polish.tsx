@@ -12,12 +12,16 @@ import {
   Empty,
   Progress,
   theme,
+  Spin,
+  Collapse,
+  Divider,
+  Tooltip,
 } from 'antd';
-import { SaveOutlined, CheckCircleOutlined } from '@ant-design/icons';
+import { SaveOutlined, CheckCircleOutlined, TrophyOutlined, ReloadOutlined } from '@ant-design/icons';
 import { shortStoryApi } from '../../services/api';
 import { showErrorToast } from '../../utils/errorHandler';
 import { useShortStoryStore } from '../../store/shortStoryStore';
-import type { ShortStory, PolishChecklistItem } from '../../types';
+import type { ShortStory, PolishChecklistItem, StoryScoreResult, StoryScoreDimension } from '../../types';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -38,6 +42,23 @@ interface ContextType {
   reload: () => Promise<void>;
 }
 
+// 评分等级颜色映射
+const LEVEL_COLOR: Record<string, string> = {
+  '优秀': '#52c41a',
+  '良好': '#1890ff',
+  '合格': '#faad14',
+  '待改进': '#ff4d4f',
+};
+
+// 维度颜色映射
+const DIMENSION_COLOR: Record<string, string> = {
+  concept: '#52c41a',
+  structure: '#1890ff',
+  emotion: '#722ed1',
+  character: '#eb2f96',
+  polish: '#fa8c16',
+};
+
 export default function Polish() {
   const { story } = useOutletContext<ContextType>();
   const { token } = theme.useToken();
@@ -47,6 +68,10 @@ export default function Polish() {
   const [saving, setSaving] = useState(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [polishing, setPolishing] = useState(false);
+
+  // AI评分相关
+  const [scoreResult, setScoreResult] = useState<StoryScoreResult | null>(null);
+  const [scoring, setScoring] = useState(false);
 
   useEffect(() => {
     try {
@@ -58,8 +83,22 @@ export default function Polish() {
       setChecklist([]);
     }
     setNotes(story.polish_notes || '');
+
+    // 加载已有评分
+    try {
+      if (story.score_data) {
+        const parsed = JSON.parse(story.score_data);
+        if (parsed && parsed.total_score !== undefined) {
+          setScoreResult(parsed);
+        }
+      } else {
+        setScoreResult(null);
+      }
+    } catch {
+      setScoreResult(null);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [story.id]);
+  }, [story.id, story.score_data]);
 
   const handleSave = async (showMessage = true) => {
     try {
@@ -88,6 +127,30 @@ export default function Polish() {
     );
     setChecklist(newList);
     scheduleAutoSave();
+  };
+
+  const handleScore = async () => {
+    if (!story.content || story.content.trim().length < 100) {
+      message.warning('正文内容过短，无法评分（至少需要100字）');
+      return;
+    }
+    try {
+      setScoring(true);
+      const result = await shortStoryApi.score(story.id);
+      setScoreResult(result);
+      message.success(`AI评分完成：${result.total_score}分（${result.level}）`);
+      // 重新拉取story以同步scored_at
+      try {
+        const updated = await shortStoryApi.get(story.id);
+        updateCurrentStory(updated);
+      } catch {
+        // 同步失败不影响主流程
+      }
+    } catch (error) {
+      showErrorToast(error, 'AI评分失败');
+    } finally {
+      setScoring(false);
+    }
   };
 
   const handlePolish = async () => {
@@ -131,6 +194,17 @@ export default function Polish() {
           <Button loading={polishing} onClick={handlePolish}>
             AI润色正文
           </Button>
+          <Tooltip title="基于爆款方法论对正文进行5维AI评分：选题/结构/情绪/人设对话/完成度">
+            <Button
+              type="primary"
+              ghost
+              icon={<TrophyOutlined />}
+              loading={scoring}
+              onClick={handleScore}
+            >
+              AI评分
+            </Button>
+          </Tooltip>
           <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={() => handleSave(true)}>
             保存
           </Button>
@@ -162,6 +236,53 @@ export default function Polish() {
           </Text>
         }
       />
+
+      {/* AI评分结果区 */}
+      <Card
+        size="small"
+        style={{ marginBottom: 16, borderColor: scoreResult ? LEVEL_COLOR[scoreResult.level] || token.colorBorder : token.colorBorder }}
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <TrophyOutlined style={{ color: '#fa8c16' }} />
+            <span>AI评分（爆款方法论5维度）</span>
+          </div>
+        }
+        extra={
+          scoreResult && story.scored_at ? (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              评分时间：{new Date(story.scored_at).toLocaleString('zh-CN')}
+            </Text>
+          ) : null
+        }
+      >
+        {scoring ? (
+          <div style={{ textAlign: 'center', padding: '40px 0' }}>
+            <Spin tip="AI正在按爆款方法论评分中…" size="large" />
+            <div style={{ marginTop: 16, color: token.colorTextSecondary, fontSize: 13 }}>
+              评分维度：选题 / 结构 / 情绪 / 人设对话 / 完成度
+            </div>
+          </div>
+        ) : scoreResult ? (
+          <ScoreResultView result={scoreResult} onRescore={handleScore} />
+        ) : (
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description={
+              <span>
+                暂未评分
+                <br />
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  点击右上角「AI评分」按钮，依据爆款方法论对正文进行5维度评分
+                </Text>
+              </span>
+            }
+          >
+            <Button type="primary" ghost icon={<TrophyOutlined />} onClick={handleScore} loading={scoring}>
+              开始AI评分
+            </Button>
+          </Empty>
+        )}
+      </Card>
 
       <Card
         size="small"
@@ -270,6 +391,168 @@ v3：结尾增加一句留白，强化余味"
           </div>
         }
       />
+    </div>
+  );
+}
+
+// ============ AI评分结果展示组件 ============
+
+function ScoreResultView({ result, onRescore }: { result: StoryScoreResult; onRescore: () => void }) {
+  const { token } = theme.useToken();
+  const levelColor = LEVEL_COLOR[result.level] || token.colorText;
+
+  return (
+    <div>
+      {/* 总分头部 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 24, marginBottom: 16, flexWrap: 'wrap' }}>
+        <div style={{ textAlign: 'center', minWidth: 120 }}>
+          <div
+            style={{
+              fontSize: 48,
+              fontWeight: 700,
+              color: levelColor,
+              lineHeight: 1,
+            }}
+          >
+            {result.total_score}
+          </div>
+          <div style={{ fontSize: 13, color: token.colorTextSecondary }}>总分 / 100</div>
+        </div>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <Tag color={levelColor} style={{ fontSize: 16, padding: '4px 16px', marginBottom: 8 }}>
+            {result.level}
+          </Tag>
+          <div style={{ color: token.colorTextSecondary, fontSize: 13, lineHeight: 1.6 }}>
+            {result.overall_evaluation}
+          </div>
+        </div>
+        <Button icon={<ReloadOutlined />} onClick={onRescore} size="small">
+          重新评分
+        </Button>
+      </div>
+
+      <Divider style={{ margin: '12px 0' }} />
+
+      {/* 5维度评分进度条 */}
+      <div style={{ marginBottom: 16 }}>
+        {result.dimensions.map((dim) => (
+          <DimensionRow key={dim.key} dim={dim} />
+        ))}
+      </div>
+
+      {/* Top问题 */}
+      {result.top_issues && result.top_issues.length > 0 && (
+        <Card size="small" type="inner" title={<Text type="danger">⚠️ 最严重问题</Text>} style={{ marginBottom: 12 }}>
+          <ul style={{ margin: 0, paddingLeft: 20 }}>
+            {result.top_issues.map((issue, idx) => (
+              <li key={idx} style={{ marginBottom: 4, fontSize: 13, color: token.colorText }}>
+                {issue}
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
+      {/* 优先改进建议 */}
+      {result.improvement_priority && result.improvement_priority.length > 0 && (
+        <Card size="small" type="inner" title={<Text type="success">🎯 按优先级排序的修改建议</Text>} style={{ marginBottom: 12 }}>
+          <ol style={{ margin: 0, paddingLeft: 20 }}>
+            {result.improvement_priority.map((s, idx) => (
+              <li key={idx} style={{ marginBottom: 6, fontSize: 13, color: token.colorText }}>
+                {s}
+              </li>
+            ))}
+          </ol>
+        </Card>
+      )}
+
+      {/* 各维度详情（折叠） */}
+      <Collapse
+        size="small"
+        items={result.dimensions.map((dim) => ({
+          key: dim.key,
+          label: (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingRight: 8 }}>
+              <span>
+                <Tag color={DIMENSION_COLOR[dim.key] || 'default'} style={{ marginRight: 8 }}>
+                  {dim.name}
+                </Tag>
+                <Text strong style={{ color: dim.score / dim.max_score >= 0.8 ? '#52c41a' : dim.score / dim.max_score >= 0.6 ? '#faad14' : '#ff4d4f' }}>
+                  {dim.score}/{dim.max_score}
+                </Text>
+              </span>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                得分率 {Math.round((dim.score / dim.max_score) * 100)}%
+              </Text>
+            </div>
+          ),
+          children: <DimensionDetail dim={dim} />,
+        }))}
+      />
+    </div>
+  );
+}
+
+function DimensionRow({ dim }: { dim: StoryScoreDimension }) {
+  const percent = Math.round((dim.score / dim.max_score) * 100);
+  const color = DIMENSION_COLOR[dim.key] || '#1890ff';
+  const status = percent >= 80 ? 'success' : percent >= 60 ? 'normal' : 'exception';
+
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+        <Text style={{ fontSize: 13 }}>
+          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: color, marginRight: 8 }} />
+          {dim.name}
+        </Text>
+        <Text style={{ fontSize: 13, fontWeight: 600 }}>
+          {dim.score}/{dim.max_score}
+        </Text>
+      </div>
+      <Progress percent={percent} size="small" status={status} strokeColor={color} />
+    </div>
+  );
+}
+
+function DimensionDetail({ dim }: { dim: StoryScoreDimension }) {
+  const { token } = theme.useToken();
+  return (
+    <div style={{ fontSize: 13 }}>
+      <div style={{ marginBottom: 8 }}>
+        <Text strong>评价：</Text>
+        <Text>{dim.evaluation}</Text>
+      </div>
+
+      {dim.evidence && (
+        <div style={{ marginBottom: 8, padding: 8, background: token.colorFillAlter, borderRadius: 4, borderLeft: `3px solid ${DIMENSION_COLOR[dim.key] || '#1890ff'}` }}>
+          <Text strong>正文证据：</Text>
+          <Text type="secondary" style={{ fontStyle: 'italic' }}>
+            "{dim.evidence}"
+          </Text>
+        </div>
+      )}
+
+      {dim.issues && dim.issues.length > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <Text type="danger" strong>问题：</Text>
+          <ul style={{ margin: '4px 0 0 20px', padding: 0 }}>
+            {dim.issues.map((issue, idx) => (
+              <li key={idx} style={{ marginBottom: 2 }}>{issue}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {dim.suggestions && dim.suggestions.length > 0 && (
+        <div>
+          <Text type="success" strong>改进建议：</Text>
+          <ul style={{ margin: '4px 0 0 20px', padding: 0 }}>
+            {dim.suggestions.map((s, idx) => (
+              <li key={idx} style={{ marginBottom: 2 }}>{s}</li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

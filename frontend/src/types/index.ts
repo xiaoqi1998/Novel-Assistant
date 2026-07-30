@@ -257,8 +257,31 @@ export interface ShortStory {
   cover_image_url?: string;
   cover_prompt?: string;
   cover_status?: 'none' | 'generating' | 'ready' | 'failed';
+  score_data?: string; // AI评分结果JSON
+  scored_at?: string; // 最近评分时间
   created_at: string;
   updated_at: string;
+}
+
+// AI评分结果
+export interface StoryScoreDimension {
+  key: string;
+  name: string;
+  score: number;
+  max_score: number;
+  evaluation: string;
+  evidence: string;
+  issues: string[];
+  suggestions: string[];
+}
+
+export interface StoryScoreResult {
+  total_score: number;
+  level: string;
+  dimensions: StoryScoreDimension[];
+  overall_evaluation: string;
+  top_issues: string[];
+  improvement_priority: string[];
 }
 
 export interface ShortStoryCreate {

@@ -69,6 +69,8 @@ class ShortStoryResponse(ShortStoryBase):
     cover_image_url: Optional[str] = None
     cover_prompt: Optional[str] = None
     cover_status: Optional[str] = None
+    score_data: Optional[str] = None
+    scored_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 

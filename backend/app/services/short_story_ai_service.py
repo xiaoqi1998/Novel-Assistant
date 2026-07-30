@@ -462,3 +462,132 @@ class FullStoryGenerator:
         data.setdefault("genre", "")
 
         return data
+
+
+# ============ AI 评分 Prompt ============
+
+SCORE_SYSTEM = """你是短故事爆款评审专家，严格按爆款方法论对短故事进行评分。
+
+【评分维度】（总分100分）
+
+1. 选题维度（20分）- concept
+   - 是否具备高概念：一句话说清爆点
+   - 爆款公式：极致反差/道德伦理冲突 + 强身份标签 + 迫切的危机悬念
+   - 是否直击人性痛点（贪婪、背叛、嫉妒、爽快、感动）
+   - 三大黄金赛道匹配度：打脸复仇/悬疑怪谈/极致痛感
+   - 切忌平淡/小资/散文化
+
+2. 结构维度（25分）- structure
+   - Hook（前5%）：第一句是否将读者推入冲突现场，不写铺垫
+   - Escalation（20%）：反派嚣张主角劣势，压抑读者情绪到最高点
+   - Climax（60%）：剥洋葱式揭露真相，打一下→反派反扑→再揭露更大真相
+   - Resolution（15%）：反派惨烈下场，主角清醒独立走向新人生
+
+3. 情绪维度（20分）- emotion
+   - 每1000-1500字有一次小冲突或小揭秘
+   - 不能有超过500字的纯说明性废话
+   - 波浪式情绪过山车：压抑→释放→新危机→再压抑→爆点
+   - 读者始终处于"气得牙痒痒"或"爽得起鸡皮疙瘩"状态
+
+4. 人设对话维度（20分）- character
+   - 人设高度标签化（清醒大女主/极致恶毒绿茶/软饭硬吃渣男等）
+   - 删除所有日常寒暄
+   - 每句台词必须具备暴露阴谋或推进爽点的功能
+   - 台词口语化，删除排比句和空洞形容词
+
+5. 完成度维度（15分）- polish
+   - 开头查验：前300字是否出现核心矛盾（没有则扣分）
+   - 废话查验：是否有超过3行无意义环境/心理描写（有则扣分）
+   - 卡点查验：免费章节结束句是否有让人非看下一章不可的欲望
+   - 去AI味查验：台词是否像真人说话，是否有排比句和空洞形容词
+
+【返回JSON格式】
+{{
+  "total_score": 85,
+  "level": "良好",
+  "dimensions": [
+    {{
+      "key": "concept",
+      "name": "选题维度",
+      "score": 18,
+      "max_score": 20,
+      "evaluation": "整体评价",
+      "evidence": "从正文中摘录的具体证据（原文片段）",
+      "issues": ["问题1", "问题2"],
+      "suggestions": ["改进建议1", "改进建议2"]
+    }},
+    ...（5个维度）
+  ],
+  "overall_evaluation": "总体评价（200字内）",
+  "top_issues": ["最严重的3个问题"],
+  "improvement_priority": ["按优先级排序的修改建议"]
+}}
+
+level规则：90+ 优秀，75-89 良好，60-74 合格，<60 待改进
+evidence必须引用正文原文片段作为依据，不能空谈。"""
+
+SCORE_USER = """请对以下短故事进行评分：
+
+【故事设定】
+标题：{title}
+情绪目标：{emotion_goal}
+一句话梗概：{logline}
+核心反转：{twist_type} - {twist_content}
+题材标签：{genre}
+目标字数：{target_words}
+
+【正文】
+{content}
+
+请严格按5个维度评分，每个维度的evidence必须引用正文原文片段。"""
+
+
+class StoryScorer:
+    """短故事AI评分器"""
+
+    @staticmethod
+    async def score_story(
+        ai_service: AIService,
+        title: str,
+        content: str,
+        emotion_goal: str = "",
+        logline: str = "",
+        twist_type: str = "",
+        twist_content: str = "",
+        genre: str = "",
+        target_words: int = 12000,
+    ) -> dict:
+        """对短故事进行5维评分"""
+        if not content or len(content.strip()) < 100:
+            raise ValueError("正文内容过短，无法评分（至少需要100字）")
+
+        user_prompt = SCORE_USER.format(
+            title=title or "未命名",
+            emotion_goal=emotion_goal or "未设定",
+            logline=logline or "未设定",
+            twist_type=twist_type or "未设定",
+            twist_content=twist_content or "未设定",
+            genre=genre or "未设定",
+            target_words=target_words,
+            content=content,
+        )
+
+        accumulated = ""
+        async for chunk in ai_service.generate_text_stream(
+            prompt=user_prompt,
+            system_prompt=SCORE_SYSTEM,
+            temperature=0.3,  # 评分需要稳定
+        ):
+            accumulated += chunk
+
+        cleaned = clean_json_response(accumulated)
+        data = json.loads(cleaned)
+
+        # 校验
+        if "total_score" not in data or "dimensions" not in data:
+            raise ValueError("AI评分结果格式错误")
+
+        if not isinstance(data["dimensions"], list) or len(data["dimensions"]) != 5:
+            raise ValueError("AI评分结果维度不完整")
+
+        return data

@@ -49,6 +49,10 @@ class ShortStory(Base):
     cover_prompt = Column(Text, comment="封面生成提示词")
     cover_status = Column(String(20), default="none", comment="封面状态: none/generating/ready/failed")
 
+    # AI评分（JSON字符串，含total_score/level/dimensions/overall_evaluation等）
+    score_data = Column(Text, comment="AI评分结果JSON")
+    scored_at = Column(DateTime, comment="最近评分时间")
+
     created_at = Column(DateTime, server_default=func.now(), comment="创建时间")
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), comment="更新时间")
 

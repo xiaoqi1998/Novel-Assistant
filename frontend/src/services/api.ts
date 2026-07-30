@@ -11,6 +11,7 @@ import type {
   ShortStory,
   ShortStoryCreate,
   ShortStoryUpdate,
+  StoryScoreResult,
   Outline,
   OutlineCreate,
   OutlineUpdate,
@@ -1061,6 +1062,14 @@ export const shortStoryApi = {
   // AI一键生成完整短故事（设定+全文）
   generateFull: (data: { initial_idea: string; target_words?: number; emotion_goal?: string; target_platform?: string }) =>
     api.post<unknown, ShortStory>('/short-stories/generate-full', data),
+
+  // AI评分短故事（5维评分：选题/结构/情绪/人设对话/完成度）
+  score: (id: string) =>
+    api.post<unknown, StoryScoreResult>(`/short-stories/${id}/score`),
+
+  // 获取短故事评分结果
+  getScore: (id: string) =>
+    api.get<unknown, StoryScoreResult>(`/short-stories/${id}/score`),
 };
 export const shortInspirationApi = {
   generateOptions: (data: { step: string; context: Record<string, string> }) =>
