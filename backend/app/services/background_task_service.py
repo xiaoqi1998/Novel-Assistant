@@ -104,6 +104,28 @@ class TaskProgressTracker:
             progress_details={"stage": "saving", "message": msg}
         )
 
+    async def analyzing(self, analysis_progress: int = 0, message: str = None):
+        """将章节分析进度映射到后台生成任务的最后阶段。
+
+        本地调整：区间改为 99-100（避开 saving 的 92-98），避免进度回退。
+        """
+        normalized_progress = max(0, min(analysis_progress, 100))
+        progress = 99 + (1 if normalized_progress >= 100 else 0)
+        self.current_progress = progress
+        msg = message or f"分析{self.task_name}中... ({normalized_progress}%)"
+        await self._update_task(
+            progress=progress, status_message=msg,
+            progress_details={
+                "stage": "analyzing",
+                "message": msg,
+                "analysis_progress": normalized_progress,
+            }
+        )
+
+    async def set_result(self, task_result: Dict[str, Any]):
+        """提前写入任务结果，供前端在分析阶段读取章节ID等信息。"""
+        await self._update_task(task_result=task_result)
+
     async def complete(self, message: str = None):
         self.current_progress = 100
         msg = message or f"{self.task_name}生成完成!"

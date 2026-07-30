@@ -140,6 +140,9 @@ export default function Chapters() {
   const analysisPollingIntervalRef = useRef<number | null>(null);
   const activeAnalysisPollingIdsRef = useRef<Set<string>>(new Set());
   const generateAbortControllerRef = useRef<AbortController | null>(null);
+  // 编辑章节ID的ref镜像，确保异步回调中拿到最新值，避免回填到错章节
+  const editingIdRef = useRef<string | null>(editingId);
+  editingIdRef.current = editingId;
 
   // 列表查询与分页状态
   const [chapterSearchKeyword, setChapterSearchKeyword] = useState('');
@@ -1212,27 +1215,50 @@ export default function Chapters() {
     }
 
     try {
+      const generatedChapterId = editingId;
+      const generatedProjectId = currentProject?.id;
+      let analysisTrackingStarted = false;
+
+      // 刷新刚生成完的章节：仅在用户未切换章节时回填编辑器，避免覆盖正在编辑的其他章节
+      const refreshGeneratedChapter = async () => {
+        if (!generatedProjectId) return [];
+        const latestChapters = await refreshChapters(generatedProjectId);
+        const latestChapter = latestChapters.find(chapter => chapter.id === generatedChapterId);
+        if (latestChapter && editingIdRef.current === generatedChapterId) {
+          setCurrentChapter(latestChapter);
+          editorForm.setFieldsValue({
+            title: latestChapter.title,
+            content: latestChapter.content,
+          });
+        }
+        projectApi.getProject(generatedProjectId).then(setCurrentProject).catch(console.error);
+        return latestChapters;
+      };
+
       await generateChapterBackground(
-        editingId,
+        generatedChapterId,
         {
           style_id: selectedStyleId,
           target_word_count: targetWordCount,
           model: selectedModel,
           narrative_perspective: temporaryNarrativePerspective,
         },
-        () => {
-          // 进度更新由悬浮任务框处理，无需额外操作
+        async (status) => {
+          // 进入分析阶段时提前刷新章节列表并加载分析任务，避免完成时才刷新造成状态跳跃
+          if (status.progress_details?.stage !== 'analyzing' || analysisTrackingStarted) return;
+          analysisTrackingStarted = true;
+          const latestChapters = await refreshGeneratedChapter();
+          await loadAnalysisTasks(latestChapters);
         },
-        () => {
-          message.success("后台章节生成完成！");
-          refreshChapters();
-          if (currentProject) {
-            projectApi.getProject(currentProject.id).then(setCurrentProject).catch(console.error);
-          }
-          loadAnalysisTasks();
+        async () => {
+          message.success("后台章节生成和分析完成！");
+          const latestChapters = await refreshGeneratedChapter();
+          await loadAnalysisTasks(latestChapters);
         },
-        (error) => {
-          message.error("后台生成失败: " + error);
+        async (error) => {
+          message.error("后台章节任务失败: " + error);
+          const latestChapters = await refreshGeneratedChapter();
+          await loadAnalysisTasks(latestChapters);
         }
       );
 
