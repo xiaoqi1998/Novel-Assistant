@@ -3,6 +3,7 @@ import json
 from typing import Optional, AsyncGenerator, Dict, Any
 from app.services.ai_service import AIService
 from app.services.json_helper import clean_json_response
+from app.utils.sse_response import wrap_stream_with_heartbeat, HEARTBEAT
 from app.logger import get_logger
 
 logger = get_logger(__name__)
@@ -853,11 +854,18 @@ class FullStoryGenerator:
             yield {"type": "progress", "message": "阶段1/2：AI正在构思选题、反转与黄金结构...", "progress": 5, "status": "processing"}
 
             accumulated = ""
-            async for chunk in ai_service.generate_text_stream(
-                prompt=stage1_prompt,
-                system_prompt=STAGE1_SETUP_SYSTEM,
-                temperature=0.75,
+            async for chunk in wrap_stream_with_heartbeat(
+                ai_service.generate_text_stream(
+                    prompt=stage1_prompt,
+                    system_prompt=STAGE1_SETUP_SYSTEM,
+                    temperature=0.75,
+                ),
+                heartbeat_interval=15.0,
             ):
+                # 心跳哨兵：透传给HTTP端点发送SSE注释保活，不混入AI响应
+                if chunk is HEARTBEAT:
+                    yield {"type": "heartbeat"}
+                    continue
                 accumulated += chunk
                 # 阶段1的chunk不透传给前端（是JSON结构，对用户无意义），仅发进度
                 yield {"type": "progress", "message": f"阶段1/2：AI正在构思设定...（{len(accumulated)}字符）", "progress": min(5 + len(accumulated) // 200, 18), "status": "processing"}
@@ -952,11 +960,18 @@ class FullStoryGenerator:
                 seg_content = ""
                 seg_chunk_count = 0
                 try:
-                    async for chunk in ai_service.generate_text_stream(
-                        prompt=seg_prompt,
-                        system_prompt=STAGE2_SEGMENT_SYSTEM,
-                        temperature=0.7,
+                    async for chunk in wrap_stream_with_heartbeat(
+                        ai_service.generate_text_stream(
+                            prompt=seg_prompt,
+                            system_prompt=STAGE2_SEGMENT_SYSTEM,
+                            temperature=0.7,
+                        ),
+                        heartbeat_interval=15.0,
                     ):
+                        # 心跳哨兵：透传给HTTP端点发送SSE注释保活
+                        if chunk is HEARTBEAT:
+                            yield {"type": "heartbeat"}
+                            continue
                         seg_content += chunk
                         seg_chunk_count += 1
                         yield {"type": "chunk", "content": chunk, "segment_index": idx}

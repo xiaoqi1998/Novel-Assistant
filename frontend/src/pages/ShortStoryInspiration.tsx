@@ -1,10 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Input, Button, Typography, message, Spin, Tag, theme, Space, Result } from 'antd';
-import { SendOutlined, ArrowLeftOutlined, ThunderboltOutlined, ReloadOutlined, CheckCircleOutlined, EditOutlined } from '@ant-design/icons';
+import { Card, Input, Button, Typography, message, Spin, Tag, theme, Space, Result, Steps, Progress } from 'antd';
+import { SendOutlined, ArrowLeftOutlined, ThunderboltOutlined, ReloadOutlined, CheckCircleOutlined, EditOutlined, BulbOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import { shortInspirationApi } from '../services/api';
 import { showErrorToast } from '../utils/errorHandler';
-import { SSELoadingOverlay } from '../components/SSELoadingOverlay';
 import { SSEPostClient } from '../utils/sseClient';
 import type { ShortStory } from '../types';
 
@@ -12,6 +11,24 @@ const { Text, Title } = Typography;
 const { TextArea } = Input;
 
 type Phase = 'idea' | 'emotion_goal' | 'generating' | 'done';
+
+// 黄金结构默认分段标签（按 Climax 60% 黄金比例）
+const SEG_LABELS = ['黄金钩子', '冲突激化', '高潮反转', '爽点收尾'];
+const SEG_DESCS = ['开篇抛出核心危机', '反派嚣张主角隐忍', '多重反转揭露真相', '反派下场主角新生'];
+
+// 创作小知识轮播文案
+const CREATIVE_TIPS = [
+  '黄金结构：Hook 5% / Escalation 20% / Climax 60% / Resolution 15%',
+  '爆款公式：极致反差 + 道德冲突 + 强身份标签 + 迫切危机',
+  '反转要早埋线索，后文揭晓才不会突兀',
+  '情绪目标是故事的灵魂，决定读者读完后产生什么反应',
+  '对话承担人物塑造与剧情推进双重功能',
+  '开篇 300 字定生死，第一段必须抛出核心危机',
+  '爽感来自压抑后的释放，压制越狠反转越爽',
+  '一个具体物品的细节，胜过百字抽象描述',
+  '人物动机越强烈，读者代入越深',
+  '结尾留白，让读者意难平才会反复回味',
+];
 
 const EMOTION_GOAL_DESC: Record<string, string> = {
   '意难平': '迟来的深情、双向错过',
@@ -33,12 +50,47 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
   const [generatedStory, setGeneratedStory] = useState<ShortStory | null>(null);
   const [genProgress, setGenProgress] = useState(0);
   const [genMessage, setGenMessage] = useState('正在准备生成...');
+  // 生成过程可视化状态
+  const [totalSegments, setTotalSegments] = useState(0);
+  const [currentSegIdx, setCurrentSegIdx] = useState(-1); // -1=设定阶段, 0..N-1=分段
+  const [segWordCounts, setSegWordCounts] = useState<number[]>([]);
+  const [tipIndex, setTipIndex] = useState(0);
+  const [elapsedSecs, setElapsedSecs] = useState(0);
   const sseClientRef = useRef<SSEPostClient | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [phase]);
+
+  // 生成中：计时器 + 创作小知识轮播
+  useEffect(() => {
+    if (phase !== 'generating') return;
+    const tickTimer = setInterval(() => setElapsedSecs((s) => s + 1), 1000);
+    const tipTimer = setInterval(() => setTipIndex((i) => (i + 1) % CREATIVE_TIPS.length), 7000);
+    return () => {
+      clearInterval(tickTimer);
+      clearInterval(tipTimer);
+    };
+  }, [phase]);
+
+  // 格式化已用时长 mm:ss
+  const formatElapsed = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
+  // 重置生成状态
+  const resetGenState = () => {
+    setGenProgress(0);
+    setGenMessage('正在准备生成...');
+    setTotalSegments(0);
+    setCurrentSegIdx(-1);
+    setSegWordCounts([]);
+    setTipIndex(0);
+    setElapsedSecs(0);
+  };
 
   // 阶段1：提交想法，获取情绪目标选项
   const handleIdeaSubmit = async () => {
@@ -78,16 +130,14 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
     sseClientRef.current?.abort();
     sseClientRef.current = null;
     setPhase('emotion_goal');
-    setGenProgress(0);
-    setGenMessage('正在准备生成...');
+    resetGenState();
     message.info('已取消生成');
   };
 
   // 阶段2：选择情绪目标后，SSE流式AI一键生成完整故事
   const handleSelectEmotion = async (emotion: string) => {
     setPhase('generating');
-    setGenProgress(0);
-    setGenMessage('正在准备生成...');
+    resetGenState();
 
     const client = new SSEPostClient(
       '/api/short-stories/generate-full-stream',
@@ -101,6 +151,31 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
         onProgress: (msg, prog) => {
           setGenProgress(prog);
           setGenMessage(msg);
+        },
+        onStage: (stage, _msg, total, segIdx) => {
+          if (total > 0) setTotalSegments(total);
+          if (stage === 'setup') {
+            setCurrentSegIdx(-1);
+          } else if (stage.startsWith('segment_')) {
+            const idx = segIdx !== undefined ? segIdx : parseInt(stage.split('_')[1], 10) - 1;
+            setCurrentSegIdx(idx);
+            // 初始化该段字数计数
+            setSegWordCounts((prev) => {
+              const next = [...prev];
+              while (next.length <= idx) next.push(0);
+              return next;
+            });
+          }
+        },
+        onChunk: (_content, segIdx) => {
+          if (segIdx !== undefined) {
+            setSegWordCounts((prev) => {
+              const next = [...prev];
+              while (next.length <= segIdx) next.push(0);
+              next[segIdx] += _content.length;
+              return next;
+            });
+          }
         },
         onError: (error) => {
           showErrorToast(error, 'AI生成失败');
@@ -131,8 +206,7 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
     setInitialIdea('');
     setEmotionOptions([]);
     setGeneratedStory(null);
-    setGenProgress(0);
-    setGenMessage('正在准备生成...');
+    resetGenState();
   };
 
   const handleViewStory = () => {
@@ -194,19 +268,224 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
     );
   };
 
-  // 渲染生成中（使用SSELoadingOverlay，与长篇小说一致的体验）
-  const renderGenerating = () => (
-    <div style={{ textAlign: 'center', padding: '60px 20px' }}>
-      <Spin size="large" />
-      <Title level={4} style={{ marginTop: 24, marginBottom: 8 }}>
-        <ThunderboltOutlined style={{ color: token.colorPrimary, marginRight: 8 }} />
-        AI 正在创作短故事
-      </Title>
-      <Text type="secondary" style={{ display: 'block', marginBottom: 24 }}>
-        正在按黄金结构流式生成完整故事（设定+全文），可实时查看进度...
-      </Text>
-    </div>
-  );
+  // 渲染生成中：黄金结构可视化 + 进度 + 创作小知识轮播
+  const renderGenerating = () => {
+    // 构建 Steps 项：第0项=构思设定，后续=分段
+    const segCount = totalSegments || 4;
+    const currentStep = currentSegIdx + 1; // -1 → 0(setup), 0..N-1 → 1..N
+    const items = [
+      {
+        title: '构思设定',
+        description: '选题·反转·大纲',
+        status: (currentSegIdx < 0 ? 'process' : 'finish') as 'wait' | 'process' | 'finish',
+      },
+    ];
+    for (let i = 0; i < segCount; i++) {
+      let status: 'wait' | 'process' | 'finish' = 'wait';
+      if (currentSegIdx > i) status = 'finish';
+      else if (currentSegIdx === i) status = 'process';
+      else if (currentSegIdx < 0) status = 'wait';
+      // setup完成后但还没进入第一段：第一段标记为process
+      if (currentSegIdx === -1 && i === 0) status = 'wait';
+      items.push({
+        title: SEG_LABELS[i] || `第${i + 1}段`,
+        description: SEG_DESCS[i] || '',
+        status,
+      });
+    }
+
+    // 当前段实时字数
+    const currentWords = currentSegIdx >= 0 ? (segWordCounts[currentSegIdx] || 0) : 0;
+    // 已用时长 vs 预计
+    const estimatedMin = 2;
+    const estimatedMax = 5;
+
+    return (
+      <div style={{ padding: '32px 8px' }}>
+        {/* AI 灵感星云动画 */}
+        <div
+          className="ai-creative-orb"
+          style={{ ['--orb-color' as any]: token.colorPrimary, ['--orb-glow' as any]: `${token.colorPrimary}33` }}
+        >
+          <div className="orb-ring ring1" />
+          <div className="orb-ring ring2" />
+          <div className="orb-ring ring3" />
+          <div className="orbit orbit-a"><span className="particle" /></div>
+          <div className="orbit orbit-b"><span className="particle" /></div>
+          <div className="orbit orbit-c"><span className="particle" /></div>
+          <div className="orb-core">
+            <ThunderboltOutlined />
+          </div>
+        </div>
+
+        {/* 顶部标题 + 预计时间 */}
+        <div style={{ textAlign: 'center', marginBottom: 28, marginTop: 16 }}>
+          <Title level={4} style={{ marginBottom: 4 }}>
+            AI 正在创作短故事
+          </Title>
+          <Space size="middle" style={{ color: token.colorTextSecondary, fontSize: 13 }}>
+            <span><ClockCircleOutlined style={{ marginRight: 4 }} />预计 {estimatedMin}-{estimatedMax} 分钟</span>
+            <span>已用时 <Text strong style={{ color: token.colorPrimary }}>{formatElapsed(elapsedSecs)}</Text></span>
+          </Space>
+        </div>
+
+        {/* 黄金结构可视化 Steps */}
+        <div style={{ marginBottom: 28, padding: '0 4px' }}>
+          <Steps
+            size="small"
+            current={currentStep}
+            items={items}
+            responsive
+          />
+        </div>
+
+        {/* 进度条 */}
+        <div style={{ marginBottom: 12 }}>
+          <Progress
+            percent={genProgress}
+            status="active"
+            strokeColor={{ from: token.colorPrimary, to: token.colorSuccess }}
+            strokeWidth={10}
+          />
+        </div>
+
+        {/* 当前状态消息 + 段字数 */}
+        <div style={{ textAlign: 'center', marginBottom: 24, minHeight: 44 }}>
+          <Text style={{ fontSize: 14, color: token.colorText }}>
+            {genMessage}
+          </Text>
+          {currentSegIdx >= 0 && currentWords > 0 && (
+            <div style={{ marginTop: 4 }}>
+              <Tag color="blue" style={{ fontSize: 12 }}>本段 {currentWords} 字</Tag>
+            </div>
+          )}
+        </div>
+
+        {/* 创作小知识轮播 */}
+        <div
+          key={tipIndex}
+          style={{
+            background: token.colorFillTertiary,
+            borderRadius: 8,
+            padding: '12px 16px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            animation: 'shortStoryTipFade 0.6s ease',
+          }}
+        >
+          <BulbOutlined style={{ color: token.colorWarning, fontSize: 18, flexShrink: 0 }} />
+          <Text style={{ fontSize: 13, color: token.colorTextSecondary }}>
+            {CREATIVE_TIPS[tipIndex]}
+          </Text>
+        </div>
+
+        {/* 取消按钮 */}
+        <div style={{ textAlign: 'center', marginTop: 24 }}>
+          <Button onClick={handleCancelGenerate} icon={<ArrowLeftOutlined />}>
+            取消生成
+          </Button>
+        </div>
+
+        {/* 动画样式：AI 灵感星云 + 轮播淡入 */}
+        <style>{`
+          @keyframes shortStoryTipFade {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+          }
+          /* AI 灵感星云：中心发光核心 */
+          .ai-creative-orb {
+            position: relative;
+            width: 180px;
+            height: 180px;
+            margin: 0 auto 8px;
+          }
+          .ai-creative-orb .orb-core {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 30px;
+            color: #fff;
+            background: radial-gradient(circle at 35% 30%, var(--orb-color), color-mix(in srgb, var(--orb-color) 60%, #000 40%));
+            box-shadow: 0 0 24px var(--orb-glow), 0 0 48px var(--orb-glow), inset 0 0 12px rgba(255,255,255,0.3);
+            animation: orbCorePulse 2.4s ease-in-out infinite;
+            z-index: 3;
+          }
+          @keyframes orbCorePulse {
+            0%, 100% { box-shadow: 0 0 18px var(--orb-glow), 0 0 36px var(--orb-glow), inset 0 0 12px rgba(255,255,255,0.3); transform: translate(-50%, -50%) scale(1); }
+            50% { box-shadow: 0 0 28px var(--orb-glow), 0 0 64px var(--orb-glow), inset 0 0 16px rgba(255,255,255,0.45); transform: translate(-50%, -50%) scale(1.08); }
+          }
+          /* 脉动光环：三层错开延迟向外扩散 */
+          .ai-creative-orb .orb-ring {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            border-radius: 50%;
+            border: 2px solid var(--orb-color);
+            opacity: 0;
+            pointer-events: none;
+          }
+          .ai-creative-orb .ring1 { width: 64px; height: 64px; animation: orbRingPulse 2.4s ease-out infinite; }
+          .ai-creative-orb .ring2 { width: 64px; height: 64px; animation: orbRingPulse 2.4s ease-out infinite 0.8s; }
+          .ai-creative-orb .ring3 { width: 64px; height: 64px; animation: orbRingPulse 2.4s ease-out infinite 1.6s; }
+          @keyframes orbRingPulse {
+            0% { transform: translate(-50%, -50%) scale(0.6); opacity: 0.7; border-width: 2px; }
+            100% { transform: translate(-50%, -50%) scale(2.6); opacity: 0; border-width: 1px; }
+          }
+          /* 轨道粒子：三条椭圆轨道，粒子沿边缘旋转 */
+          .ai-creative-orb .orbit {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            border-radius: 50%;
+            pointer-events: none;
+          }
+          .ai-creative-orb .orbit-a {
+            width: 120px; height: 120px;
+            animation: orbSpin 6s linear infinite;
+          }
+          .ai-creative-orb .orbit-b {
+            width: 150px; height: 150px;
+            animation: orbSpin 9s linear infinite reverse;
+          }
+          .ai-creative-orb .orbit-c {
+            width: 176px; height: 176px;
+            animation: orbSpin 12s linear infinite;
+          }
+          @keyframes orbSpin {
+            from { transform: translate(-50%, -50%) rotate(0deg); }
+            to { transform: translate(-50%, -50%) rotate(360deg); }
+          }
+          .ai-creative-orb .particle {
+            position: absolute;
+            top: -4px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--orb-color);
+            box-shadow: 0 0 8px var(--orb-color), 0 0 14px var(--orb-glow);
+          }
+          @media (prefers-reduced-motion: reduce) {
+            .ai-creative-orb .orb-core,
+            .ai-creative-orb .orb-ring,
+            .ai-creative-orb .orbit { animation: none; }
+            .ai-creative-orb .orb-ring { opacity: 0.3; transform: translate(-50%, -50%) scale(1.6); }
+          }
+        `}</style>
+      </div>
+    );
+  };
 
   // 渲染生成完成
   const renderDone = () => {
@@ -329,18 +608,6 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
 
         <div ref={messagesEndRef} />
       </Card>
-
-      {/* SSE流式生成进度弹窗 */}
-      <SSELoadingOverlay
-        visible={phase === 'generating'}
-        progress={Math.round(genProgress)}
-        message={genMessage}
-        variant="modal"
-        title="AI 正在创作短故事"
-        onCancel={handleCancelGenerate}
-        cancelButtonText="取消生成"
-        showMinimize={false}
-      />
     </div>
   );
 };

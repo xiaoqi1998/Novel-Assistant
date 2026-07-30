@@ -1040,6 +1040,9 @@ async def generate_full_story_stream(
                     yield await SSEResponse.send_error(event.get("error", "AI生成失败"), 500)
                     yield await SSEResponse.send_done()
                     return
+                elif evt_type == "heartbeat":
+                    # SSE注释心跳，前端自动忽略，仅用于保持连接活跃防止代理超时
+                    yield await SSEResponse.send_heartbeat()
                 else:
                     yield SSEResponse.format_sse(event)
 
@@ -1170,6 +1173,9 @@ async def regenerate_story_stream(
                     yield await SSEResponse.send_error(event.get("error", "AI生成失败"), 500)
                     yield await SSEResponse.send_done()
                     return
+                elif evt_type == "heartbeat":
+                    # SSE注释心跳，前端自动忽略，仅用于保持连接活跃防止代理超时
+                    yield await SSEResponse.send_heartbeat()
                 else:
                     yield SSEResponse.format_sse(event)
 
