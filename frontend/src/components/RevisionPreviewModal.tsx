@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Modal, Button, Typography, Tag, Row, Col, Spin, message } from 'antd';
+import { Modal, Button, Typography, Tag, Row, Col, message } from 'antd';
 import { CheckOutlined, CloseOutlined, SwapOutlined } from '@ant-design/icons';
 import { shortStoryApi } from '../services/api';
 import { showErrorToast } from '../utils/errorHandler';

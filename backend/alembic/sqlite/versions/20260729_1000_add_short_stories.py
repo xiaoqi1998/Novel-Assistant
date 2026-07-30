@@ -1,7 +1,7 @@
 """添加短故事表（SQLite）
 
 Revision ID: add_short_stories_sqlite
-Revises: add_user_skills_sqlite
+Revises: add_register_ip_sqlite
 Create Date: 2026-07-29 10:00:00
 
 新增 short_stories 表，存储短故事创作数据：
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'add_short_stories_sqlite'
-down_revision: Union[str, None] = 'add_user_skills_sqlite'
+down_revision: Union[str, None] = 'add_register_ip_sqlite'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
