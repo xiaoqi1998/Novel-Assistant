@@ -1123,6 +1123,21 @@ export const shortStoryApi = {
   // AI流式精修润色（返回对比预览，需用户确认）
   polishStream: (id: string, options: SSEClientOptions) =>
     ssePost<RevisionPreview>(`/api/short-stories/${id}/polish-stream`, {}, options),
+
+  // ============ 后台任务方法（复用长篇小说 BackgroundTask 机制） ============
+  // 关闭浏览器不影响任务，完成后自动保存，通过 FloatingTaskPanel 查看进度
+
+  // AI后台重新生成短故事正文（返回 task_id，前端轮询或通过 FloatingTaskPanel 查看）
+  regenerateBackground: (id: string) =>
+    api.post<unknown, { task_id: string; task_type: string; status: string; message: string }>(
+      `/short-stories/${id}/regenerate-background`
+    ),
+
+  // AI后台评分短故事（返回 task_id，前端轮询或通过 FloatingTaskPanel 查看）
+  scoreBackground: (id: string) =>
+    api.post<unknown, { task_id: string; task_type: string; status: string; message: string }>(
+      `/short-stories/${id}/score-background`
+    ),
 };
 export const shortInspirationApi = {
   generateOptions: (data: { step: string; context: Record<string, string> }) =>

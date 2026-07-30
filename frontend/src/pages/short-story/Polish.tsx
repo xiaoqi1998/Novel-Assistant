@@ -16,8 +16,11 @@ import {
   Collapse,
   Divider,
   Tooltip,
+  Dropdown,
 } from 'antd';
-import { SaveOutlined, CheckCircleOutlined, TrophyOutlined, ReloadOutlined, AuditOutlined } from '@ant-design/icons';
+import type { MenuProps } from 'antd';
+import { SaveOutlined, CheckCircleOutlined, TrophyOutlined, ReloadOutlined, AuditOutlined, DownOutlined, CloudUploadOutlined } from '@ant-design/icons';
+import { eventBus } from '../../store/eventBus';
 import { shortStoryApi } from '../../services/api';
 import { showErrorToast } from '../../utils/errorHandler';
 import { useShortStoryStore } from '../../store/shortStoryStore';
@@ -162,6 +165,38 @@ export default function Polish() {
     }
   };
 
+  // 后台评分：创建后台任务后立即返回，关闭浏览器不影响评分
+  // 任务进度通过 FloatingTaskPanel 查看，完成后自动保存
+  const handleScoreBackground = async () => {
+    if (!story.content || story.content.trim().length < 100) {
+      message.warning('正文内容过短，无法评分（至少需要100字）');
+      return;
+    }
+    try {
+      await shortStoryApi.scoreBackground(story.id);
+      message.success(`已创建后台评分任务，可关闭页面，完成后右下角浮窗会提示`);
+      // 通知 FloatingTaskPanel 立即刷新
+      eventBus.emit('background-task-created');
+    } catch (error) {
+      showErrorToast(error, '创建后台评分任务失败');
+    }
+  };
+
+  // 评分按钮 Dropdown 菜单：前台评分 / 后台评分
+  const scoreMenuItems: MenuProps['items'] = [
+    {
+      key: 'foreground',
+      label: '前台评分（等待结果）',
+      onClick: () => handleScore(),
+    },
+    {
+      key: 'background',
+      label: '后台评分（可关页面）',
+      icon: <CloudUploadOutlined />,
+      onClick: () => handleScoreBackground(),
+    },
+  ];
+
   const handleImprove = async () => {
     if (!scoreResult) {
       message.warning('请先进行AI评分，才能基于评分改进点修订正文');
@@ -235,16 +270,17 @@ export default function Polish() {
             AI润色正文
           </Button>
           <Tooltip title="基于爆款方法论对正文进行5维AI评分：选题/结构/情绪/人设对话/完成度">
-            <Button
-              type="primary"
-              ghost
-              icon={<TrophyOutlined />}
-              loading={scoring || improving || autoScoring}
-              onClick={handleScore}
-              disabled={improving || autoScoring}
-            >
-              AI评分
-            </Button>
+            <Dropdown menu={{ items: scoreMenuItems }} placement="bottomRight">
+              <Button
+                type="primary"
+                ghost
+                icon={<TrophyOutlined />}
+                loading={scoring || improving || autoScoring}
+                disabled={improving || autoScoring}
+              >
+                AI评分 <DownOutlined />
+              </Button>
+            </Dropdown>
           </Tooltip>
           <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={() => handleSave(true)}>
             保存

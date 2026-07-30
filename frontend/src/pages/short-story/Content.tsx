@@ -13,14 +13,17 @@ import {
   theme,
   Grid,
   Modal,
+  Dropdown,
 } from 'antd';
-import { SaveOutlined, CheckCircleOutlined, ClockCircleOutlined, ReloadOutlined, RobotOutlined } from '@ant-design/icons';
+import type { MenuProps } from 'antd';
+import { SaveOutlined, CheckCircleOutlined, ClockCircleOutlined, ReloadOutlined, RobotOutlined, DownOutlined, CloudUploadOutlined } from '@ant-design/icons';
 import { shortStoryApi } from '../../services/api';
 import { showErrorToast } from '../../utils/errorHandler';
 import { useShortStoryStore } from '../../store/shortStoryStore';
 import { formatWordCount } from '../../utils/format';
 import RevisionPreviewModal from '../../components/RevisionPreviewModal';
 import { SSELoadingOverlay } from '../../components/SSELoadingOverlay';
+import { eventBus } from '../../store/eventBus';
 import {
   loadStoryContentDraft,
   saveStoryContentDraft,
@@ -271,6 +274,43 @@ export default function Content() {
     }
   };
 
+  // 后台重写：创建后台任务后立即返回，关闭浏览器不影响生成
+  // 任务进度通过 FloatingTaskPanel 查看，完成后自动保存
+  const handleRegenerateBackground = async () => {
+    Modal.confirm({
+      title: '后台重新生成全文',
+      content: '将在后台重新生成全文，可关闭页面，完成后右下角浮窗会提示。当前正文会被覆盖。',
+      okText: '开始后台生成',
+      cancelText: '取消',
+      centered: true,
+      onOk: async () => {
+        try {
+          await shortStoryApi.regenerateBackground(story.id);
+          message.success('已创建后台重写任务，可关闭页面，完成后右下角浮窗会提示');
+          // 通知 FloatingTaskPanel 立即刷新
+          eventBus.emit('background-task-created');
+        } catch (error) {
+          showErrorToast(error, '创建后台重写任务失败');
+        }
+      },
+    });
+  };
+
+  // 重写按钮 Dropdown 菜单：前台重写 / 后台重写
+  const regenerateMenuItems: MenuProps['items'] = [
+    {
+      key: 'foreground',
+      label: '前台重写（SSE实时进度）',
+      onClick: () => handleRegenerate(),
+    },
+    {
+      key: 'background',
+      label: '后台重写（可关页面）',
+      icon: <CloudUploadOutlined />,
+      onClick: () => handleRegenerateBackground(),
+    },
+  ];
+
   return (
     <div style={{ padding: 24, maxWidth: 1200, margin: '0 auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -292,14 +332,15 @@ export default function Content() {
             保存
           </Button>
           {hasGeneratedContent && (
-            <Button
-              icon={<ReloadOutlined />}
-              loading={regenerating}
-              onClick={handleRegenerate}
-              danger
-            >
-              AI一键重写全文
-            </Button>
+            <Dropdown menu={{ items: regenerateMenuItems }} placement="bottomRight">
+              <Button
+                icon={<ReloadOutlined />}
+                loading={regenerating}
+                danger
+              >
+                AI一键重写全文 <DownOutlined />
+              </Button>
+            </Dropdown>
           )}
           <Button loading={polishing} onClick={handlePolish}>
             AI精修全文

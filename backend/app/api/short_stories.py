@@ -1802,3 +1802,235 @@ async def confirm_revision(
             pass
         logger.error(f"确认AI修改失败(已回滚): story_id={story_id}, error={str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"确认失败: {str(e)}")
+
+
+# ============ 后台任务端点（复用长篇小说 BackgroundTask 机制） ============
+# 说明：BackgroundTask.project_id 无外键约束，本质是 scope id 字符串。
+# 短故事后台任务用 story_id 作为 project_id，前端 FloatingTaskPanel 传 storyId 即可复用。
+# 任务类型：short_story_regenerate / short_story_score / short_story_polish
+
+@router.post("/{story_id}/regenerate-background", summary="AI后台重新生成短故事正文")
+async def regenerate_story_background(
+    story_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """后台重新生成短故事正文（关闭浏览器不影响生成，完成后自动保存）。
+
+    返回 task_id，前端通过 GET /api/tasks/{task_id} 轮询进度，
+    或在 FloatingTaskPanel 中查看进度。
+    """
+    from app.services.background_task_service import background_task_service, TaskProgressTracker
+
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    # 校验故事存在
+    result = await db.execute(
+        select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+    )
+    story = result.scalar_one_or_none()
+    if not story:
+        raise HTTPException(status_code=404, detail="短故事不存在")
+
+    logger.info(f"创建短故事后台重写任务: story_id={story_id}, user_id={user_id}")
+
+    # 创建后台任务记录（project_id=story_id，前端按 story_id 过滤）
+    task = await background_task_service.create_task(
+        user_id=user_id,
+        project_id=story_id,
+        task_type="short_story_regenerate",
+        task_input={"story_id": story_id},
+        db=db,
+    )
+
+    # 后台执行的函数
+    async def _run_regenerate(task_id: str, bg_user_id: str):
+        from app.database import get_engine
+        from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession as BgAsyncSession
+
+        engine = await get_engine(bg_user_id)
+        AsyncSessionLocal = async_sessionmaker(engine, class_=BgAsyncSession, expire_on_commit=False)
+
+        async with AsyncSessionLocal() as bg_db:
+            tracker = TaskProgressTracker(task_id, bg_user_id, "短故事")
+            try:
+                await tracker.start("开始重新生成短故事...")
+
+                # 获取AI服务
+                from app.api.settings import get_user_ai_service_from_db
+                bg_ai_service = await get_user_ai_service_from_db(bg_user_id, bg_db)
+
+                # 重新加载故事
+                bg_result = await bg_db.execute(
+                    select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == bg_user_id)
+                )
+                bg_story = bg_result.scalar_one_or_none()
+                if not bg_story:
+                    await tracker.error("短故事不存在")
+                    return
+
+                await tracker.loading("准备AI提示词...", 0.5)
+
+                # 调用生成器
+                story_data = await FullStoryGenerator.generate_full_story(
+                    ai_service=bg_ai_service,
+                    initial_idea=bg_story.logline or bg_story.title or "",
+                    target_words=bg_story.target_words or 12000,
+                    emotion_goal=bg_story.emotion_goal or "",
+                    target_platform=bg_story.target_platform or "知乎盐言",
+                    emotion_curve=bg_story.emotion_curve or "",
+                )
+
+                await tracker.generating(current_chars=0, estimated_total=bg_story.target_words or 12000, message="AI生成完成，正在保存...")
+
+                if not story_data or not story_data.get("content"):
+                    await tracker.error("AI生成结果不完整")
+                    return
+
+                # 更新故事记录
+                bg_story.title = story_data.get("title", bg_story.title)
+                bg_story.logline = story_data.get("logline", bg_story.logline)
+                bg_story.emotion_goal = story_data.get("emotion_goal", bg_story.emotion_goal)
+                bg_story.twist_type = story_data.get("twist_type", bg_story.twist_type)
+                bg_story.twist_content = story_data.get("twist_content", bg_story.twist_content)
+                bg_story.twist_clues = json.dumps(story_data.get("twist_clues", []), ensure_ascii=False)
+                bg_story.genre = story_data.get("genre", bg_story.genre)
+                bg_story.content = story_data.get("content", "")
+                bg_story.current_words = _count_chinese_and_punctuation(bg_story.content)
+                bg_story.segments, _ = _recalc_segments_from_content(
+                    bg_story.content, bg_story.target_words or 12000, bg_story.segments
+                )
+                # 重新生成后清空旧评分
+                bg_story.score_data = None
+                bg_story.scored_at = None
+                await bg_db.commit()
+
+                await tracker.complete("短故事重新生成完成")
+                logger.info(f"短故事后台重写成功: story_id={story_id}, words={bg_story.current_words}")
+
+            except Exception as e:
+                logger.error(f"❌ 短故事后台重写失败: {e}", exc_info=True)
+                await tracker.error(str(e))
+
+    await background_task_service.spawn_background_task(
+        task.id, user_id, _run_regenerate
+    )
+
+    return {
+        "task_id": task.id,
+        "task_type": "short_story_regenerate",
+        "status": "pending",
+        "message": "任务已创建，请通过 GET /api/tasks/{task_id} 查询进度"
+    }
+
+
+@router.post("/{story_id}/score-background", summary="AI后台评分短故事（5维评分）")
+async def score_story_background(
+    story_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """后台AI评分短故事（关闭浏览器不影响评分，完成后自动保存）。
+
+    返回 task_id，前端通过 GET /api/tasks/{task_id} 轮询进度，
+    或在 FloatingTaskPanel 中查看进度。
+    """
+    from app.services.background_task_service import background_task_service, TaskProgressTracker
+
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    # 校验故事存在
+    result = await db.execute(
+        select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+    )
+    story = result.scalar_one_or_none()
+    if not story:
+        raise HTTPException(status_code=404, detail="短故事不存在")
+
+    if not story.content:
+        raise HTTPException(status_code=400, detail="正文为空，无法评分")
+
+    logger.info(f"创建短故事后台评分任务: story_id={story_id}, user_id={user_id}")
+
+    # 创建后台任务记录
+    task = await background_task_service.create_task(
+        user_id=user_id,
+        project_id=story_id,
+        task_type="short_story_score",
+        task_input={"story_id": story_id},
+        db=db,
+    )
+
+    # 后台执行的函数
+    async def _run_score(task_id: str, bg_user_id: str):
+        from app.database import get_engine
+        from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession as BgAsyncSession
+
+        engine = await get_engine(bg_user_id)
+        AsyncSessionLocal = async_sessionmaker(engine, class_=BgAsyncSession, expire_on_commit=False)
+
+        async with AsyncSessionLocal() as bg_db:
+            tracker = TaskProgressTracker(task_id, bg_user_id, "评分")
+            try:
+                await tracker.start("开始AI评分...")
+
+                # 获取AI服务
+                from app.api.settings import get_user_ai_service_from_db
+                bg_ai_service = await get_user_ai_service_from_db(bg_user_id, bg_db)
+
+                # 重新加载故事
+                bg_result = await bg_db.execute(
+                    select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == bg_user_id)
+                )
+                bg_story = bg_result.scalar_one_or_none()
+                if not bg_story:
+                    await tracker.error("短故事不存在")
+                    return
+
+                await tracker.loading("AI正在分析选题维度...", 0.5)
+
+                # 调用评分器
+                score_result = await StoryScorer.score_story(
+                    ai_service=bg_ai_service,
+                    title=bg_story.title or "",
+                    content=bg_story.content,
+                    emotion_goal=bg_story.emotion_goal or "",
+                    logline=bg_story.logline or "",
+                    twist_type=bg_story.twist_type or "",
+                    twist_content=bg_story.twist_content or "",
+                    genre=bg_story.genre or "",
+                    target_words=bg_story.target_words or 12000,
+                    emotion_curve=bg_story.emotion_curve or "",
+                )
+
+                await tracker.generating(current_chars=100, estimated_total=100, message="正在保存评分结果...")
+
+                # 保存评分
+                bg_story.score_data = json.dumps(score_result, ensure_ascii=False)
+                bg_story.scored_at = datetime.now()
+                await bg_db.commit()
+
+                await tracker.complete("AI评分完成")
+                logger.info(
+                    f"短故事后台评分成功: story_id={story_id}, "
+                    f"total_score={score_result.get('total_score')}, level={score_result.get('level')}"
+                )
+
+            except Exception as e:
+                logger.error(f"❌ 短故事后台评分失败: {e}", exc_info=True)
+                await tracker.error(str(e))
+
+    await background_task_service.spawn_background_task(
+        task.id, user_id, _run_score
+    )
+
+    return {
+        "task_id": task.id,
+        "task_type": "short_story_score",
+        "status": "pending",
+        "message": "任务已创建，请通过 GET /api/tasks/{task_id} 查询进度"
+    }

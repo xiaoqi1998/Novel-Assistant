@@ -20,6 +20,7 @@ import { useShortStoryStore } from '../store/shortStoryStore';
 import AppSidebar, { SidebarContent, EXPANDED_SIDER_WIDTH, COLLAPSED_SIDER_WIDTH, HEADER_HEIGHT } from '../components/AppSidebar';
 import AppTopBar from '../components/AppTopBar';
 import AppFooter from '../components/AppFooter';
+import FloatingTaskPanel from '../components/FloatingTaskPanel';
 import { getStoredSidebarCollapsed, setStoredSidebarCollapsed } from '../utils/sidebarState';
 import { useIsMobile } from '../utils/useIsMobile';
 import { alphaColor } from '../utils/color';
@@ -437,6 +438,9 @@ export default function ShortStoryDetail() {
 
       {/* 底部版本条 */}
       <AppFooter sidebarWidth={mobile ? 0 : desktopSiderWidth} />
+
+      {/* 后台任务浮窗（复用长篇小说 FloatingTaskPanel，传 storyId 作为 scope） */}
+      <FloatingTaskPanel projectId={currentStory.id} />
 
       {/* 导出确认弹窗（对齐长篇小说 Chapters.tsx 的导出体验） */}
       <Modal
