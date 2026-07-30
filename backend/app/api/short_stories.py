@@ -69,7 +69,11 @@ def _build_default_polish_checklist() -> str:
 
 
 def _recalc_segments_from_content(content: str, target_words: int, existing_segments: str | None) -> tuple[str, int]:
-    """根据正文内容重新计算分段字数和状态"""
+    """根据正文内容重新计算分段字数和状态
+
+    有正文时：按目标比例分配实际字数到各段，并标记为 completed
+    无正文时：只重置 target_words，状态保持 pending
+    """
     total_words = _count_chinese_and_punctuation(content)
     if not existing_segments:
         existing_segments = _build_default_segments(target_words)
@@ -79,11 +83,16 @@ def _recalc_segments_from_content(content: str, target_words: int, existing_segm
     except (json.JSONDecodeError, TypeError):
         segments = json.loads(_build_default_segments(target_words))
 
-    # 根据总字数比例分配实际字数到各段（简单均分比例）
+    has_content = total_words > 0
     for seg in segments:
         seg["target_words"] = int(target_words * seg["target_ratio"])
-        # 这里简化处理：实际字数由前端在保存时更新
-        # 后端只计算总字数
+        if has_content:
+            # 按目标比例分配实际字数（近似），并标记已完成
+            seg["actual_words"] = int(total_words * seg["target_ratio"])
+            seg["status"] = "completed"
+        else:
+            seg["actual_words"] = 0
+            seg["status"] = "pending"
 
     return json.dumps(segments, ensure_ascii=False), total_words
 

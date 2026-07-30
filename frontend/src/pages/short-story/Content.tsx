@@ -13,7 +13,7 @@ import {
   theme,
   Grid,
 } from 'antd';
-import { SaveOutlined, CheckCircleOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import { SaveOutlined, CheckCircleOutlined, ClockCircleOutlined, ReloadOutlined, RobotOutlined } from '@ant-design/icons';
 import { shortStoryApi } from '../../services/api';
 import { showErrorToast } from '../../utils/errorHandler';
 import { useShortStoryStore } from '../../store/shortStoryStore';
@@ -51,7 +51,7 @@ function countWords(text: string): number {
 }
 
 export default function Content() {
-  const { story } = useOutletContext<ContextType>();
+  const { story, reload } = useOutletContext<ContextType>();
   const screens = useBreakpoint();
   const isMobile = !screens.md;
   const { token } = theme.useToken();
@@ -64,6 +64,7 @@ export default function Content() {
   const contentRef = useRef<string>(content);
   const [generatingSegment, setGeneratingSegment] = useState<string | null>(null);
   const [polishing, setPolishing] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
 
   useEffect(() => {
     contentRef.current = content;
@@ -152,6 +153,27 @@ export default function Content() {
     }
   };
 
+  const hasGeneratedContent = currentWords > 100;
+
+  const handleRegenerate = async () => {
+    try {
+      setRegenerating(true);
+      await shortStoryApi.generateFull({
+        initial_idea: story.logline || story.title || '重写故事',
+        target_words: story.target_words || 12000,
+        emotion_goal: story.emotion_goal || undefined,
+        target_platform: story.target_platform || '知乎盐言',
+      });
+      // 刷新当前故事以获取新生成的内容
+      await reload();
+      message.success('已重新生成全文');
+    } catch (error) {
+      showErrorToast(error, 'AI重新生成失败');
+    } finally {
+      setRegenerating(false);
+    }
+  };
+
   return (
     <div style={{ padding: 24, maxWidth: 1200, margin: '0 auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -165,11 +187,38 @@ export default function Content() {
           <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={() => handleSave(true)}>
             保存
           </Button>
+          {hasGeneratedContent && (
+            <Button
+              icon={<ReloadOutlined />}
+              loading={regenerating}
+              onClick={handleRegenerate}
+              danger
+            >
+              AI一键重写全文
+            </Button>
+          )}
           <Button loading={polishing} onClick={handlePolish}>
             AI精修全文
           </Button>
         </div>
       </div>
+
+      {hasGeneratedContent && (
+        <Alert
+          type="success"
+          showIcon
+          icon={<RobotOutlined />}
+          style={{ marginBottom: 16 }}
+          message="正文已由AI自动生成完成"
+          description={
+            <div style={{ fontSize: 13 }}>
+              <Text>当前共 {formatWordCount(currentWords)} 字，所有分段已完成。你可以直接精修全文，或点击下方分段中的「AI生成」重写单段。</Text>
+              <br />
+              <Text type="secondary">不满意？点击右上角「AI一键重写全文」重新生成。</Text>
+            </div>
+          }
+        />
+      )}
 
       <Alert
         type="info"
