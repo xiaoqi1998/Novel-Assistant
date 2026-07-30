@@ -1704,7 +1704,7 @@ async def improve_from_score_stream(
     async def event_generator():
         try:
             improved = None
-            async for event in ShortStoryAIService.improve_from_score_stream(
+            async for event in StoryImprover.improve_from_score_stream(
                 ai_service=ai_service,
                 title=story_snapshot["title"],
                 content=story_snapshot["content"],
