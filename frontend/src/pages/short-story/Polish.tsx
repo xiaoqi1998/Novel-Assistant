@@ -277,7 +277,6 @@ export default function Polish() {
           </Button>
           <Dropdown.Button
             type="primary"
-            ghost
             loading={scoring || improving || autoScoring}
             disabled={improving || autoScoring}
             onClick={handleScoreBackground}
