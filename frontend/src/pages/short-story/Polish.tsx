@@ -79,6 +79,8 @@ export default function Polish() {
   const [autoChecking, setAutoChecking] = useState(false);
   // AI修改预览
   const [revisionPreview, setRevisionPreview] = useState<RevisionPreview | null>(null);
+  // 自动评分（改进确认后自动触发）
+  const [autoScoring, setAutoScoring] = useState(false);
 
   useEffect(() => {
     try {
@@ -237,9 +239,9 @@ export default function Polish() {
               type="primary"
               ghost
               icon={<TrophyOutlined />}
-              loading={scoring || improving}
+              loading={scoring || improving || autoScoring}
               onClick={handleScore}
-              disabled={improving}
+              disabled={improving || autoScoring}
             >
               AI评分
             </Button>
@@ -294,9 +296,9 @@ export default function Polish() {
           ) : null
         }
       >
-        {scoring ? (
+        {scoring || autoScoring ? (
           <div style={{ textAlign: 'center', padding: '40px 0' }}>
-            <Spin tip="AI正在按爆款方法论评分中…" size="large" />
+            <Spin tip={autoScoring ? '已确认改进，正在自动重新评分…' : 'AI正在按爆款方法论评分中…'} size="large" />
             <div style={{ marginTop: 16, color: token.colorTextSecondary, fontSize: 13 }}>
               评分维度：选题 / 结构 / 情绪 / 人设对话 / 完成度
             </div>
@@ -465,9 +467,10 @@ v3：结尾增加一句留白，强化余味"
         preview={revisionPreview}
         onCancel={() => setRevisionPreview(null)}
         onConfirmed={async () => {
+          const wasImprove = revisionPreview?.revision_type === 'improve';
           setRevisionPreview(null);
           // 改进类型：清空旧评分展示
-          if (revisionPreview?.revision_type === 'improve') {
+          if (wasImprove) {
             setScoreResult(null);
           }
           await reload();
@@ -479,12 +482,35 @@ v3：结尾增加一句留白，强化余味"
           } catch {
             // 同步失败不影响主流程
           }
-          message.success(
-            revisionPreview?.revision_type === 'improve'
-              ? '已确认保存改进，请重新评分验证'
-              : '已确认保存AI润色',
-            4
-          );
+
+          if (wasImprove) {
+            // 改进类型：自动触发重新评分
+            message.loading({ content: '已确认保存改进，正在自动重新评分...', key: 'autoScore', duration: 0 });
+            try {
+              setAutoScoring(true);
+              const scoreResult = await shortStoryApi.score(story.id);
+              setScoreResult(scoreResult);
+              message.success({
+                content: `自动评分完成：${scoreResult.total_score}分（${scoreResult.level}）`,
+                key: 'autoScore',
+                duration: 5,
+              });
+              // 同步story状态
+              try {
+                const updated = await shortStoryApi.get(story.id);
+                updateCurrentStory(updated);
+              } catch {
+                // 同步失败不影响主流程
+              }
+            } catch (error) {
+              message.destroy('autoScore');
+              showErrorToast(error, '自动评分失败，可手动点击评分按钮重试');
+            } finally {
+              setAutoScoring(false);
+            }
+          } else {
+            message.success('已确认保存AI润色', 4);
+          }
         }}
       />
     </div>
