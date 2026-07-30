@@ -72,12 +72,14 @@ export default function Polish() {
   const [saving, setSaving] = useState(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [polishing, setPolishing] = useState(false);
+  const [polishHint, setPolishHint] = useState('');
 
   // AI评分相关
   const [scoreResult, setScoreResult] = useState<StoryScoreResult | null>(null);
   const [scoring, setScoring] = useState(false);
   // 基于评分改进相关
   const [improving, setImproving] = useState(false);
+  const [improveHint, setImproveHint] = useState('');
   // AI自动检查相关
   const [autoChecking, setAutoChecking] = useState(false);
   // AI修改预览
@@ -204,24 +206,34 @@ export default function Polish() {
     }
     try {
       setImproving(true);
-      const preview = await shortStoryApi.improveFromScore(story.id);
-      setRevisionPreview(preview);
+      setImproveHint('AI正在基于评分改进正文...');
+      const preview = await shortStoryApi.improveFromScoreStream(story.id, {
+        onProgress: (msg) => setImproveHint(msg || 'AI正在改进正文...'),
+        onChunk: () => setImproveHint('AI正在生成改进内容...'),
+      });
+      if (preview) setRevisionPreview(preview);
     } catch (error) {
       showErrorToast(error, 'AI改进失败');
     } finally {
       setImproving(false);
+      setImproveHint('');
     }
   };
 
   const handlePolish = async () => {
     try {
       setPolishing(true);
-      const preview = await shortStoryApi.polish(story.id);
-      setRevisionPreview(preview);
+      setPolishHint('AI正在精修润色正文...');
+      const preview = await shortStoryApi.polishStream(story.id, {
+        onProgress: (msg) => setPolishHint(msg || 'AI正在精修润色...'),
+        onChunk: () => setPolishHint('AI正在生成润色内容...'),
+      });
+      if (preview) setRevisionPreview(preview);
     } catch (error) {
       showErrorToast(error, 'AI润色失败');
     } finally {
       setPolishing(false);
+      setPolishHint('');
     }
   };
 
@@ -287,6 +299,15 @@ export default function Polish() {
           </Button>
         </div>
       </div>
+
+      {(polishing || improving) && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={<span><Spin size="small" style={{ marginRight: 8 }} />{polishing ? polishHint : improveHint}</span>}
+        />
+      )}
 
       <Alert
         type={allChecked ? 'success' : 'warning'}

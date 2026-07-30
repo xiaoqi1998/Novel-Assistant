@@ -1124,6 +1124,10 @@ export const shortStoryApi = {
   polishStream: (id: string, options: SSEClientOptions) =>
     ssePost<RevisionPreview>(`/api/short-stories/${id}/polish-stream`, {}, options),
 
+  // AI流式基于评分改进（返回对比预览，需用户确认）
+  improveFromScoreStream: (id: string, options: SSEClientOptions) =>
+    ssePost<RevisionPreview>(`/api/short-stories/${id}/improve-from-score-stream`, {}, options),
+
   // ============ 后台任务方法（复用长篇小说 BackgroundTask 机制） ============
   // 关闭浏览器不影响任务，完成后自动保存，通过 FloatingTaskPanel 查看进度
 

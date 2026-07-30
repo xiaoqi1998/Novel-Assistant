@@ -428,9 +428,15 @@ class ShortStoryAIService:
             yield {"type": "progress", "message": "AI正在精修润色正文...", "progress": 15, "status": "processing"}
 
             result = ""
-            async for chunk in ai_service.generate_text_stream(
-                prompt=user_prompt, system_prompt=POLISH_SYSTEM, temperature=0.5
+            async for chunk in wrap_stream_with_heartbeat(
+                ai_service.generate_text_stream(
+                    prompt=user_prompt, system_prompt=POLISH_SYSTEM, temperature=0.5
+                ),
+                heartbeat_interval=15.0,
             ):
+                if chunk == HEARTBEAT:
+                    yield {"type": "heartbeat"}
+                    continue
                 result += chunk
                 yield {"type": "chunk", "content": chunk}
 
@@ -1326,6 +1332,93 @@ class StoryImprover:
             f"原评分={score_data.get('total_score')}/100"
         )
         return result.strip()
+
+    @staticmethod
+    async def improve_from_score_stream(
+        ai_service: AIService,
+        title: str,
+        content: str,
+        score_data: dict,
+        emotion_goal: str = "",
+        logline: str = "",
+        twist_type: str = "",
+        twist_content: str = "",
+        genre: str = "",
+        target_words: int = 12000,
+        emotion_curve: str = "",
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """根据AI评分结果改进正文（流式版）。
+
+        yield 事件结构：
+        - {"type": "progress", ...}    进度提示
+        - {"type": "heartbeat"}        心跳保活
+        - {"type": "chunk", "content": "..."}  文本增量
+        - {"type": "complete", "content": "..."}  完成
+        - {"type": "error", "error": "..."}  错误
+        """
+        try:
+            if not content or len(content.strip()) < 100:
+                yield {"type": "error", "error": "正文内容过短，无法改进（至少需要100字）"}
+                return
+
+            if not score_data or "dimensions" not in score_data:
+                yield {"type": "error", "error": "评分数据无效，无法改进"}
+                return
+
+            top_issues = score_data.get("top_issues") or []
+            improvement_priority = score_data.get("improvement_priority") or []
+            dimensions = score_data.get("dimensions") or []
+
+            if not top_issues and not improvement_priority and not any(
+                d.get("issues") or d.get("suggestions") for d in dimensions
+            ):
+                yield {"type": "error", "error": "评分结果中没有需要改进的问题，无需改进"}
+                return
+
+            emotion_curve_hint = _format_emotion_curve_for_prompt(emotion_curve)
+            user_prompt = IMPROVE_USER.format(
+                title=title or "未命名",
+                emotion_goal=emotion_goal or "未设定",
+                logline=logline or "未设定",
+                twist_type=twist_type or "未设定",
+                twist_content=twist_content or "未设定",
+                genre=genre or "未设定",
+                target_words=target_words,
+                emotion_curve_hint=emotion_curve_hint,
+                total_score=score_data.get("total_score", 0),
+                level=score_data.get("level", "未评级"),
+                overall_evaluation=score_data.get("overall_evaluation", ""),
+                top_issues="\n".join(f"{i+1}. {issue}" for i, issue in enumerate(top_issues)) if top_issues else "无",
+                improvement_priority="\n".join(f"{i+1}. {s}" for i, s in enumerate(improvement_priority)) if improvement_priority else "无",
+                dimensions_detail=_format_dimensions_for_improve(dimensions),
+                content=content,
+            )
+
+            yield {"type": "progress", "message": "AI正在基于评分改进正文...", "progress": 15, "status": "processing"}
+
+            result = ""
+            async for chunk in wrap_stream_with_heartbeat(
+                ai_service.generate_text_stream(
+                    prompt=user_prompt,
+                    system_prompt=IMPROVE_SYSTEM,
+                    temperature=0.55,
+                ),
+                heartbeat_interval=15.0,
+            ):
+                if chunk == HEARTBEAT:
+                    yield {"type": "heartbeat"}
+                    continue
+                result += chunk
+                yield {"type": "chunk", "content": chunk}
+
+            logger.info(
+                f"AI基于评分改进流式完成: 原文长度={len(content)}, 改进后长度={len(result)}, "
+                f"原评分={score_data.get('total_score')}/100"
+            )
+            yield {"type": "complete", "content": result.strip()}
+        except Exception as e:
+            logger.error(f"AI基于评分改进流式失败: {str(e)}", exc_info=True)
+            yield {"type": "error", "error": str(e)}
 
 
 # ============ AI 自查清单 Prompt ============
