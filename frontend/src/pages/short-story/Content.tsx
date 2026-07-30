@@ -18,7 +18,8 @@ import { shortStoryApi } from '../../services/api';
 import { showErrorToast } from '../../utils/errorHandler';
 import { useShortStoryStore } from '../../store/shortStoryStore';
 import { formatWordCount } from '../../utils/format';
-import type { ShortStory, StorySegment } from '../../types';
+import RevisionPreviewModal from '../../components/RevisionPreviewModal';
+import type { ShortStory, StorySegment, RevisionPreview } from '../../types';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -65,6 +66,7 @@ export default function Content() {
   const [generatingSegment, setGeneratingSegment] = useState<string | null>(null);
   const [polishing, setPolishing] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
+  const [revisionPreview, setRevisionPreview] = useState<RevisionPreview | null>(null);
 
   useEffect(() => {
     contentRef.current = content;
@@ -142,10 +144,8 @@ export default function Content() {
   const handlePolish = async () => {
     try {
       setPolishing(true);
-      const res = await shortStoryApi.polish(story.id);
-      setContent(res.content);
-      scheduleAutoSave();
-      message.success('已精修全文');
+      const preview = await shortStoryApi.polish(story.id);
+      setRevisionPreview(preview);
     } catch (error) {
       showErrorToast(error, 'AI精修失败');
     } finally {
@@ -355,6 +355,20 @@ export default function Content() {
           />
         </Card>
       </div>
+
+      {/* AI修改对比预览Modal */}
+      <RevisionPreviewModal
+        open={!!revisionPreview}
+        storyId={story.id}
+        preview={revisionPreview}
+        onCancel={() => setRevisionPreview(null)}
+        onConfirmed={async (result) => {
+          setContent(result.content);
+          setRevisionPreview(null);
+          await reload();
+          message.success('已确认保存AI修改');
+        }}
+      />
     </div>
   );
 }

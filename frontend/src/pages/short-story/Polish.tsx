@@ -21,7 +21,8 @@ import { SaveOutlined, CheckCircleOutlined, TrophyOutlined, ReloadOutlined, Audi
 import { shortStoryApi } from '../../services/api';
 import { showErrorToast } from '../../utils/errorHandler';
 import { useShortStoryStore } from '../../store/shortStoryStore';
-import type { ShortStory, PolishChecklistItem, StoryScoreResult, StoryScoreDimension } from '../../types';
+import RevisionPreviewModal from '../../components/RevisionPreviewModal';
+import type { ShortStory, PolishChecklistItem, StoryScoreResult, StoryScoreDimension, RevisionPreview } from '../../types';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -60,7 +61,7 @@ const DIMENSION_COLOR: Record<string, string> = {
 };
 
 export default function Polish() {
-  const { story } = useOutletContext<ContextType>();
+  const { story, reload } = useOutletContext<ContextType>();
   const { token } = theme.useToken();
   const { updateCurrentStory } = useShortStoryStore();
   const [checklist, setChecklist] = useState<PolishChecklistItem[]>([]);
@@ -76,6 +77,8 @@ export default function Polish() {
   const [improving, setImproving] = useState(false);
   // AI自动检查相关
   const [autoChecking, setAutoChecking] = useState(false);
+  // AI修改预览
+  const [revisionPreview, setRevisionPreview] = useState<RevisionPreview | null>(null);
 
   useEffect(() => {
     try {
@@ -164,21 +167,8 @@ export default function Polish() {
     }
     try {
       setImproving(true);
-      const result = await shortStoryApi.improveFromScore(story.id);
-      // 改进后旧评分已清空，需重置展示并同步story
-      setScoreResult(null);
-      try {
-        const updated = await shortStoryApi.get(story.id);
-        updateCurrentStory(updated);
-        // 同步notes显示改进记录
-        if (updated.polish_notes) setNotes(updated.polish_notes);
-      } catch {
-        // 同步失败不影响主流程
-      }
-      message.success(
-        `已基于评分改进点修订正文（${result.original_words}字→${result.current_words}字），请重新评分验证`,
-        6
-      );
+      const preview = await shortStoryApi.improveFromScore(story.id);
+      setRevisionPreview(preview);
     } catch (error) {
       showErrorToast(error, 'AI改进失败');
     } finally {
@@ -189,18 +179,8 @@ export default function Polish() {
   const handlePolish = async () => {
     try {
       setPolishing(true);
-      await shortStoryApi.polish(story.id);
-      message.success('正文已AI润色更新');
-      const now = new Date();
-      const timestamp = `${now.toLocaleDateString('zh-CN')} ${now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
-      const newRecord = `[${timestamp}] AI润色正文：已完成全文AI精修润色`;
-      const newNotes = notes ? `${notes}\n${newRecord}` : newRecord;
-      setNotes(newNotes);
-      const updated = await shortStoryApi.update(story.id, {
-        polish_checklist: JSON.stringify(checklist),
-        polish_notes: newNotes,
-      });
-      updateCurrentStory(updated);
+      const preview = await shortStoryApi.polish(story.id);
+      setRevisionPreview(preview);
     } catch (error) {
       showErrorToast(error, 'AI润色失败');
     } finally {
@@ -476,6 +456,36 @@ v3：结尾增加一句留白，强化余味"
             </ul>
           </div>
         }
+      />
+
+      {/* AI修改对比预览Modal */}
+      <RevisionPreviewModal
+        open={!!revisionPreview}
+        storyId={story.id}
+        preview={revisionPreview}
+        onCancel={() => setRevisionPreview(null)}
+        onConfirmed={async () => {
+          setRevisionPreview(null);
+          // 改进类型：清空旧评分展示
+          if (revisionPreview?.revision_type === 'improve') {
+            setScoreResult(null);
+          }
+          await reload();
+          // 同步notes显示修改记录
+          try {
+            const updated = await shortStoryApi.get(story.id);
+            updateCurrentStory(updated);
+            if (updated.polish_notes) setNotes(updated.polish_notes);
+          } catch {
+            // 同步失败不影响主流程
+          }
+          message.success(
+            revisionPreview?.revision_type === 'improve'
+              ? '已确认保存改进，请重新评分验证'
+              : '已确认保存AI润色',
+            4
+          );
+        }}
       />
     </div>
   );

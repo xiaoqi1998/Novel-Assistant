@@ -71,6 +71,7 @@ import type {
   BatchAnalyzeUnanalyzedRequest,
   BatchAnalyzeUnanalyzedResponse,
   PolishChecklistItem,
+  RevisionPreview,
 } from '../types';
 
 interface MCPPluginSimpleCreate {
@@ -1044,7 +1045,7 @@ export const shortStoryApi = {
 
   // AI精修润色
   polish: (id: string) =>
-    api.post<unknown, { content: string; current_words: number }>(`/short-stories/${id}/polish`),
+    api.post<unknown, RevisionPreview>(`/short-stories/${id}/polish`),
 
   // 导出Markdown
   exportMarkdown: (id: string) => {
@@ -1072,20 +1073,31 @@ export const shortStoryApi = {
   getScore: (id: string) =>
     api.get<unknown, StoryScoreResult>(`/short-stories/${id}/score`),
 
-  // 基于AI评分改进点修订正文（评分→改进→再评分闭环）
+  // 基于AI评分改进点生成修改预览（不直接写入DB，需用户确认）
   improveFromScore: (id: string) =>
-    api.post<unknown, {
-      content: string;
-      current_words: number;
-      original_words: number;
-      message: string;
-    }>(`/short-stories/${id}/improve-from-score`),
+    api.post<unknown, RevisionPreview>(`/short-stories/${id}/improve-from-score`),
 
   // AI自动检查自查清单（逐项检查并标记通过/不通过）
   autoCheck: (id: string) =>
     api.post<unknown, {
       checklist: PolishChecklistItem[];
     }>(`/short-stories/${id}/auto-check`),
+
+  // 确认AI修改正文（用户预览对比后确认保存）
+  confirmRevision: (id: string, data: {
+    new_content: string;
+    revision_type: 'polish' | 'improve';
+    original_words?: number;
+    score_total?: number;
+    score_level?: string;
+    top_issues?: string[];
+  }) =>
+    api.post<unknown, {
+      content: string;
+      current_words: number;
+      original_words: number;
+      message: string;
+    }>(`/short-stories/${id}/confirm-revision`, data),
 };
 export const shortInspirationApi = {
   generateOptions: (data: { step: string; context: Record<string, string> }) =>

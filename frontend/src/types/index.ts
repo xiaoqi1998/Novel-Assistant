@@ -355,6 +355,18 @@ export interface PolishChecklistItem {
   evidence?: string; // AI自动检查的依据（引用正文片段）
 }
 
+// AI修改预览（polish/improve端点返回，需用户确认后保存）
+export interface RevisionPreview {
+  original_content: string;
+  new_content: string;
+  original_words: number;
+  new_words: number;
+  revision_type: 'polish' | 'improve';
+  score_total?: number;
+  score_level?: string;
+  top_issues?: string[];
+}
+
 // 大纲类型定义
 export interface Outline {
   id: string;

@@ -542,28 +542,22 @@ async def polish_story(
             logger.warning(f"AI精修结果过短或为空，保留原文: story_id={story_id}, polished_len={len(polished) if polished else 0}")
             raise HTTPException(status_code=500, detail="AI精修结果为空或过短，原文未改动")
 
-        # 更新正文
-        story.content = polished
-        story.current_words = _count_chinese_and_punctuation(polished)
-        story.segments, _ = _recalc_segments_from_content(
-            polished, story.target_words or 12000, story.segments
-        )
-        story.status = "polishing"
-        await db.commit()
-        await db.refresh(story)
+        # 不直接写入DB，返回对比数据供用户预览确认
+        polished_words = _count_chinese_and_punctuation(polished)
         logger.info(
-            f"AI精修成功: story_id={story_id}, {original_words}字→{story.current_words}字"
+            f"AI精修预览生成: story_id={story_id}, {original_words}字→{polished_words}字（待用户确认）"
         )
-        return {"content": polished, "current_words": story.current_words}
+        return {
+            "original_content": original_content,
+            "new_content": polished,
+            "original_words": original_words,
+            "new_words": polished_words,
+            "revision_type": "polish",
+        }
     except HTTPException:
         raise
     except Exception as e:
-        # 兜底恢复：未知异常时回滚未提交的改动
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        logger.error(f"AI精修失败(已回滚): story_id={story_id}, error={str(e)}", exc_info=True)
+        logger.error(f"AI精修失败: story_id={story_id}, error={str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"精修失败: {str(e)}")
 
 
@@ -1083,51 +1077,29 @@ async def improve_from_score(
             )
             raise HTTPException(status_code=500, detail="AI改进结果为空或过短，原文未改动")
 
-        # 更新正文
-        story.content = improved_content
-        story.current_words = _count_chinese_and_punctuation(improved_content)
-        story.segments, _ = _recalc_segments_from_content(
-            improved_content, story.target_words or 12000, story.segments
-        )
-        story.status = "polishing"
-
-        # 清空旧评分，提示重新评分
-        story.score_data = None
-        story.scored_at = None
-
-        # 记录改进历史到 polish_notes
-        improve_record = (
-            f"\n---\n[AI基于评分改进] 原文 {original_words}字 → 改进后 {story.current_words}字\n"
-            f"改进依据：总分 {score_data.get('total_score', '?')}/100（{score_data.get('level', '?')}）\n"
-            f"重点解决：{'; '.join((score_data.get('top_issues') or [])[:3]) or '无'}\n"
-            f"请重新评分验证改进效果。"
-        )
-        story.polish_notes = (story.polish_notes or "") + improve_record
-
-        await db.commit()
-        await db.refresh(story)
-
+        # 不直接写入DB，返回对比数据供用户预览确认
+        improved_words = _count_chinese_and_punctuation(improved_content)
         logger.info(
-            f"AI基于评分改进正文成功: story_id={story_id}, "
-            f"{original_words}字→{story.current_words}字"
+            f"AI基于评分改进预览生成: story_id={story_id}, "
+            f"{original_words}字→{improved_words}字（待用户确认）"
         )
 
         return {
-            "content": improved_content,
-            "current_words": story.current_words,
+            "original_content": original_content,
+            "new_content": improved_content,
             "original_words": original_words,
-            "message": "已基于评分改进点修订正文，请重新评分验证",
+            "new_words": improved_words,
+            "revision_type": "improve",
+            "score_total": score_data.get("total_score"),
+            "score_level": score_data.get("level"),
+            "top_issues": (score_data.get("top_issues") or [])[:3],
         }
     except HTTPException:
         raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        logger.error(f"AI基于评分改进失败(已回滚): story_id={story_id}, error={str(e)}", exc_info=True)
+        logger.error(f"AI基于评分改进失败: story_id={story_id}, error={str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"改进失败: {str(e)}")
 
 
@@ -1207,3 +1179,97 @@ async def auto_check_checklist(
             pass
         logger.error(f"AI自动检查失败(已回滚): story_id={story_id}, error={str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"检查失败: {str(e)}")
+
+
+class ConfirmRevisionRequest(BaseModel):
+    """确认AI修改请求"""
+    new_content: str
+    revision_type: str  # polish | improve
+    # improve类型需要这些（用于清空评分、记录历史）
+    original_words: int | None = None
+    score_total: int | None = None
+    score_level: str | None = None
+    top_issues: list[str] | None = None
+
+
+@router.post("/{story_id}/confirm-revision", summary="确认AI修改正文（用户预览对比后确认）")
+async def confirm_revision(
+    story_id: str,
+    req: ConfirmRevisionRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """用户预览AI修改对比后确认保存。
+
+    流程：
+    1. AI生成修改预览（polish/improve端点不再直接写入DB）
+    2. 前端展示原文vs修改后对比Modal
+    3. 用户确认后调用本端点写入DB
+    """
+    try:
+        user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="未登录")
+
+        result = await db.execute(
+            select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+        )
+        story = result.scalar_one_or_none()
+        if not story:
+            raise HTTPException(status_code=404, detail="短故事不存在")
+
+        if not req.new_content or len(req.new_content.strip()) < 50:
+            raise HTTPException(status_code=400, detail="修改内容为空或过短")
+
+        original_content = story.content or ""
+        original_words = req.original_words or story.current_words or _count_chinese_and_punctuation(original_content)
+        new_words = _count_chinese_and_punctuation(req.new_content)
+
+        # 更新正文
+        story.content = req.new_content
+        story.current_words = new_words
+        story.segments, _ = _recalc_segments_from_content(
+            req.new_content, story.target_words or 12000, story.segments
+        )
+        story.status = "polishing"
+
+        # 记录修改历史到 polish_notes
+        if req.revision_type == "improve":
+            # 改进类型：清空旧评分，提示重新评分
+            story.score_data = None
+            story.scored_at = None
+            improve_record = (
+                f"\n---\n[AI基于评分改进] 原文 {original_words}字 → 改进后 {new_words}字\n"
+                f"改进依据：总分 {req.score_total or '?'}/100（{req.score_level or '?'}）\n"
+                f"重点解决：{'; '.join(req.top_issues or []) or '无'}\n"
+                f"请重新评分验证改进效果。"
+            )
+        else:
+            improve_record = (
+                f"\n---\n[AI精修润色] 原文 {original_words}字 → 精修后 {new_words}字\n"
+            )
+        story.polish_notes = (story.polish_notes or "") + improve_record
+
+        await db.commit()
+        await db.refresh(story)
+
+        logger.info(
+            f"用户确认AI修改({req.revision_type})成功: story_id={story_id}, "
+            f"{original_words}字→{new_words}字"
+        )
+
+        return {
+            "content": story.content,
+            "current_words": story.current_words,
+            "original_words": original_words,
+            "message": "已确认保存" + ("，请重新评分验证" if req.revision_type == "improve" else ""),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"确认AI修改失败(已回滚): story_id={story_id}, error={str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"确认失败: {str(e)}")
