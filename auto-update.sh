@@ -58,7 +58,7 @@ check_health() {
     error_exit "健康检查超时，服务可能未正常启动"
 }
 
-# 拉取最新代码（检测未提交改动 -> 自动提交 -> 拉取）
+# 拉取最新代码（检测未提交改动 -> 自动提交 -> 合并拉取）
 pull_code() {
     log "📥 检查并拉取最新代码..."
     
@@ -74,9 +74,9 @@ pull_code() {
     
     local before_commit=$(git rev-parse HEAD)
     
-    # 2. 执行拉取
-    if ! git pull; then
-        error_exit "代码拉取失败！可能本地自动提交的代码与远程分支存在合并冲突，请手动解决"
+    # 2. 执行拉取（明确使用 --no-rebase --no-edit 处理分支合并）
+    if ! git pull --no-rebase --no-edit; then
+        error_exit "代码拉取失败！可能本地自动提交的代码与远程分支存在代码冲突（Merge Conflict），请登录服务器手动解决"
     fi
     
     local after_commit=$(git rev-parse HEAD)
