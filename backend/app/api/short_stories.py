@@ -24,6 +24,7 @@ from app.services.ai_service import AIService
 from app.services.short_story_ai_service import ShortStoryAIService, FullStoryGenerator, StoryScorer, StoryImprover, ChecklistChecker
 from app.api.settings import get_user_ai_service
 from app.logger import get_logger
+from app.utils.sse_response import SSEResponse, create_sse_response
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/short-stories", tags=["短故事管理"])
@@ -981,6 +982,450 @@ async def regenerate_story(
             pass
         logger.error(f"AI重新生成失败(已回滚): story_id={story_id}, error={str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"重新生成失败: {str(e)}")
+
+
+# ============ SSE 流式生成端点 ============
+
+@router.post("/generate-full-stream", summary="AI一键生成完整短故事（SSE流式）")
+async def generate_full_story_stream(
+    req: GenerateFullStoryRequest,
+    request: Request,
+    ai_service: AIService = Depends(get_user_ai_service),
+):
+    """输入想法，AI流式生成完整短故事（设定+全文），自动创建记录。
+
+    SSE事件流：
+    - progress: {type, message, progress, status}
+    - stage: {type, stage:"setup"/"segment_N", message, total_segments, segment_index?}
+    - chunk: {type, content, segment_index}
+    - complete: {type, data:{...完整故事数据}}
+    - error: {type, error}
+    - done
+    """
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+    if not req.initial_idea or not req.initial_idea.strip():
+        raise HTTPException(status_code=400, detail="请输入故事想法")
+
+    initial_idea = req.initial_idea.strip()
+    target_words = req.target_words
+    emotion_goal = req.emotion_goal or ""
+    target_platform = req.target_platform
+
+    logger.info(
+        f"开始AI流式生成完整短故事: user_id={user_id}, "
+        f"idea_len={len(initial_idea)}, target_words={target_words}"
+    )
+
+    async def event_generator():
+        db_session = None
+        try:
+            # 调用AI流式生成
+            story_data = None
+            async for event in FullStoryGenerator.generate_full_story_stream(
+                ai_service=ai_service,
+                initial_idea=initial_idea,
+                target_words=target_words,
+                emotion_goal=emotion_goal,
+                target_platform=target_platform,
+                emotion_curve="",
+            ):
+                evt_type = event.get("type")
+                if evt_type == "complete":
+                    story_data = event.get("data")
+                    # 不直接透传complete，等DB保存后再发
+                    yield await SSEResponse.send_progress("AI生成完成，正在保存到数据库...", 98, "processing")
+                elif evt_type == "error":
+                    yield await SSEResponse.send_error(event.get("error", "AI生成失败"), 500)
+                    yield await SSEResponse.send_done()
+                    return
+                else:
+                    yield SSEResponse.format_sse(event)
+
+            if not story_data or not story_data.get("title") or not story_data.get("content"):
+                yield await SSEResponse.send_error("AI生成结果不完整（缺少标题或正文）", 500)
+                yield await SSEResponse.send_done()
+                return
+
+            # 保存到DB（在生成器内创建独立session）
+            async for db_session in get_db(request):
+                import uuid
+                story_id = str(uuid.uuid4())
+                new_story = ShortStory(
+                    id=story_id,
+                    user_id=user_id,
+                    title=story_data["title"],
+                    logline=story_data.get("logline", ""),
+                    genre=story_data.get("genre", ""),
+                    target_platform=target_platform,
+                    target_words=target_words,
+                    current_words=0,
+                    emotion_goal=story_data.get("emotion_goal", emotion_goal or ""),
+                    emotion_curve=_build_default_emotion_curve(story_data.get("emotion_goal", emotion_goal or "")),
+                    twist_type=story_data.get("twist_type", ""),
+                    twist_content=story_data.get("twist_content", ""),
+                    twist_clues=json.dumps(story_data.get("twist_clues", []), ensure_ascii=False),
+                    characters=json.dumps(story_data.get("characters", []), ensure_ascii=False) if story_data.get("characters") else None,
+                    content=story_data.get("content", ""),
+                    segments=_build_default_segments(target_words),
+                    polish_checklist=_build_default_polish_checklist(),
+                    status="writing",
+                )
+                content = story_data.get("content", "")
+                new_story.current_words = _count_chinese_and_punctuation(content)
+                new_story.segments, _ = _recalc_segments_from_content(
+                    content, target_words, new_story.segments
+                )
+                db_session.add(new_story)
+                await db_session.commit()
+                await db_session.refresh(new_story)
+
+                logger.info(f"AI流式生成短故事保存成功: story_id={story_id}, words={new_story.current_words}")
+
+                # 返回完整story对象（前端需要id用于跳转）
+                from app.schemas.short_story import ShortStoryResponse
+                story_resp = ShortStoryResponse.model_validate(new_story).model_dump(mode='json')
+                yield await SSEResponse.send_result(story_resp)
+                break
+
+            yield await SSEResponse.send_done()
+        except GeneratorExit:
+            logger.warning("短故事流式生成被提前关闭（SSE断开）")
+            raise
+        except Exception as e:
+            logger.error(f"短故事流式生成失败: {str(e)}", exc_info=True)
+            if db_session:
+                try:
+                    await db_session.rollback()
+                except Exception:
+                    pass
+            yield await SSEResponse.send_error(str(e), 500)
+            yield await SSEResponse.send_done()
+        finally:
+            if db_session:
+                try:
+                    await db_session.close()
+                except Exception:
+                    pass
+
+    return create_sse_response(event_generator())
+
+
+@router.post("/{story_id}/regenerate-stream", summary="AI重新生成短故事正文（SSE流式）")
+async def regenerate_story_stream(
+    story_id: str,
+    request: Request,
+    ai_service: AIService = Depends(get_user_ai_service),
+):
+    """对已有短故事流式重新AI生成正文，更新当前记录。
+
+    SSE事件流同 generate-full-stream。
+    """
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    # 预加载story信息（使用临时session）
+    story_snapshot = None
+    async for temp_db in get_db(request):
+        try:
+            result = await temp_db.execute(
+                select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+            )
+            story = result.scalar_one_or_none()
+            if not story:
+                raise HTTPException(status_code=404, detail="短故事不存在")
+            story_snapshot = {
+                "id": story.id,
+                "logline": story.logline or story.title or "重写一个精彩短故事",
+                "target_words": story.target_words or 12000,
+                "emotion_goal": story.emotion_goal or "",
+                "target_platform": story.target_platform or "知乎盐言",
+                "emotion_curve": story.emotion_curve or "",
+            }
+        finally:
+            await temp_db.close()
+        break
+
+    logger.info(f"开始AI流式重新生成: story_id={story_id}")
+
+    async def event_generator():
+        db_session = None
+        try:
+            story_data = None
+            async for event in FullStoryGenerator.generate_full_story_stream(
+                ai_service=ai_service,
+                initial_idea=story_snapshot["logline"],
+                target_words=story_snapshot["target_words"],
+                emotion_goal=story_snapshot["emotion_goal"],
+                target_platform=story_snapshot["target_platform"],
+                emotion_curve=story_snapshot["emotion_curve"],
+            ):
+                evt_type = event.get("type")
+                if evt_type == "complete":
+                    story_data = event.get("data")
+                    yield await SSEResponse.send_progress("AI生成完成，正在更新数据库...", 98, "processing")
+                elif evt_type == "error":
+                    yield await SSEResponse.send_error(event.get("error", "AI生成失败"), 500)
+                    yield await SSEResponse.send_done()
+                    return
+                else:
+                    yield SSEResponse.format_sse(event)
+
+            if not story_data or not story_data.get("title") or not story_data.get("content"):
+                yield await SSEResponse.send_error("AI生成结果不完整，原文未改动", 500)
+                yield await SSEResponse.send_done()
+                return
+
+            # 更新DB
+            async for db_session in get_db(request):
+                result = await db_session.execute(
+                    select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+                )
+                story = result.scalar_one_or_none()
+                if not story:
+                    yield await SSEResponse.send_error("短故事不存在", 404)
+                    yield await SSEResponse.send_done()
+                    break
+
+                story.title = story_data["title"]
+                story.logline = story_data.get("logline", story.logline)
+                story.genre = story_data.get("genre", story.genre)
+                story.emotion_goal = story_data.get("emotion_goal", story.emotion_goal)
+                story.twist_type = story_data.get("twist_type", story.twist_type)
+                story.twist_content = story_data.get("twist_content", story.twist_content)
+                story.twist_clues = json.dumps(story_data.get("twist_clues", []), ensure_ascii=False)
+                if story_data.get("characters"):
+                    story.characters = json.dumps(story_data.get("characters", []), ensure_ascii=False)
+                story.content = story_data.get("content", "")
+                story.current_words = _count_chinese_and_punctuation(story.content)
+                story.segments, _ = _recalc_segments_from_content(
+                    story.content, story.target_words or 12000, story.segments
+                )
+                story.score_data = None
+                story.scored_at = None
+                story.status = "writing"
+                await db_session.commit()
+                await db_session.refresh(story)
+
+                logger.info(f"AI流式重新生成成功: story_id={story_id}, words={story.current_words}")
+                from app.schemas.short_story import ShortStoryResponse
+                story_resp = ShortStoryResponse.model_validate(story).model_dump(mode='json')
+                yield await SSEResponse.send_result(story_resp)
+                break
+
+            yield await SSEResponse.send_done()
+        except GeneratorExit:
+            logger.warning("短故事流式重新生成被提前关闭（SSE断开）")
+            raise
+        except Exception as e:
+            logger.error(f"短故事流式重新生成失败: {str(e)}", exc_info=True)
+            if db_session:
+                try:
+                    await db_session.rollback()
+                except Exception:
+                    pass
+            yield await SSEResponse.send_error(str(e), 500)
+            yield await SSEResponse.send_done()
+        finally:
+            if db_session:
+                try:
+                    await db_session.close()
+                except Exception:
+                    pass
+
+    return create_sse_response(event_generator())
+
+
+@router.post("/{story_id}/generate-segment-stream", summary="AI生成分段正文（SSE流式）")
+async def generate_segment_stream(
+    story_id: str,
+    req: GenerateSegmentRequest,
+    request: Request,
+    ai_service: AIService = Depends(get_user_ai_service),
+):
+    """流式生成指定段落正文。
+
+    SSE事件流：
+    - progress: {type, message, progress, status}
+    - chunk: {type, content}
+    - complete: {type, content}
+    - error: {type, error}
+    - done
+    """
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    # 预加载
+    story_snapshot = None
+    target_segment = None
+    async for temp_db in get_db(request):
+        try:
+            result = await temp_db.execute(
+                select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+            )
+            story = result.scalar_one_or_none()
+            if not story:
+                raise HTTPException(status_code=404, detail="短故事不存在")
+            try:
+                segments = json.loads(story.segments) if story.segments else []
+            except (json.JSONDecodeError, TypeError):
+                segments = json.loads(_build_default_segments(story.target_words or 12000))
+            for seg in segments:
+                if seg.get("stage") == req.segment_stage:
+                    target_segment = seg
+                    break
+            if not target_segment:
+                raise HTTPException(status_code=400, detail=f"未找到段落: {req.segment_stage}")
+            story_snapshot = {
+                "title": story.title,
+                "logline": story.logline,
+                "emotion_goal": story.emotion_goal,
+                "twist_content": story.twist_content,
+                "twist_type": story.twist_type,
+                "twist_clues": story.twist_clues,
+                "characters": story.characters,
+                "target_platform": story.target_platform,
+                "target_words": story.target_words,
+                "emotion_curve": story.emotion_curve or "",
+                "content": story.content or "",
+            }
+        finally:
+            await temp_db.close()
+        break
+
+    logger.info(f"开始AI流式生成分段: story_id={story_id}, stage={req.segment_stage}")
+
+    async def event_generator():
+        try:
+            content = None
+            async for event in ShortStoryAIService.generate_segment_content_stream(
+                ai_service=ai_service,
+                story_data=story_snapshot,
+                segment=target_segment,
+                existing_content=story_snapshot["content"],
+                emotion_curve=story_snapshot["emotion_curve"],
+            ):
+                evt_type = event.get("type")
+                if evt_type == "complete":
+                    content = event.get("content")
+                    yield await SSEResponse.send_progress("段落生成完成", 100, "success")
+                elif evt_type == "error":
+                    yield await SSEResponse.send_error(event.get("error", "生成失败"), 500)
+                    yield await SSEResponse.send_done()
+                    return
+                else:
+                    yield SSEResponse.format_sse(event)
+
+            if content is None:
+                content = ""
+            yield await SSEResponse.send_result({"content": content})
+            yield await SSEResponse.send_done()
+        except GeneratorExit:
+            logger.warning("短故事分段流式生成被提前关闭（SSE断开）")
+            raise
+        except Exception as e:
+            logger.error(f"短故事分段流式生成失败: {str(e)}", exc_info=True)
+            yield await SSEResponse.send_error(str(e), 500)
+            yield await SSEResponse.send_done()
+
+    return create_sse_response(event_generator())
+
+
+@router.post("/{story_id}/polish-stream", summary="AI精修润色正文（SSE流式）")
+async def polish_story_stream(
+    story_id: str,
+    request: Request,
+    ai_service: AIService = Depends(get_user_ai_service),
+):
+    """流式精修润色正文，返回对比预览数据（不直接写DB，需用户确认）。
+
+    SSE事件流：
+    - progress/chunk: 同上
+    - complete: {type, content}（精修后完整正文）
+    - result: {type, data:{original_content, new_content, original_words, new_words, revision_type:"polish"}}
+    - error/done
+    """
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    # 预加载
+    story_snapshot = None
+    async for temp_db in get_db(request):
+        try:
+            result = await temp_db.execute(
+                select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+            )
+            story = result.scalar_one_or_none()
+            if not story:
+                raise HTTPException(status_code=404, detail="短故事不存在")
+            if not story.content:
+                raise HTTPException(status_code=400, detail="正文为空，无法精修")
+            story_snapshot = {
+                "title": story.title or "",
+                "emotion_goal": story.emotion_goal or "",
+                "twist_content": story.twist_content or "",
+                "content": story.content,
+                "emotion_curve": story.emotion_curve or "",
+                "current_words": story.current_words or _count_chinese_and_punctuation(story.content),
+            }
+        finally:
+            await temp_db.close()
+        break
+
+    logger.info(f"开始AI流式精修: story_id={story_id}")
+
+    async def event_generator():
+        try:
+            polished = None
+            async for event in ShortStoryAIService.polish_content_stream(
+                ai_service=ai_service,
+                title=story_snapshot["title"],
+                emotion_goal=story_snapshot["emotion_goal"],
+                twist_content=story_snapshot["twist_content"],
+                content=story_snapshot["content"],
+                emotion_curve=story_snapshot["emotion_curve"],
+            ):
+                evt_type = event.get("type")
+                if evt_type == "complete":
+                    polished = event.get("content")
+                    yield await SSEResponse.send_progress("精修完成，正在生成对比预览...", 95, "processing")
+                elif evt_type == "error":
+                    yield await SSEResponse.send_error(event.get("error", "精修失败"), 500)
+                    yield await SSEResponse.send_done()
+                    return
+                else:
+                    yield SSEResponse.format_sse(event)
+
+            if not polished or len(polished.strip()) < 50:
+                yield await SSEResponse.send_error("AI精修结果为空或过短，原文未改动", 500)
+                yield await SSEResponse.send_done()
+                return
+
+            polished_words = _count_chinese_and_punctuation(polished)
+            preview = {
+                "original_content": story_snapshot["content"],
+                "new_content": polished,
+                "original_words": story_snapshot["current_words"],
+                "new_words": polished_words,
+                "revision_type": "polish",
+            }
+            logger.info(f"AI流式精修预览生成: story_id={story_id}, {story_snapshot['current_words']}字→{polished_words}字")
+            yield await SSEResponse.send_result(preview)
+            yield await SSEResponse.send_done()
+        except GeneratorExit:
+            logger.warning("短故事精修流式被提前关闭（SSE断开）")
+            raise
+        except Exception as e:
+            logger.error(f"短故事精修流式失败: {str(e)}", exc_info=True)
+            yield await SSEResponse.send_error(str(e), 500)
+            yield await SSEResponse.send_done()
+
+    return create_sse_response(event_generator())
+
 
 @router.post("/{story_id}/score", summary="AI评分短故事（5维评分）")
 async def score_story(

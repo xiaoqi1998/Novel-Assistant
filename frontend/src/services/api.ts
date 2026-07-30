@@ -1102,6 +1102,27 @@ export const shortStoryApi = {
       original_words: number;
       message: string;
     }>(`/short-stories/${id}/confirm-revision`, data),
+
+  // ============ SSE 流式方法 ============
+
+  // AI流式一键生成完整短故事（设定+全文）
+  generateFullStream: (
+    data: { initial_idea: string; target_words?: number; emotion_goal?: string; target_platform?: string },
+    options: SSEClientOptions
+  ) =>
+    ssePost<ShortStory>('/api/short-stories/generate-full-stream', data, options),
+
+  // AI流式重新生成现有短故事
+  regenerateStream: (id: string, options: SSEClientOptions) =>
+    ssePost<ShortStory>(`/api/short-stories/${id}/regenerate-stream`, {}, options),
+
+  // AI流式生成分段正文
+  generateSegmentStream: (id: string, segmentStage: string, options: SSEClientOptions) =>
+    ssePost<{ content: string }>(`/api/short-stories/${id}/generate-segment-stream`, { segment_stage: segmentStage }, options),
+
+  // AI流式精修润色（返回对比预览，需用户确认）
+  polishStream: (id: string, options: SSEClientOptions) =>
+    ssePost<RevisionPreview>(`/api/short-stories/${id}/polish-stream`, {}, options),
 };
 export const shortInspirationApi = {
   generateOptions: (data: { step: string; context: Record<string, string> }) =>

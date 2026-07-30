@@ -1,6 +1,6 @@
 """短故事AI生成服务"""
 import json
-from typing import Optional
+from typing import Optional, AsyncGenerator, Dict, Any
 from app.services.ai_service import AIService
 from app.services.json_helper import clean_json_response
 from app.logger import get_logger
@@ -324,6 +324,120 @@ class ShortStoryAIService:
 
         logger.debug(f"AI精修完成: 原文长度={len(content)}, 精修后长度={len(result)}")
         return result.strip()
+
+    # ============ 流式变体（SSE） ============
+
+    @staticmethod
+    async def generate_segment_content_stream(
+        ai_service: AIService,
+        story_data: dict,
+        segment: dict,
+        existing_content: str = "",
+        emotion_curve: str = "",
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """生成指定段落的正文（流式版）。
+
+        yield 事件结构：
+        - {"type": "progress", "message": "...", "progress": 0-100, "status": "processing"}
+        - {"type": "chunk", "content": "文本片段"}
+        - {"type": "complete", "content": "完整正文"}
+        - {"type": "error", "error": "..."}
+        """
+        try:
+            context_hint = ""
+            if existing_content:
+                tail = existing_content[-500:] if len(existing_content) > 500 else existing_content
+                context_hint = f"已有正文（最后部分）：\n...{tail}\n\n请衔接上文继续写作。"
+
+            clues_raw = story_data.get("twist_clues", "")
+            try:
+                clues = json.loads(clues_raw) if clues_raw else []
+                clues_text = "；".join(clues) if clues else "未设定"
+            except (json.JSONDecodeError, TypeError):
+                clues_text = clues_raw or "未设定"
+
+            chars_raw = story_data.get("characters", "")
+            try:
+                chars = json.loads(chars_raw) if chars_raw else []
+                chars_text = "；".join(
+                    [f"{c.get('name', '')}({c.get('role', '')}): {c.get('desc', '')}" for c in chars]
+                ) if chars else "未设定"
+            except (json.JSONDecodeError, TypeError):
+                chars_text = chars_raw or "未设定"
+
+            emotion_curve_hint = _format_emotion_curve_for_prompt(emotion_curve or story_data.get("emotion_curve", ""))
+
+            user_prompt = SEGMENT_USER.format(
+                title=story_data.get("title", "未定"),
+                logline=story_data.get("logline", "未定"),
+                emotion_goal=story_data.get("emotion_goal", "未定"),
+                twist_content=story_data.get("twist_content", "未定"),
+                twist_type=story_data.get("twist_type", "未定"),
+                clues=clues_text,
+                characters=chars_text,
+                target_platform=story_data.get("target_platform", "未定"),
+                target_words=story_data.get("target_words", 12000),
+                emotion_curve_hint=emotion_curve_hint,
+                segment_label=segment.get("label", ""),
+                segment_target_words=segment.get("target_words", 1000),
+                segment_desc=segment.get("desc", ""),
+                context_hint=context_hint,
+            )
+
+            yield {"type": "progress", "message": f"AI正在生成「{segment.get('label', segment.get('stage', ''))}」段落...", "progress": 15, "status": "processing"}
+
+            result = ""
+            async for chunk in ai_service.generate_text_stream(
+                prompt=user_prompt, system_prompt=SEGMENT_SYSTEM, temperature=0.7
+            ):
+                result += chunk
+                yield {"type": "chunk", "content": chunk}
+
+            logger.debug(
+                f"AI生成分段流式完成: stage={segment.get('stage')}, actual_chars={len(result)}"
+            )
+            yield {"type": "complete", "content": result.strip()}
+        except Exception as e:
+            logger.error(f"AI生成分段流式失败: {str(e)}", exc_info=True)
+            yield {"type": "error", "error": str(e)}
+
+    @staticmethod
+    async def polish_content_stream(
+        ai_service: AIService,
+        title: str,
+        emotion_goal: str,
+        twist_content: str,
+        content: str,
+        emotion_curve: str = "",
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """精修润色正文（流式版）。
+
+        yield 事件结构同 generate_segment_content_stream。
+        """
+        try:
+            emotion_curve_hint = _format_emotion_curve_for_prompt(emotion_curve)
+            user_prompt = POLISH_USER.format(
+                title=title or "未定",
+                emotion_goal=emotion_goal or "未定",
+                twist_content=twist_content or "未定",
+                emotion_curve_hint=emotion_curve_hint,
+                content=content or "",
+            )
+
+            yield {"type": "progress", "message": "AI正在精修润色正文...", "progress": 15, "status": "processing"}
+
+            result = ""
+            async for chunk in ai_service.generate_text_stream(
+                prompt=user_prompt, system_prompt=POLISH_SYSTEM, temperature=0.5
+            ):
+                result += chunk
+                yield {"type": "chunk", "content": chunk}
+
+            logger.debug(f"AI精修流式完成: 原文长度={len(content)}, 精修后长度={len(result)}")
+            yield {"type": "complete", "content": result.strip()}
+        except Exception as e:
+            logger.error(f"AI精修流式失败: {str(e)}", exc_info=True)
+            yield {"type": "error", "error": str(e)}
 
     @staticmethod
     async def generate_inspiration_options(
@@ -699,6 +813,199 @@ class FullStoryGenerator:
         setup_data.setdefault("genre", "")
 
         return setup_data
+
+    @staticmethod
+    async def generate_full_story_stream(
+        ai_service: AIService,
+        initial_idea: str,
+        target_words: int = 12000,
+        emotion_goal: str = "",
+        target_platform: str = "知乎盐言",
+        emotion_curve: str = "",
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """两阶段生成完整短故事（流式版）。
+
+        yield 事件结构：
+        - {"type": "progress", "message": "...", "progress": 0-100, "status": "processing"}
+        - {"type": "chunk", "content": "文本片段", "segment_index": int}
+        - {"type": "stage", "stage": "setup"/"segment_N", "message": "...", "total_segments": N}
+        - {"type": "complete", "data": {...完整故事数据}}
+        - {"type": "error", "error": "..."}
+        """
+        try:
+            # ============ 阶段1：生成设定+大纲 ============
+            extra = ""
+            if emotion_goal:
+                extra += f"\n【指定情绪目标】{emotion_goal}"
+            if target_platform:
+                extra += f"\n【目标平台】{target_platform}"
+            emotion_curve_hint_stage1 = _format_emotion_curve_for_prompt(emotion_curve)
+            if emotion_curve_hint_stage1:
+                extra += f"\n{emotion_curve_hint_stage1}"
+
+            stage1_prompt = STAGE1_SETUP_USER.format(
+                initial_idea=initial_idea,
+                extra_requirements=extra,
+                target_words=target_words,
+            )
+
+            yield {"type": "stage", "stage": "setup", "message": "正在生成核心设定与分段大纲...", "total_segments": 0}
+            yield {"type": "progress", "message": "阶段1/2：AI正在构思选题、反转与黄金结构...", "progress": 5, "status": "processing"}
+
+            accumulated = ""
+            async for chunk in ai_service.generate_text_stream(
+                prompt=stage1_prompt,
+                system_prompt=STAGE1_SETUP_SYSTEM,
+                temperature=0.75,
+            ):
+                accumulated += chunk
+                # 阶段1的chunk不透传给前端（是JSON结构，对用户无意义），仅发进度
+                yield {"type": "progress", "message": f"阶段1/2：AI正在构思设定...（{len(accumulated)}字符）", "progress": min(5 + len(accumulated) // 200, 18), "status": "processing"}
+
+            cleaned = clean_json_response(accumulated)
+            setup_data = json.loads(cleaned)
+
+            required = ["title", "logline"]
+            for field in required:
+                if field not in setup_data or not setup_data[field]:
+                    raise ValueError(f"AI生成设定缺少必要字段: {field}")
+
+            segments_outline = setup_data.get("segments_outline") or []
+            if not segments_outline or len(segments_outline) < 4:
+                segments_outline = [
+                    {"stage": "hook", "label": "死亡黄金钩子", "target_words": int(target_words * 0.05), "plot": "开篇抛出核心危机"},
+                    {"stage": "escalation", "label": "冲突激化与打压", "target_words": int(target_words * 0.20), "plot": "反派嚣张，主角隐忍"},
+                    {"stage": "climax", "label": "绝地反击与多重反转", "target_words": int(target_words * 0.60), "plot": "多重反转，揭露真相"},
+                    {"stage": "resolution", "label": "极致爽点与收尾", "target_words": int(target_words * 0.15), "plot": "反派下场，主角新生"},
+                ]
+                setup_data["segments_outline"] = segments_outline
+
+            logger.info(
+                f"阶段1完成(流式): title={setup_data.get('title')}, "
+                f"segments={len(segments_outline)}"
+            )
+
+            yield {"type": "progress", "message": f"设定完成，标题《{setup_data.get('title', '')}》，开始分段创作...", "progress": 20, "status": "processing"}
+
+            # ============ 阶段2：分段生成正文 ============
+            title = setup_data.get("title", "未命名")
+            logline = setup_data.get("logline", "")
+            seg_emotion_goal = setup_data.get("emotion_goal", emotion_goal or "爽感释放")
+            twist_type = setup_data.get("twist_type", "")
+            twist_content = setup_data.get("twist_content", "")
+            twist_clues = setup_data.get("twist_clues", [])
+            characters = setup_data.get("characters", [])
+
+            chars_text = "\n".join(
+                f"- {c.get('name', '?')}（{c.get('role', '?')}）: {c.get('desc', '')}，与主角关系：{c.get('relationship', '')}"
+                for c in characters
+            ) if characters else "未设定"
+            clues_text = "、".join(twist_clues) if twist_clues else "未设定"
+
+            seg_emotion_curve_hint = _format_emotion_curve_for_prompt(emotion_curve)
+
+            full_content_parts = []
+            previous_ending = ""
+            total_segments = len(segments_outline)
+            # 阶段2占总进度的 20% → 92%，每段均分
+            segment_progress_span = 72.0 / max(total_segments, 1)
+
+            for idx, seg in enumerate(segments_outline):
+                seg_stage = seg.get("stage", "")
+                seg_label = seg.get("label", "")
+                seg_target_words = seg.get("target_words", 1000)
+                seg_plot = seg.get("plot", "")
+
+                yield {
+                    "type": "stage",
+                    "stage": f"segment_{idx + 1}",
+                    "message": f"阶段2/2：正在创作第 {idx + 1}/{total_segments} 段「{seg_label}」...",
+                    "total_segments": total_segments,
+                    "segment_index": idx,
+                }
+
+                seg_start_progress = 20 + int(idx * segment_progress_span)
+                seg_end_progress = 20 + int((idx + 1) * segment_progress_span)
+                yield {
+                    "type": "progress",
+                    "message": f"第 {idx + 1}/{total_segments} 段「{seg_label}」创作中...",
+                    "progress": seg_start_progress,
+                    "status": "processing",
+                }
+
+                seg_prompt = STAGE2_SEGMENT_USER.format(
+                    title=title,
+                    logline=logline,
+                    emotion_goal=seg_emotion_goal,
+                    twist_type=twist_type,
+                    twist_content=twist_content,
+                    twist_clues=clues_text,
+                    emotion_curve_hint=seg_emotion_curve_hint,
+                    characters=chars_text,
+                    segment_label=seg_label,
+                    segment_stage=seg_stage,
+                    segment_target_words=seg_target_words,
+                    segment_plot=seg_plot,
+                    previous_ending=previous_ending[-500:] if previous_ending else "（本段为开篇，无前文）",
+                )
+
+                seg_content = ""
+                seg_chunk_count = 0
+                try:
+                    async for chunk in ai_service.generate_text_stream(
+                        prompt=seg_prompt,
+                        system_prompt=STAGE2_SEGMENT_SYSTEM,
+                        temperature=0.7,
+                    ):
+                        seg_content += chunk
+                        seg_chunk_count += 1
+                        yield {"type": "chunk", "content": chunk, "segment_index": idx}
+                        # 每3个chunk发一次进度
+                        if seg_chunk_count % 3 == 0:
+                            # 段内子进度：根据已生成字符数估算
+                            sub_prog = min(len(seg_content) / max(seg_target_words, 1), 1.0)
+                            cur_prog = seg_start_progress + int((seg_end_progress - seg_start_progress) * sub_prog)
+                            yield {
+                                "type": "progress",
+                                "message": f"第 {idx + 1}/{total_segments} 段「{seg_label}」创作中...（{len(seg_content)}字符）",
+                                "progress": cur_prog,
+                                "status": "processing",
+                            }
+                except Exception as seg_err:
+                    logger.error(f"阶段2-分段{idx + 1}生成失败(流式): stage={seg_stage}, error={str(seg_err)}", exc_info=True)
+                    seg_content = f"\n\n【{seg_label}段生成失败，请手动重写：{str(seg_err)[:100]}】\n\n"
+                    yield {"type": "chunk", "content": seg_content, "segment_index": idx}
+
+                full_content_parts.append(seg_content.strip())
+                previous_ending = seg_content[-500:] if seg_content else ""
+                # 段完成，推进到段结束进度
+                yield {
+                    "type": "progress",
+                    "message": f"第 {idx + 1}/{total_segments} 段「{seg_label}」完成（{len(seg_content)}字符）",
+                    "progress": seg_end_progress,
+                    "status": "processing",
+                }
+
+            full_content = "\n\n".join(p for p in full_content_parts if p)
+
+            yield {"type": "progress", "message": "正在整理完整故事...", "progress": 95, "status": "processing"}
+
+            setup_data["content"] = full_content
+            setup_data.setdefault("emotion_goal", emotion_goal or "爽感释放")
+            setup_data.setdefault("twist_type", "")
+            setup_data.setdefault("twist_content", "")
+            setup_data.setdefault("twist_clues", [])
+            setup_data.setdefault("genre", "")
+
+            logger.info(
+                f"AI两阶段生成短故事完成(流式): title={title}, "
+                f"content_length={len(full_content)}, segments={total_segments}"
+            )
+
+            yield {"type": "complete", "data": setup_data}
+        except Exception as e:
+            logger.error(f"AI两阶段生成短故事失败(流式): {str(e)}", exc_info=True)
+            yield {"type": "error", "error": str(e)}
 
 
 # ============ AI 评分 Prompt ============

@@ -19,6 +19,7 @@ import { showErrorToast } from '../../utils/errorHandler';
 import { useShortStoryStore } from '../../store/shortStoryStore';
 import { formatWordCount } from '../../utils/format';
 import RevisionPreviewModal from '../../components/RevisionPreviewModal';
+import { SSELoadingOverlay } from '../../components/SSELoadingOverlay';
 import type { ShortStory, StorySegment, RevisionPreview } from '../../types';
 
 const { Title, Text } = Typography;
@@ -67,6 +68,13 @@ export default function Content() {
   const [polishing, setPolishing] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [revisionPreview, setRevisionPreview] = useState<RevisionPreview | null>(null);
+  // SSE流式进度状态
+  const [sseVisible, setSseVisible] = useState(false);
+  const [sseProgress, setSseProgress] = useState(0);
+  const [sseMessage, setSseMessage] = useState('');
+  const [sseTitle, setSseTitle] = useState('AI生成中...');
+  // 分段生成时的实时内容预览
+  const [segmentPreview, setSegmentPreview] = useState('');
 
   useEffect(() => {
     contentRef.current = content;
@@ -127,10 +135,25 @@ export default function Content() {
   };
 
   const handleGenerateSegment = async (stage: string) => {
+    const seg = segments.find((s) => s.stage === stage);
+    setGeneratingSegment(stage);
+    setSseTitle(`AI生成「${seg?.label || stage}」段落`);
+    setSseProgress(0);
+    setSseMessage('正在准备生成...');
+    setSegmentPreview('');
+    setSseVisible(true);
+
     try {
-      setGeneratingSegment(stage);
-      const res = await shortStoryApi.generateSegment(story.id, stage);
-      const newContent = contentRef.current + (contentRef.current ? '\n\n' : '') + res.content;
+      const res = await shortStoryApi.generateSegmentStream(story.id, stage, {
+        onProgress: (msg, prog) => {
+          setSseProgress(prog);
+          setSseMessage(msg);
+        },
+        onChunk: (chunk) => {
+          setSegmentPreview((prev) => prev + chunk);
+        },
+      });
+      const newContent = contentRef.current + (contentRef.current ? '\n\n' : '') + (res.content || '');
       setContent(newContent);
       scheduleAutoSave();
       message.success('已生成本段内容');
@@ -138,33 +161,57 @@ export default function Content() {
       showErrorToast(error, 'AI生成分段失败');
     } finally {
       setGeneratingSegment(null);
+      setSseVisible(false);
+      setSegmentPreview('');
     }
   };
 
   const handlePolish = async () => {
+    setPolishing(true);
+    setSseTitle('AI精修润色全文');
+    setSseProgress(0);
+    setSseMessage('正在准备精修...');
+    setSseVisible(true);
+
     try {
-      setPolishing(true);
-      const preview = await shortStoryApi.polish(story.id);
+      const preview = await shortStoryApi.polishStream(story.id, {
+        onProgress: (msg, prog) => {
+          setSseProgress(prog);
+          setSseMessage(msg);
+        },
+      });
       setRevisionPreview(preview);
     } catch (error) {
       showErrorToast(error, 'AI精修失败');
     } finally {
       setPolishing(false);
+      setSseVisible(false);
     }
   };
 
   const hasGeneratedContent = currentWords > 100;
 
   const handleRegenerate = async () => {
+    setRegenerating(true);
+    setSseTitle('AI重新生成全文');
+    setSseProgress(0);
+    setSseMessage('正在准备重新生成...');
+    setSseVisible(true);
+
     try {
-      setRegenerating(true);
-      await shortStoryApi.regenerate(story.id);
+      await shortStoryApi.regenerateStream(story.id, {
+        onProgress: (msg, prog) => {
+          setSseProgress(prog);
+          setSseMessage(msg);
+        },
+      });
       await reload();
       message.success('已重新生成全文');
     } catch (error) {
       showErrorToast(error, 'AI重新生成失败');
     } finally {
       setRegenerating(false);
+      setSseVisible(false);
     }
   };
 
@@ -363,6 +410,47 @@ export default function Content() {
           message.success('已确认保存AI修改');
         }}
       />
+
+      {/* SSE流式生成进度弹窗 */}
+      <SSELoadingOverlay
+        visible={sseVisible}
+        progress={sseProgress}
+        message={sseMessage}
+        variant="modal"
+        title={sseTitle}
+        showMinimize={false}
+        cancelButtonText="取消生成"
+      />
+
+      {/* 分段生成实时预览 */}
+      {segmentPreview && sseVisible && (
+        <Card
+          size="small"
+          title="实时生成预览"
+          style={{
+            position: 'fixed',
+            bottom: 16,
+            right: 16,
+            width: 400,
+            maxHeight: 300,
+            zIndex: 1001,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+          }}
+          styles={{ body: { maxHeight: 240, overflow: 'auto', padding: 12 } }}
+        >
+          <Typography.Paragraph
+            style={{
+              whiteSpace: 'pre-wrap',
+              fontSize: 13,
+              lineHeight: 1.6,
+              margin: 0,
+              color: token.colorTextSecondary,
+            }}
+          >
+            {segmentPreview.slice(-500)}
+          </Typography.Paragraph>
+        </Card>
+      )}
     </div>
   );
 }
