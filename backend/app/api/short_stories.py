@@ -1726,7 +1726,7 @@ async def improve_from_score_stream(
                     yield await SSEResponse.send_done()
                     return
                 elif evt_type == "heartbeat":
-                    yield HEARTBEAT
+                    yield await SSEResponse.send_heartbeat()
                 else:
                     yield SSEResponse.format_sse(event)
 
