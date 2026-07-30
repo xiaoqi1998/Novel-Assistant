@@ -411,6 +411,114 @@ FULL_STORY_USER = """请根据以下要求创作一个完整的短故事：
 请严格按照黄金结构创作，直接输出JSON结果。content字段必须是完整的、可直接发布的短故事正文。"""
 
 
+# ============ 两阶段生成 Prompt（解决单次超时问题） ============
+
+STAGE1_SETUP_SYSTEM = """你是短故事爆款创作专家。
+你的任务是：根据用户想法，设计短故事的核心设定（不写正文），为后续分段写作做准备。
+
+【爆款方法论】
+- 选题必须高概念：一句话能说清爆点
+- 爆款公式：极致反差/道德冲突+强身份标签+迫切危机悬念
+- 三大黄金赛道：打脸复仇类、悬疑怪谈类、极致痛感类
+- 黄金结构：Hook 5% + Escalation 20% + Climax 60% + Resolution 15%
+- 情绪曲线：每1000-1500字一次小冲突/揭秘，波浪式过山车
+- 人设标签化：清醒大女主/极致恶毒绿茶/软饭硬吃渣男等
+- 对话功能性：每句台词必须暴露阴谋或推进爽点
+
+【输出格式】
+必须返回如下JSON结构（不包含正文，只有设定和分段大纲）：
+{
+  "title": "故事标题（不超过30字，要有爆点）",
+  "logline": "一句话梗概（主角+困境+反转+情绪落点）",
+  "emotion_goal": "情绪目标（从：意难平/反转震撼/爽感释放/治愈温暖/细思极恐/共鸣感动 中选一个）",
+  "twist_type": "反转类型（身份反转/视角反转/动机反转/时间线反转）",
+  "twist_content": "核心反转内容描述",
+  "twist_clues": ["铺垫线索1", "铺垫线索2", "铺垫线索3"],
+  "genre": "题材标签",
+  "characters": [{"name": "角色名", "role": "主角/反派/配角", "desc": "标签化人设描述", "relationship": "与主角的关系"}],
+  "segments_outline": [
+    {
+      "stage": "hook",
+      "label": "死亡黄金钩子",
+      "target_words": 600,
+      "plot": "这一段的具体情节要点（开篇第一句如何抛出核心危机、主要冲突是什么、出场人物）"
+    },
+    {
+      "stage": "escalation",
+      "label": "冲突激化与打压",
+      "target_words": 2400,
+      "plot": "这一段的具体情节要点（反派如何嚣张、主角如何隐忍、情绪压抑到什么程度）"
+    },
+    {
+      "stage": "climax",
+      "label": "绝地反击与多重反转",
+      "target_words": 7200,
+      "plot": "这一段的具体情节要点（第一次反击、反派反扑、揭露更大真相、情绪爆点节奏）"
+    },
+    {
+      "stage": "resolution",
+      "label": "极致爽点与收尾",
+      "target_words": 1800,
+      "plot": "这一段的具体情节要点（反派下场、主角新人生、收尾方式）"
+    }
+  ]
+}
+
+注意：segments_outline 中的 target_words 之和应等于总目标字数。只输出JSON，不要加任何解释。"""
+
+STAGE1_SETUP_USER = """请根据以下要求设计短故事的核心设定：
+
+【用户想法】{initial_idea}
+{extra_requirements}
+
+【目标字数】{target_words}字
+
+请设计完整的设定和分段大纲，直接输出JSON。"""
+
+
+STAGE2_SEGMENT_SYSTEM = """你是短故事爆款写作专家。
+你的任务是：根据已有的故事设定和分段大纲，撰写指定分段的正文。
+
+【写作原则】
+1. 严格按大纲的情节要点写，不要偏离设定
+2. 与前文衔接自然，不要重复前文内容
+3. 符合爆款方法论：人设标签化、对话功能性、情绪曲线节奏
+4. 台词口语化，删除排比句和空洞形容词，去AI味
+5. 不要写章节标题、不要加任何解释说明、直接输出故事正文
+6. 字数尽量接近目标字数，但以情节完整为准
+
+【黄金结构法则】
+- Hook段：第一句就抛出核心危机，不写铺垫
+- Escalation段：反派极致嚣张，主角劣势隐忍，压抑到最高点
+- Climax段：剥洋葱式揭露，打一下→反派反扑→再揭露更大真相
+- Resolution段：反派惨烈下场，主角清醒独立，干净利落收尾
+
+【情绪曲线法则】
+每1000-1500字必须有一次小冲突或小揭秘，不能有超过500字的纯说明性废话。"""
+
+STAGE2_SEGMENT_USER = """请撰写以下分段的正文：
+
+=== 故事设定 ===
+标题：{title}
+一句话梗概：{logline}
+情绪目标：{emotion_goal}
+核心反转：{twist_type} - {twist_content}
+铺垫线索：{twist_clues}
+
+=== 人设速写 ===
+{characters}
+
+=== 当前分段任务 ===
+阶段：{segment_label}（{segment_stage}）
+目标字数：{segment_target_words}字
+情节要点：{segment_plot}
+
+=== 前文末尾（用于衔接，不要重复） ===
+{previous_ending}
+
+请直接输出本分段的故事正文，不要加任何标题、解释或标记。"""
+
+
 class FullStoryGenerator:
     """端到端短故事生成器"""
 
@@ -422,7 +530,10 @@ class FullStoryGenerator:
         emotion_goal: str = "",
         target_platform: str = "知乎盐言",
     ) -> dict:
-        """一次性生成完整短故事（设定+全文）
+        """两阶段生成完整短故事（设定+分段正文），解决单次AI调用超时问题
+
+        阶段1：生成核心设定+分段大纲（快速，几秒）
+        阶段2：按大纲分段生成正文（每段独立调用，避免单次超时）
 
         Args:
             initial_idea: 用户的核心想法
@@ -432,51 +543,145 @@ class FullStoryGenerator:
 
         Returns:
             dict: {title, logline, emotion_goal, twist_type, twist_content,
-                   twist_clues, genre, content}
+                   twist_clues, genre, content, characters, segments_outline}
         """
+        # ============ 阶段1：生成设定+大纲 ============
         extra = ""
         if emotion_goal:
             extra += f"\n【指定情绪目标】{emotion_goal}"
         if target_platform:
             extra += f"\n【目标平台】{target_platform}"
 
-        user_prompt = FULL_STORY_USER.format(
+        stage1_prompt = STAGE1_SETUP_USER.format(
             initial_idea=initial_idea,
             extra_requirements=extra,
             target_words=target_words,
         )
 
+        logger.info(f"阶段1开始：生成设定和大纲, idea_len={len(initial_idea)}, target_words={target_words}")
+
         accumulated = ""
         async for chunk in ai_service.generate_text_stream(
-            prompt=user_prompt,
-            system_prompt=FULL_STORY_SYSTEM,
+            prompt=stage1_prompt,
+            system_prompt=STAGE1_SETUP_SYSTEM,
             temperature=0.75,
         ):
             accumulated += chunk
 
         cleaned = clean_json_response(accumulated)
-        data = json.loads(cleaned)
+        setup_data = json.loads(cleaned)
 
         # 校验必要字段
-        required = ["title", "logline", "content"]
+        required = ["title", "logline"]
         for field in required:
-            if field not in data or not data[field]:
-                raise ValueError(f"AI生成结果缺少必要字段: {field}")
+            if field not in setup_data or not setup_data[field]:
+                raise ValueError(f"AI生成设定缺少必要字段: {field}")
+
+        segments_outline = setup_data.get("segments_outline") or []
+        if not segments_outline or len(segments_outline) < 4:
+            # 大纲不完整，退化为默认黄金结构
+            segments_outline = [
+                {"stage": "hook", "label": "死亡黄金钩子", "target_words": int(target_words * 0.05), "plot": "开篇抛出核心危机"},
+                {"stage": "escalation", "label": "冲突激化与打压", "target_words": int(target_words * 0.20), "plot": "反派嚣张，主角隐忍"},
+                {"stage": "climax", "label": "绝地反击与多重反转", "target_words": int(target_words * 0.60), "plot": "多重反转，揭露真相"},
+                {"stage": "resolution", "label": "极致爽点与收尾", "target_words": int(target_words * 0.15), "plot": "反派下场，主角新生"},
+            ]
+            setup_data["segments_outline"] = segments_outline
 
         logger.info(
-            f"AI一键生成短故事完成: title={data.get('title')}, "
-            f"content_length={len(data.get('content', ''))}, "
-            f"emotion_goal={data.get('emotion_goal')}, twist_type={data.get('twist_type')}"
+            f"阶段1完成: title={setup_data.get('title')}, "
+            f"segments={len(segments_outline)}, "
+            f"emotion_goal={setup_data.get('emotion_goal')}"
         )
 
-        # 兜底默认值
-        data.setdefault("emotion_goal", emotion_goal or "爽感释放")
-        data.setdefault("twist_type", "")
-        data.setdefault("twist_content", "")
-        data.setdefault("twist_clues", [])
-        data.setdefault("genre", "")
+        # ============ 阶段2：分段生成正文 ============
+        title = setup_data.get("title", "未命名")
+        logline = setup_data.get("logline", "")
+        seg_emotion_goal = setup_data.get("emotion_goal", emotion_goal or "爽感释放")
+        twist_type = setup_data.get("twist_type", "")
+        twist_content = setup_data.get("twist_content", "")
+        twist_clues = setup_data.get("twist_clues", [])
+        characters = setup_data.get("characters", [])
 
-        return data
+        # 格式化人设和线索
+        chars_text = "\n".join(
+            f"- {c.get('name', '?')}（{c.get('role', '?')}）: {c.get('desc', '')}，与主角关系：{c.get('relationship', '')}"
+            for c in characters
+        ) if characters else "未设定"
+        clues_text = "、".join(twist_clues) if twist_clues else "未设定"
+
+        full_content_parts = []
+        previous_ending = ""
+
+        for idx, seg in enumerate(segments_outline):
+            seg_stage = seg.get("stage", "")
+            seg_label = seg.get("label", "")
+            seg_target_words = seg.get("target_words", 1000)
+            seg_plot = seg.get("plot", "")
+
+            logger.info(
+                f"阶段2-分段{idx+1}/{len(segments_outline)}开始: "
+                f"stage={seg_stage}, target_words={seg_target_words}"
+            )
+
+            seg_prompt = STAGE2_SEGMENT_USER.format(
+                title=title,
+                logline=logline,
+                emotion_goal=seg_emotion_goal,
+                twist_type=twist_type,
+                twist_content=twist_content,
+                twist_clues=clues_text,
+                characters=chars_text,
+                segment_label=seg_label,
+                segment_stage=seg_stage,
+                segment_target_words=seg_target_words,
+                segment_plot=seg_plot,
+                previous_ending=previous_ending[-500:] if previous_ending else "（本段为开篇，无前文）",
+            )
+
+            seg_content = ""
+            try:
+                async for chunk in ai_service.generate_text_stream(
+                    prompt=seg_prompt,
+                    system_prompt=STAGE2_SEGMENT_SYSTEM,
+                    temperature=0.7,
+                ):
+                    seg_content += chunk
+            except Exception as seg_err:
+                logger.error(
+                    f"阶段2-分段{idx+1}生成失败: stage={seg_stage}, error={str(seg_err)}",
+                    exc_info=True,
+                )
+                # 单段失败用占位符，保证整体能返回（用户可手动重写该段）
+                seg_content = f"\n\n【{seg_label}段生成失败，请手动重写：{str(seg_err)[:100]}】\n\n"
+
+            full_content_parts.append(seg_content.strip())
+            # 取末尾500字作为下一段的衔接上下文
+            previous_ending = seg_content[-500:] if seg_content else ""
+
+            logger.info(
+                f"阶段2-分段{idx+1}/{len(segments_outline)}完成: "
+                f"stage={seg_stage}, actual_chars={len(seg_content)}"
+            )
+
+        # 合并所有分段
+        full_content = "\n\n".join(p for p in full_content_parts if p)
+
+        logger.info(
+            f"AI两阶段生成短故事完成: title={title}, "
+            f"content_length={len(full_content)}, segments={len(segments_outline)}"
+        )
+
+        # 组装最终结果
+        setup_data["content"] = full_content
+        # 兜底默认值
+        setup_data.setdefault("emotion_goal", emotion_goal or "爽感释放")
+        setup_data.setdefault("twist_type", "")
+        setup_data.setdefault("twist_content", "")
+        setup_data.setdefault("twist_clues", [])
+        setup_data.setdefault("genre", "")
+
+        return setup_data
 
 
 # ============ AI 评分 Prompt ============

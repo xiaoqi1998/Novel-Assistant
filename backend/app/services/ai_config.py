@@ -7,7 +7,9 @@ from typing import Optional
 class HTTPClientConfig:
     """HTTP 客户端配置"""
     connect_timeout: float = 90.0
-    read_timeout: float = 300.0
+    # 长文本生成（短故事一键生成1-2万字、长篇章节生成）需要较长超时
+    # 300秒对慢模型不够，提到600秒（10分钟）
+    read_timeout: float = 600.0
     write_timeout: float = 90.0
     pool_timeout: float = 90.0
     max_keepalive_connections: int = 50

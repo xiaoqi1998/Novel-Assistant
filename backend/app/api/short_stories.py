@@ -799,6 +799,7 @@ async def generate_full_story(
             twist_type=story_data.get("twist_type", ""),
             twist_content=story_data.get("twist_content", ""),
             twist_clues=json.dumps(story_data.get("twist_clues", []), ensure_ascii=False),
+            characters=json.dumps(story_data.get("characters", []), ensure_ascii=False) if story_data.get("characters") else None,
             content=story_data.get("content", ""),
             segments=_build_default_segments(target_words),
             polish_checklist=_build_default_polish_checklist(),
