@@ -1,9 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Input, Button, Typography, message, Spin, Tag, theme, Space, Progress, Result } from 'antd';
+import { Card, Input, Button, Typography, message, Spin, Tag, theme, Space, Result } from 'antd';
 import { SendOutlined, ArrowLeftOutlined, ThunderboltOutlined, ReloadOutlined, CheckCircleOutlined, EditOutlined } from '@ant-design/icons';
-import { shortInspirationApi, shortStoryApi } from '../services/api';
+import { shortInspirationApi } from '../services/api';
 import { showErrorToast } from '../utils/errorHandler';
+import { SSELoadingOverlay } from '../components/SSELoadingOverlay';
+import { SSEPostClient } from '../utils/sseClient';
 import type { ShortStory } from '../types';
 
 const { Text, Title } = Typography;
@@ -30,6 +32,8 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
   const [emotionOptions, setEmotionOptions] = useState<any[]>([]);
   const [generatedStory, setGeneratedStory] = useState<ShortStory | null>(null);
   const [genProgress, setGenProgress] = useState(0);
+  const [genMessage, setGenMessage] = useState('正在准备生成...');
+  const sseClientRef = useRef<SSEPostClient | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -69,36 +73,55 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
     }
   };
 
-  // 阶段2：选择情绪目标后，直接AI一键生成完整故事
+  // 取消生成
+  const handleCancelGenerate = () => {
+    sseClientRef.current?.abort();
+    sseClientRef.current = null;
+    setPhase('emotion_goal');
+    setGenProgress(0);
+    setGenMessage('正在准备生成...');
+    message.info('已取消生成');
+  };
+
+  // 阶段2：选择情绪目标后，SSE流式AI一键生成完整故事
   const handleSelectEmotion = async (emotion: string) => {
     setPhase('generating');
-    setGenProgress(10);
+    setGenProgress(0);
+    setGenMessage('正在准备生成...');
 
-    // 模拟进度推进（实际生成在后台进行）
-    const progressTimer = setInterval(() => {
-      setGenProgress((p) => {
-        if (p >= 90) return p;
-        return p + Math.random() * 8;
-      });
-    }, 1500);
-
-    try {
-      const story = await shortStoryApi.generateFull({
+    const client = new SSEPostClient(
+      '/api/short-stories/generate-full-stream',
+      {
         initial_idea: initialIdea,
         emotion_goal: emotion,
         target_words: 12000,
         target_platform: '知乎盐言',
-      });
+      },
+      {
+        onProgress: (msg, prog) => {
+          setGenProgress(prog);
+          setGenMessage(msg);
+        },
+        onError: (error) => {
+          showErrorToast(error, 'AI生成失败');
+        },
+      }
+    );
+    sseClientRef.current = client;
 
-      clearInterval(progressTimer);
-      setGenProgress(100);
+    try {
+      const story = await client.connect();
       setGeneratedStory(story);
+      setGenProgress(100);
       setPhase('done');
       message.success('短故事生成完成！');
-    } catch (error) {
-      clearInterval(progressTimer);
-      showErrorToast(error, 'AI生成失败');
+    } catch (error: any) {
+      if (error?.name !== 'AbortError') {
+        showErrorToast(error, 'AI生成失败');
+      }
       setPhase('emotion_goal');
+    } finally {
+      sseClientRef.current = null;
     }
   };
 
@@ -109,6 +132,7 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
     setEmotionOptions([]);
     setGeneratedStory(null);
     setGenProgress(0);
+    setGenMessage('正在准备生成...');
   };
 
   const handleViewStory = () => {
@@ -170,7 +194,7 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
     );
   };
 
-  // 渲染生成中
+  // 渲染生成中（使用SSELoadingOverlay，与长篇小说一致的体验）
   const renderGenerating = () => (
     <div style={{ textAlign: 'center', padding: '60px 20px' }}>
       <Spin size="large" />
@@ -179,19 +203,8 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
         AI 正在创作短故事
       </Title>
       <Text type="secondary" style={{ display: 'block', marginBottom: 24 }}>
-        正在按黄金结构生成完整故事（设定+全文），请稍候...
+        正在按黄金结构流式生成完整故事（设定+全文），可实时查看进度...
       </Text>
-      <div style={{ maxWidth: 400, margin: '0 auto' }}>
-        <Progress percent={Math.round(genProgress)} status="active" strokeColor={token.colorPrimary} />
-      </div>
-      <div style={{ marginTop: 24, textAlign: 'left', maxWidth: 400, margin: '24px auto 0' }}>
-        <Text type="secondary" style={{ fontSize: 12 }}>
-          {genProgress < 30 && '构思高概念选题...'}
-          {genProgress >= 30 && genProgress < 60 && '设计核心反转与铺垫线索...'}
-          {genProgress >= 60 && genProgress < 90 && '按黄金结构创作正文...'}
-          {genProgress >= 90 && '精修润色...'}
-        </Text>
-      </div>
     </div>
   );
 
@@ -316,6 +329,18 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
 
         <div ref={messagesEndRef} />
       </Card>
+
+      {/* SSE流式生成进度弹窗 */}
+      <SSELoadingOverlay
+        visible={phase === 'generating'}
+        progress={Math.round(genProgress)}
+        message={genMessage}
+        variant="modal"
+        title="AI 正在创作短故事"
+        onCancel={handleCancelGenerate}
+        cancelButtonText="取消生成"
+        showMinimize={false}
+      />
     </div>
   );
 };

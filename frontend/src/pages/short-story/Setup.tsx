@@ -13,11 +13,17 @@ import {
   Space,
   Tag,
   Modal,
+  Tooltip,
 } from 'antd';
 import { SaveOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import { shortStoryApi } from '../../services/api';
 import { showErrorToast } from '../../utils/errorHandler';
 import { useShortStoryStore } from '../../store/shortStoryStore';
+import {
+  loadStorySetupDraft,
+  saveStorySetupDraft,
+  clearStorySetupDraft,
+} from '../../utils/shortStoryDraft';
 import type { ShortStory, ShortStoryCharacter } from '../../types';
 
 const { Title, Text } = Typography;
@@ -51,12 +57,50 @@ export default function Setup() {
   const [characters, setCharacters] = useState<ShortStoryCharacter[]>([]);
   const [clues, setClues] = useState<string[]>([]);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [lastDraftSaveTime, setLastDraftSaveTime] = useState<number | null>(null);
   const [generatingLogline, setGeneratingLogline] = useState(false);
   const [generatingTwist, setGeneratingTwist] = useState(false);
   const [loglineOptions, setLoglineOptions] = useState<string[]>([]);
   const [loglineModalOpen, setLoglineModalOpen] = useState(false);
   const [twistOptions, setTwistOptions] = useState<Array<{ twist_type: string; twist_content: string; clues: string[] }>>([]);
   const [twistModalOpen, setTwistModalOpen] = useState(false);
+
+  // 比较表单字段与服务器版本是否一致
+  const isFormSameAsServer = (fields: Record<string, any>): boolean => {
+    const serverFields: Record<string, any> = {
+      title: story.title,
+      logline: story.logline,
+      genre: story.genre,
+      target_platform: story.target_platform,
+      target_words: story.target_words,
+      emotion_goal: story.emotion_goal,
+      emotion_goal_desc: story.emotion_goal_desc,
+      twist_type: story.twist_type,
+      twist_content: story.twist_content,
+    };
+    for (const key of Object.keys(serverFields)) {
+      const sVal = serverFields[key] ?? '';
+      const dVal = fields[key] ?? '';
+      if (String(sVal) !== String(dVal)) return false;
+    }
+    return true;
+  };
+
+  // 比较角色/线索与服务器版本是否一致
+  const isListSameAsServer = (
+    list: any[],
+    serverJson: string | null | undefined
+  ): boolean => {
+    let serverList: any[] = [];
+    try {
+      const parsed = serverJson ? JSON.parse(serverJson) : [];
+      serverList = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      serverList = [];
+    }
+    return JSON.stringify(list) === JSON.stringify(serverList);
+  };
 
   useEffect(() => {
     try {
@@ -82,6 +126,46 @@ export default function Setup() {
       twist_type: story.twist_type,
       twist_content: story.twist_content,
     });
+
+    // 检测未保存的本地设定草稿
+    const draft = loadStorySetupDraft(story.id);
+    if (draft) {
+      const formSame = isFormSameAsServer(draft.fields);
+      const draftChars = Array.isArray((draft.fields as any)?.characters)
+        ? (draft.fields as any).characters
+        : characters;
+      const draftClues = Array.isArray((draft.fields as any)?.clues)
+        ? (draft.fields as any).clues
+        : clues;
+      const charsSame = isListSameAsServer(draftChars, story.characters);
+      const cluesSame = isListSameAsServer(draftClues, story.twist_clues);
+
+      if (!formSame || !charsSame || !cluesSame) {
+        const draftTime = new Date(draft.savedAt).toLocaleString('zh-CN');
+        Modal.confirm({
+          title: '检测到未保存的设定草稿',
+          content: `是否恢复本地草稿？草稿保存时间：${draftTime}`,
+          okText: '恢复草稿',
+          cancelText: '使用服务器版本',
+          centered: true,
+          onOk: () => {
+            const { characters: dChars, clues: dClues, ...formFields } = draft.fields as any;
+            form.setFieldsValue(formFields);
+            if (Array.isArray(dChars)) setCharacters(dChars);
+            if (Array.isArray(dClues)) setClues(dClues);
+            setLastDraftSaveTime(draft.savedAt);
+            message.info('已恢复本地设定草稿');
+          },
+          onCancel: () => {
+            clearStorySetupDraft(story.id);
+            message.info('已丢弃草稿，使用服务器版本');
+          },
+        });
+      } else {
+        // 草稿与服务器一致，清理
+        clearStorySetupDraft(story.id);
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [story.id]);
 
@@ -96,6 +180,9 @@ export default function Setup() {
       };
       const updated = await shortStoryApi.update(story.id, updateData);
       updateCurrentStory(updated);
+      // 服务器保存成功后清除本地草稿
+      clearStorySetupDraft(story.id);
+      setLastDraftSaveTime(null);
       if (showMessage) message.success('已保存');
     } catch (error) {
       showErrorToast(error, '保存失败');
@@ -110,9 +197,32 @@ export default function Setup() {
     saveTimerRef.current = setTimeout(() => handleSave(false), 1500);
   };
 
+  // 草稿防抖保存（与API保存并行，网络失败时仍有本地备份）
+  const scheduleDraftSave = () => {
+    if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    draftTimerRef.current = setTimeout(() => {
+      const values = form.getFieldsValue();
+      saveStorySetupDraft(story.id, {
+        ...values,
+        characters: characters as any,
+        clues: clues as any,
+      });
+      setLastDraftSaveTime(Date.now());
+    }, 1000);
+  };
+
+  // 组件卸载时清理定时器
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    };
+  }, []);
+
   const addCharacter = () => {
     setCharacters([...characters, { name: '', role: 'protagonist', desc: '', relationship: '' }]);
     scheduleAutoSave();
+    scheduleDraftSave();
   };
 
   const updateCharacter = (index: number, field: keyof ShortStoryCharacter, value: string) => {
@@ -120,16 +230,19 @@ export default function Setup() {
     newChars[index] = { ...newChars[index], [field]: value };
     setCharacters(newChars);
     scheduleAutoSave();
+    scheduleDraftSave();
   };
 
   const removeCharacter = (index: number) => {
     setCharacters(characters.filter((_, i) => i !== index));
     scheduleAutoSave();
+    scheduleDraftSave();
   };
 
   const addClue = () => {
     setClues([...clues, '']);
     scheduleAutoSave();
+    scheduleDraftSave();
   };
 
   const updateClue = (index: number, value: string) => {
@@ -137,11 +250,13 @@ export default function Setup() {
     newClues[index] = value;
     setClues(newClues);
     scheduleAutoSave();
+    scheduleDraftSave();
   };
 
   const removeClue = (index: number) => {
     setClues(clues.filter((_, i) => i !== index));
     scheduleAutoSave();
+    scheduleDraftSave();
   };
 
   const handleGenerateLogline = async () => {
@@ -179,20 +294,32 @@ export default function Setup() {
     <div style={{ padding: 24, maxWidth: 900, margin: '0 auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}>故事设定</Title>
-        <Button
-          type="primary"
-          icon={<SaveOutlined />}
-          loading={saving}
-          onClick={() => handleSave(true)}
-        >
-          保存
-        </Button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {lastDraftSaveTime && (
+            <Tooltip title="本地草稿已自动保存，网络恢复后可手动点保存或刷新页面恢复">
+              <Text type="warning" style={{ fontSize: 12 }}>
+                📝 草稿已备份 {new Date(lastDraftSaveTime).toLocaleTimeString('zh-CN')}
+              </Text>
+            </Tooltip>
+          )}
+          <Button
+            type="primary"
+            icon={<SaveOutlined />}
+            loading={saving}
+            onClick={() => handleSave(true)}
+          >
+            保存
+          </Button>
+        </div>
       </div>
 
       <Form
         form={form}
         layout="vertical"
-        onValuesChange={() => scheduleAutoSave()}
+        onValuesChange={() => {
+          scheduleAutoSave();
+          scheduleDraftSave();
+        }}
       >
         <Card title="基本信息" size="small" style={{ marginBottom: 16 }}>
           <Form.Item name="title" label="故事标题" rules={[{ required: true }]}>
@@ -396,6 +523,7 @@ export default function Setup() {
               form.setFieldsValue({ logline: opt });
               setLoglineModalOpen(false);
               scheduleAutoSave();
+              scheduleDraftSave();
               message.success('已填入梗概');
             }}
           >
@@ -426,6 +554,7 @@ export default function Setup() {
               setClues(opt.clues || []);
               setTwistModalOpen(false);
               scheduleAutoSave();
+              scheduleDraftSave();
               message.success('已填入反转设计');
             }}
           >

@@ -1065,6 +1065,10 @@ export const shortStoryApi = {
   generateFull: (data: { initial_idea: string; target_words?: number; emotion_goal?: string; target_platform?: string }) =>
     api.post<unknown, ShortStory>('/short-stories/generate-full', data),
 
+  // AI重新生成现有短故事（更新当前记录而非新建）
+  regenerate: (id: string) =>
+    api.post<unknown, ShortStory>(`/short-stories/${id}/regenerate`),
+
   // AI评分短故事（5维评分：选题/结构/情绪/人设对话/完成度）
   score: (id: string) =>
     api.post<unknown, StoryScoreResult>(`/short-stories/${id}/score`),
@@ -1098,6 +1102,42 @@ export const shortStoryApi = {
       original_words: number;
       message: string;
     }>(`/short-stories/${id}/confirm-revision`, data),
+
+  // ============ SSE 流式方法 ============
+
+  // AI流式一键生成完整短故事（设定+全文）
+  generateFullStream: (
+    data: { initial_idea: string; target_words?: number; emotion_goal?: string; target_platform?: string },
+    options: SSEClientOptions
+  ) =>
+    ssePost<ShortStory>('/api/short-stories/generate-full-stream', data, options),
+
+  // AI流式重新生成现有短故事
+  regenerateStream: (id: string, options: SSEClientOptions) =>
+    ssePost<ShortStory>(`/api/short-stories/${id}/regenerate-stream`, {}, options),
+
+  // AI流式生成分段正文
+  generateSegmentStream: (id: string, segmentStage: string, options: SSEClientOptions) =>
+    ssePost<{ content: string }>(`/api/short-stories/${id}/generate-segment-stream`, { segment_stage: segmentStage }, options),
+
+  // AI流式精修润色（返回对比预览，需用户确认）
+  polishStream: (id: string, options: SSEClientOptions) =>
+    ssePost<RevisionPreview>(`/api/short-stories/${id}/polish-stream`, {}, options),
+
+  // ============ 后台任务方法（复用长篇小说 BackgroundTask 机制） ============
+  // 关闭浏览器不影响任务，完成后自动保存，通过 FloatingTaskPanel 查看进度
+
+  // AI后台重新生成短故事正文（返回 task_id，前端轮询或通过 FloatingTaskPanel 查看）
+  regenerateBackground: (id: string) =>
+    api.post<unknown, { task_id: string; task_type: string; status: string; message: string }>(
+      `/short-stories/${id}/regenerate-background`
+    ),
+
+  // AI后台评分短故事（返回 task_id，前端轮询或通过 FloatingTaskPanel 查看）
+  scoreBackground: (id: string) =>
+    api.post<unknown, { task_id: string; task_type: string; status: string; message: string }>(
+      `/short-stories/${id}/score-background`
+    ),
 };
 export const shortInspirationApi = {
   generateOptions: (data: { step: string; context: Record<string, string> }) =>

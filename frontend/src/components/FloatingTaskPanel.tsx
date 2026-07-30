@@ -439,6 +439,13 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
         return '向导创建';
       case 'full_review':
         return '全文审查';
+      // 短故事任务类型
+      case 'short_story_regenerate':
+        return '短故事重写';
+      case 'short_story_score':
+        return '短故事评分';
+      case 'short_story_polish':
+        return '短故事精修';
       default:
         return taskType;
     }
@@ -448,6 +455,19 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
   const getTaskRoute = (task: TaskStatus): string => {
     // 优先使用组件已知的 projectId，避免后端数据缺失导致 undefined
     const pid = task.project_id || projectId;
+    // 短故事任务：跳转到短故事详情页
+    if (
+      task.task_type === 'short_story_regenerate' ||
+      task.task_type === 'short_story_score' ||
+      task.task_type === 'short_story_polish'
+    ) {
+      // 评分任务跳精修页（查看评分），其他跳正文页
+      if (task.task_type === 'short_story_score') {
+        return `/short-story/${pid}/polish`;
+      }
+      return `/short-story/${pid}/content`;
+    }
+    // 长篇小说任务
     const base = `/project/${pid}`;
     switch (task.task_type) {
       case 'full_review':
