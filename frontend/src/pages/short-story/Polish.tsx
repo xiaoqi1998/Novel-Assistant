@@ -19,7 +19,7 @@ import {
   Dropdown,
 } from 'antd';
 import type { MenuProps } from 'antd';
-import { SaveOutlined, CheckCircleOutlined, TrophyOutlined, ReloadOutlined, AuditOutlined, DownOutlined, CloudUploadOutlined } from '@ant-design/icons';
+import { SaveOutlined, CheckCircleOutlined, TrophyOutlined, ReloadOutlined, AuditOutlined, DownOutlined } from '@ant-design/icons';
 import { eventBus } from '../../store/eventBus';
 import { shortStoryApi } from '../../services/api';
 import { showErrorToast } from '../../utils/errorHandler';
@@ -184,18 +184,12 @@ export default function Polish() {
     }
   };
 
-  // 评分按钮 Dropdown 菜单：前台评分 / 后台评分
+  // 评分按钮 Dropdown 菜单：前台评分（后台评分为主按钮默认行为，下拉仅保留前台作为可选）
   const scoreMenuItems: MenuProps['items'] = [
     {
       key: 'foreground',
-      label: '前台评分（等待结果）',
+      label: '前台评分（阻塞等待结果，不推荐切换页面）',
       onClick: () => handleScore(),
-    },
-    {
-      key: 'background',
-      label: '后台评分（可关页面）',
-      icon: <CloudUploadOutlined />,
-      onClick: () => handleScoreBackground(),
     },
   ];
 
@@ -281,14 +275,15 @@ export default function Polish() {
           <Button loading={polishing} onClick={handlePolish}>
             AI润色正文
           </Button>
-          <Tooltip title="基于爆款方法论对正文进行5维AI评分：选题/结构/情绪/人设对话/完成度">
-            <Dropdown menu={{ items: scoreMenuItems }} placement="bottomRight">
+          <Tooltip title="基于爆款方法论5维AI评分：选题/结构/情绪/人设对话/完成度。点击后台评分，可关闭页面，完成后右下角浮窗提示">
+            <Dropdown menu={{ items: scoreMenuItems }} trigger={['click']} placement="bottomRight">
               <Button
                 type="primary"
                 ghost
                 icon={<TrophyOutlined />}
                 loading={scoring || improving || autoScoring}
                 disabled={improving || autoScoring}
+                onClick={handleScoreBackground}
               >
                 AI评分 <DownOutlined />
               </Button>
