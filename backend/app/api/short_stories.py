@@ -24,7 +24,7 @@ from app.services.ai_service import AIService
 from app.services.short_story_ai_service import ShortStoryAIService, FullStoryGenerator, StoryScorer, StoryImprover, ChecklistChecker
 from app.api.settings import get_user_ai_service
 from app.logger import get_logger
-from app.utils.sse_response import SSEResponse, create_sse_response
+from app.utils.sse_response import SSEResponse, create_sse_response, HEARTBEAT
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/short-stories", tags=["短故事管理"])
@@ -1040,6 +1040,9 @@ async def generate_full_story_stream(
                     yield await SSEResponse.send_error(event.get("error", "AI生成失败"), 500)
                     yield await SSEResponse.send_done()
                     return
+                elif evt_type == "heartbeat":
+                    # SSE注释心跳，前端自动忽略，仅用于保持连接活跃防止代理超时
+                    yield await SSEResponse.send_heartbeat()
                 else:
                     yield SSEResponse.format_sse(event)
 
@@ -1170,6 +1173,9 @@ async def regenerate_story_stream(
                     yield await SSEResponse.send_error(event.get("error", "AI生成失败"), 500)
                     yield await SSEResponse.send_done()
                     return
+                elif evt_type == "heartbeat":
+                    # SSE注释心跳，前端自动忽略，仅用于保持连接活跃防止代理超时
+                    yield await SSEResponse.send_heartbeat()
                 else:
                     yield SSEResponse.format_sse(event)
 
@@ -1630,6 +1636,132 @@ async def improve_from_score(
     except Exception as e:
         logger.error(f"AI基于评分改进失败: story_id={story_id}, error={str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"改进失败: {str(e)}")
+
+
+@router.post("/{story_id}/improve-from-score-stream", summary="基于AI评分改进正文（SSE流式）")
+async def improve_from_score_stream(
+    story_id: str,
+    request: Request,
+    ai_service: AIService = Depends(get_user_ai_service),
+):
+    """流式基于评分改进正文，返回对比预览数据（不直接写DB，需用户确认）。
+
+    与 improve-from-score 功能一致，但采用 SSE 流式输出 + 心跳保活，
+    解决长文本改进（数分钟）期间连接超时断开的问题。
+
+    SSE事件流：
+    - progress/chunk/heartbeat: 同 polish-stream
+    - complete: {type, content}（改进后完整正文）
+    - result: {type, data:{original_content, new_content, original_words, new_words, revision_type:"improve", score_total, score_level, top_issues}}
+    - error/done
+    """
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    # 预加载
+    story_snapshot = None
+    async for temp_db in get_db(request):
+        try:
+            result = await temp_db.execute(
+                select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+            )
+            story = result.scalar_one_or_none()
+            if not story:
+                raise HTTPException(status_code=404, detail="短故事不存在")
+            if not story.content:
+                raise HTTPException(status_code=400, detail="正文为空，无法改进")
+            if not story.score_data:
+                raise HTTPException(status_code=400, detail="尚未评分，请先进行AI评分")
+            try:
+                score_data = json.loads(story.score_data)
+            except (json.JSONDecodeError, TypeError):
+                raise HTTPException(status_code=400, detail="评分数据格式错误，请重新评分")
+
+            original_words = story.current_words or _count_chinese_and_punctuation(story.content)
+            story_snapshot = {
+                "title": story.title or "",
+                "content": story.content,
+                "score_data": score_data,
+                "emotion_goal": story.emotion_goal or "",
+                "logline": story.logline or "",
+                "twist_type": story.twist_type or "",
+                "twist_content": story.twist_content or "",
+                "genre": story.genre or "",
+                "target_words": story.target_words or 12000,
+                "emotion_curve": story.emotion_curve or "",
+                "original_words": original_words,
+            }
+        finally:
+            await temp_db.close()
+        break
+
+    logger.info(
+        f"开始AI流式基于评分改进: story_id={story_id}, original_words={story_snapshot['original_words']}, "
+        f"old_score={story_snapshot['score_data'].get('total_score')}/100"
+    )
+
+    async def event_generator():
+        try:
+            improved = None
+            async for event in ShortStoryAIService.improve_from_score_stream(
+                ai_service=ai_service,
+                title=story_snapshot["title"],
+                content=story_snapshot["content"],
+                score_data=story_snapshot["score_data"],
+                emotion_goal=story_snapshot["emotion_goal"],
+                logline=story_snapshot["logline"],
+                twist_type=story_snapshot["twist_type"],
+                twist_content=story_snapshot["twist_content"],
+                genre=story_snapshot["genre"],
+                target_words=story_snapshot["target_words"],
+                emotion_curve=story_snapshot["emotion_curve"],
+            ):
+                evt_type = event.get("type")
+                if evt_type == "complete":
+                    improved = event.get("content")
+                    yield await SSEResponse.send_progress("改进完成，正在生成对比预览...", 95, "processing")
+                elif evt_type == "error":
+                    yield await SSEResponse.send_error(event.get("error", "改进失败"), 500)
+                    yield await SSEResponse.send_done()
+                    return
+                elif evt_type == "heartbeat":
+                    yield HEARTBEAT
+                else:
+                    yield SSEResponse.format_sse(event)
+
+            if not improved or len(improved.strip()) < 100:
+                yield await SSEResponse.send_error("AI改进结果为空或过短，原文未改动", 500)
+                yield await SSEResponse.send_done()
+                return
+
+            improved_words = _count_chinese_and_punctuation(improved)
+            sd = story_snapshot["score_data"]
+            preview = {
+                "original_content": story_snapshot["content"],
+                "new_content": improved,
+                "original_words": story_snapshot["original_words"],
+                "new_words": improved_words,
+                "revision_type": "improve",
+                "score_total": sd.get("total_score"),
+                "score_level": sd.get("level"),
+                "top_issues": (sd.get("top_issues") or [])[:3],
+            }
+            logger.info(
+                f"AI流式基于评分改进预览生成: story_id={story_id}, "
+                f"{story_snapshot['original_words']}字→{improved_words}字（待用户确认）"
+            )
+            yield await SSEResponse.send_result(preview)
+            yield await SSEResponse.send_done()
+        except GeneratorExit:
+            logger.warning("短故事改进流式被提前关闭（SSE断开）")
+            raise
+        except Exception as e:
+            logger.error(f"短故事改进流式失败: {str(e)}", exc_info=True)
+            yield await SSEResponse.send_error(str(e), 500)
+            yield await SSEResponse.send_done()
+
+    return create_sse_response(event_generator())
 
 
 @router.post("/{story_id}/auto-check", summary="AI自动检查自查清单")

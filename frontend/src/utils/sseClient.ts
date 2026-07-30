@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export interface SSEMessage {
-  type: 'progress' | 'chunk' | 'result' | 'error' | 'done';
+  type: 'progress' | 'chunk' | 'result' | 'error' | 'done' | 'stage' | 'complete' | 'heartbeat';
   message?: string;
   progress?: number;
   word_count?: number;
@@ -9,15 +9,19 @@ export interface SSEMessage {
   data?: any;
   error?: string;
   code?: number;
+  stage?: string;
+  total_segments?: number;
+  segment_index?: number;
 }
 
 export interface SSEClientOptions {
   onProgress?: (message: string, progress: number, status: string, wordCount?: number) => void;
-  onChunk?: (content: string) => void;
+  onChunk?: (content: string, segmentIndex?: number) => void;
   onResult?: (data: any) => void;
   onError?: (error: string, code?: number) => void;
   onComplete?: () => void;
   onConnectionError?: (error: Event) => void;
+  onStage?: (stage: string, message: string, totalSegments: number, segmentIndex?: number) => void;
 }
 
 export class SSEClient {
@@ -73,11 +77,22 @@ export class SSEClient {
         }
         break;
 
+      case 'stage':
+        if (this.options.onStage) {
+          this.options.onStage(
+            message.stage || '',
+            message.message || '',
+            message.total_segments || 0,
+            message.segment_index
+          );
+        }
+        break;
+
       case 'chunk':
         if (message.content) {
           this.accumulatedContent += message.content;
           if (this.options.onChunk) {
-            this.options.onChunk(message.content);
+            this.options.onChunk(message.content, message.segment_index);
           }
         }
         break;
@@ -227,11 +242,22 @@ export class SSEPostClient {
         }
         break;
 
+      case 'stage':
+        if (this.options.onStage) {
+          this.options.onStage(
+            message.stage || '',
+            message.message || '',
+            message.total_segments || 0,
+            message.segment_index
+          );
+        }
+        break;
+
       case 'chunk':
         if (message.content) {
           this.accumulatedContent += message.content;
           if (this.options.onChunk) {
-            this.options.onChunk(message.content);
+            this.options.onChunk(message.content, message.segment_index);
           }
         }
         break;
