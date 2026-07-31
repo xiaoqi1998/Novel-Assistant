@@ -15,7 +15,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'add_status_generated_and_index_sqlite'
+revision: str = 'add_status_gen_and_idx_sqlite'
 down_revision: Union[str, None] = 'add_revision_history_sqlite'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

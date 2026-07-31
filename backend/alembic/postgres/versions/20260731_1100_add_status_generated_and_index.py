@@ -1,6 +1,6 @@
 """短故事状态语义统一 + 复合索引（PostgreSQL）
 
-Revision ID: add_status_generated_and_index_pg
+Revision ID: add_status_gen_and_idx_pg
 Revises: add_revision_history_pg
 Create Date: 2026-07-31 11:00:00
 
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'add_status_generated_and_index_pg'
+revision: str = 'add_status_gen_and_idx_pg'
 down_revision: Union[str, None] = 'add_revision_history_pg'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
