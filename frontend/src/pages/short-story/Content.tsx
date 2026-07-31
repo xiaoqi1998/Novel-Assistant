@@ -28,6 +28,7 @@ import RevisionPreviewModal from '../../components/RevisionPreviewModal';
 import { SSELoadingOverlay } from '../../components/SSELoadingOverlay';
 import { SSEPostClient } from '../../utils/sseClient';
 import { eventBus } from '../../store/eventBus';
+import { getProjectTasks, deleteTask } from '../../services/backgroundTaskService';
 import {
   loadStoryContentDraft,
   saveStoryContentDraft,
@@ -79,6 +80,8 @@ export default function Content() {
   const [polishing, setPolishing] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [revisionPreview, setRevisionPreview] = useState<RevisionPreview | null>(null);
+  // 后台任务预览关联的 task_id，确认或取消后用于删除任务记录避免重复弹窗
+  const [pendingTaskId, setPendingTaskId] = useState<string | null>(null);
   // SSE流式进度状态
   const [sseVisible, setSseVisible] = useState(false);
   const [sseProgress, setSseProgress] = useState(0);
@@ -98,6 +101,76 @@ export default function Content() {
   useEffect(() => {
     contentRef.current = content;
   }, [content]);
+
+  // 后台重写任务完成处理：读取 task_result 弹出对比预览供用户确认
+  // （regenerate-background 完成后预览存于 task_result，需主动读取；不直接写库）
+  const handleRegenerateTaskCompleted = async (taskId: string) => {
+    try {
+      const { getTaskStatus } = await import('../../services/backgroundTaskService');
+      const taskStatus = await getTaskStatus(taskId);
+      if (taskStatus.status === 'completed' && taskStatus.task_result) {
+        const tr = taskStatus.task_result as Record<string, unknown>;
+        // regenerate task_result 用 content 字段，映射到 new_content 供 diff 展示
+        setRevisionPreview({
+          ...(tr as unknown as RevisionPreview),
+          new_content: (tr.new_content as string) || (tr.content as string) || '',
+        });
+        setPendingTaskId(taskId);
+      }
+    } catch {
+      // 查询失败忽略
+    }
+  };
+
+  // mount 时查询是否有已完成的 regenerate 任务待确认（处理从别的页面跳转来的情况）
+  useEffect(() => {
+    if (!story.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const tasks = await getProjectTasks(story.id);
+        const pendingRegen = tasks.items.find(
+          (t) =>
+            t.task_type === 'short_story_regenerate' &&
+            t.status === 'completed' &&
+            t.task_result
+        );
+        if (!cancelled && pendingRegen) {
+          const tr = pendingRegen.task_result as Record<string, unknown>;
+          setRevisionPreview({
+            ...(tr as unknown as RevisionPreview),
+            new_content: (tr.new_content as string) || (tr.content as string) || '',
+          });
+          setPendingTaskId(pendingRegen.id);
+        }
+      } catch {
+        // 查询失败忽略
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [story.id]);
+
+  // 监听后台任务完成事件：regenerate 完成后弹预览
+  useEffect(() => {
+    if (!story.id) return;
+    const handleTaskCompleted = (data: unknown) => {
+      const payload = data as { taskId?: string; taskType?: string; projectId?: string };
+      if (
+        payload?.taskType === 'short_story_regenerate' &&
+        payload.projectId === story.id &&
+        payload.taskId
+      ) {
+        handleRegenerateTaskCompleted(payload.taskId);
+      }
+    };
+    eventBus.on('task:completed', handleTaskCompleted);
+    return () => {
+      eventBus.off('task:completed', handleTaskCompleted);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [story.id]);
 
   // 加载时检测未保存的本地草稿（与服务器版本不同时提示恢复）
   useEffect(() => {
@@ -619,11 +692,23 @@ export default function Content() {
         open={!!revisionPreview}
         storyId={story.id}
         preview={revisionPreview}
-        onCancel={() => setRevisionPreview(null)}
+        onCancel={() => {
+          setRevisionPreview(null);
+          // 取消时删除后台任务记录，避免下次进页面重复弹窗
+          if (pendingTaskId) {
+            deleteTask(pendingTaskId).catch(() => {});
+            setPendingTaskId(null);
+          }
+        }}
         onConfirmed={async (result) => {
           setContent(result.content);
           contentRef.current = result.content;
           setRevisionPreview(null);
+          // 确认后删除后台任务记录
+          if (pendingTaskId) {
+            deleteTask(pendingTaskId).catch(() => {});
+            setPendingTaskId(null);
+          }
           await reload();
           message.success('已确认保存AI修改');
         }}

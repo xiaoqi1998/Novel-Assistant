@@ -2639,3 +2639,370 @@ async def score_story_background(
         "status": "pending",
         "message": "任务已创建，请通过 GET /api/tasks/{task_id} 查询进度"
     }
+
+
+@router.post("/{story_id}/improve-from-score-background", summary="AI后台基于评分改进正文（预览-确认模式）")
+async def improve_from_score_background(
+    story_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """后台AI基于评分改进正文（关闭浏览器不影响改进，完成后返回对比预览待用户确认）。
+
+    与 improve-from-score-stream 的区别：
+    - SSE 流式版要求前端保持连接，切页面会断开导致失败
+    - 本后台版创建任务后立即返回 task_id，AI 在后台运行，切页面/关浏览器不影响
+    - AI 改进结果以对比预览形式存入 task_result，**不直接写库**
+    - 任务完成后前端从 task_result 读取预览弹出对比 Modal，用户确认后走 confirm-revision 写库
+    - 原文不会被覆盖（未确认前不写库）
+
+    返回 task_id，前端通过 GET /api/tasks/{task_id} 轮询进度，
+    或在 FloatingTaskPanel 中查看进度。
+    """
+    from app.services.background_task_service import background_task_service, TaskProgressTracker
+
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    # 校验故事存在
+    result = await db.execute(
+        select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+    )
+    story = result.scalar_one_or_none()
+    if not story:
+        raise HTTPException(status_code=404, detail="短故事不存在")
+
+    if not story.content:
+        raise HTTPException(status_code=400, detail="正文为空，无法改进")
+
+    if not story.score_data:
+        raise HTTPException(status_code=400, detail="尚未评分，请先进行AI评分")
+
+    logger.info(f"创建短故事后台改进任务: story_id={story_id}, user_id={user_id}")
+
+    # 创建后台任务记录
+    task = await background_task_service.create_task(
+        user_id=user_id,
+        project_id=story_id,
+        task_type="short_story_improve",
+        task_input={"story_id": story_id},
+        db=db,
+    )
+
+    # 后台执行的函数
+    async def _run_improve(task_id: str, bg_user_id: str):
+        from app.database import get_engine
+        from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession as BgAsyncSession
+
+        engine = await get_engine(bg_user_id)
+        AsyncSessionLocal = async_sessionmaker(engine, class_=BgAsyncSession, expire_on_commit=False)
+
+        async with AsyncSessionLocal() as bg_db:
+            tracker = TaskProgressTracker(task_id, bg_user_id, "改进")
+            try:
+                await tracker.start("开始AI基于评分改进正文...")
+
+                # 获取AI服务
+                from app.api.settings import get_user_ai_service_from_db
+                bg_ai_service = await get_user_ai_service_from_db(bg_user_id, bg_db)
+
+                # 重新加载故事
+                bg_result = await bg_db.execute(
+                    select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == bg_user_id)
+                )
+                bg_story = bg_result.scalar_one_or_none()
+                if not bg_story:
+                    await tracker.error("短故事不存在")
+                    return
+
+                if not bg_story.content:
+                    await tracker.error("正文为空，无法改进")
+                    return
+                if not bg_story.score_data:
+                    await tracker.error("评分数据缺失，请先评分")
+                    return
+
+                try:
+                    score_data = json.loads(bg_story.score_data)
+                except (json.JSONDecodeError, TypeError):
+                    await tracker.error("评分数据格式错误，请重新评分")
+                    return
+
+                original_content = bg_story.content
+                original_words = bg_story.current_words or _count_chinese_and_punctuation(original_content)
+
+                await tracker.loading("AI正在基于评分改进正文...", 0.5)
+
+                # AI调用前检查取消请求
+                if await tracker.check_cancelled():
+                    raise asyncio.CancelledError("用户已取消短故事改进任务")
+
+                await tracker.generating(
+                    current_chars=0,
+                    estimated_total=original_words,
+                    message="AI正在生成改进内容...",
+                )
+
+                improved_content = await StoryImprover.improve_from_score(
+                    ai_service=bg_ai_service,
+                    title=bg_story.title or "",
+                    content=bg_story.content,
+                    score_data=score_data,
+                    emotion_goal=bg_story.emotion_goal or "",
+                    logline=bg_story.logline or "",
+                    twist_type=bg_story.twist_type or "",
+                    twist_content=bg_story.twist_content or "",
+                    genre=bg_story.genre or "",
+                    target_words=bg_story.target_words or 12000,
+                    emotion_curve=bg_story.emotion_curve or "",
+                    actual_words=original_words,
+                )
+
+                # AI调用后检查取消请求
+                if await tracker.check_cancelled():
+                    raise asyncio.CancelledError("用户已取消短故事改进任务")
+
+                if not improved_content or len(improved_content.strip()) < 100:
+                    await tracker.error("AI改进结果为空或过短，原文未改动")
+                    return
+
+                improved_words = _count_chinese_and_punctuation(improved_content)
+
+                # 不直接写库，构建对比预览存入 task_result
+                # （结构与 improve-from-score 返回一致，前端复用 RevisionPreviewModal）
+                preview = {
+                    "original_content": original_content,
+                    "new_content": improved_content,
+                    "original_words": original_words,
+                    "new_words": improved_words,
+                    "revision_type": "improve",
+                    "score_total": score_data.get("total_score"),
+                    "score_level": score_data.get("level"),
+                    "top_issues": (score_data.get("top_issues") or [])[:3],
+                }
+                await tracker.set_result(preview)
+                await tracker.complete("AI改进完成，待用户确认")
+                logger.info(
+                    f"短故事后台改进预览生成(未写库): story_id={story_id}, "
+                    f"{original_words}字→{improved_words}字（待用户确认）"
+                )
+
+            except asyncio.CancelledError as ce:
+                logger.warning(f"短故事后台改进已被取消: story_id={story_id}, reason={str(ce)}")
+                await tracker.error("任务已取消")
+            except Exception as e:
+                logger.error(f"❌ 短故事后台改进失败: {e}", exc_info=True)
+                await tracker.error(str(e))
+
+    await background_task_service.spawn_background_task(
+        task.id, user_id, _run_improve
+    )
+
+    return {
+        "task_id": task.id,
+        "task_type": "short_story_improve",
+        "status": "pending",
+        "message": "任务已创建，请通过 GET /api/tasks/{task_id} 查询进度"
+    }
+
+
+@router.post("/generate-full-background", summary="AI后台一键生成完整短故事（直接写库）")
+async def generate_full_story_background(
+    req: GenerateFullStoryRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """后台AI一键生成完整短故事（关闭浏览器不影响生成，完成后自动写库，书架出现新书）。
+
+    与 generate-full-stream 的区别：
+    - SSE 流式版要求前端保持连接，切页面会断开导致"假失败"（任务实际可能继续跑完写库，
+      但前端显示失败）
+    - 本后台版创建任务后立即返回 task_id，AI 在后台运行，切页面/关浏览器不影响
+    - AI 生成完成后直接写库（创建并填充 ShortStory 记录），书架刷新即可见
+
+    流程：
+    1. 先创建占位 ShortStory 记录（status="generating"）拿到 story_id
+    2. 用 story_id 作为 project_id 创建后台任务（FloatingTaskPanel 据此跳转）
+    3. 后台调用 FullStoryGenerator.generate_full_story 生成完整故事
+    4. 生成成功后更新占位记录的所有字段（title/logline/genre/content 等）
+    5. 失败时删除占位记录，避免书架残留空故事
+
+    返回 task_id 和 story_id，前端跳转书架等待，完成后点击浮窗跳转到新故事。
+    """
+    import uuid
+    from app.services.background_task_service import background_task_service, TaskProgressTracker
+
+    user_id = getattr(request.state, 'user_id', None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+    if not req.initial_idea or not req.initial_idea.strip():
+        raise HTTPException(status_code=400, detail="请输入故事想法")
+
+    initial_idea = req.initial_idea.strip()
+    target_words = req.target_words
+    emotion_goal = req.emotion_goal or ""
+    target_platform = req.target_platform
+
+    # 1. 先创建占位故事记录（status=generating），用于关联后台任务和书架占位
+    story_id = str(uuid.uuid4())
+    placeholder_title = initial_idea[:30] + ("..." if len(initial_idea) > 30 else "")
+    new_story = ShortStory(
+        id=story_id,
+        user_id=user_id,
+        title=placeholder_title,
+        logline=initial_idea,
+        genre="",
+        target_platform=target_platform,
+        target_words=target_words,
+        current_words=0,
+        emotion_goal=emotion_goal,
+        emotion_curve=_build_default_emotion_curve(emotion_goal),
+        twist_type="",
+        twist_content="",
+        twist_clues=json.dumps([], ensure_ascii=False),
+        characters=None,
+        content="",
+        segments=_build_default_segments(target_words),
+        polish_checklist=_build_default_polish_checklist(),
+        status="generating",
+    )
+    db.add(new_story)
+    await db.commit()
+
+    logger.info(
+        f"创建短故事后台生成任务: story_id={story_id}, user_id={user_id}, "
+        f"idea_len={len(initial_idea)}, target_words={target_words}"
+    )
+
+    # 2. 创建后台任务记录（project_id=story_id，前端按 story_id 过滤和跳转）
+    task = await background_task_service.create_task(
+        user_id=user_id,
+        project_id=story_id,
+        task_type="short_story_generate",
+        task_input={"story_id": story_id, "initial_idea": initial_idea},
+        db=db,
+    )
+
+    # 3. 后台执行的函数
+    async def _run_generate(task_id: str, bg_user_id: str):
+        from app.database import get_engine
+        from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession as BgAsyncSession
+
+        engine = await get_engine(bg_user_id)
+        AsyncSessionLocal = async_sessionmaker(engine, class_=BgAsyncSession, expire_on_commit=False)
+
+        async with AsyncSessionLocal() as bg_db:
+            tracker = TaskProgressTracker(task_id, bg_user_id, "短故事")
+            try:
+                await tracker.start("开始AI生成完整短故事...")
+
+                # 获取AI服务
+                from app.api.settings import get_user_ai_service_from_db
+                bg_ai_service = await get_user_ai_service_from_db(bg_user_id, bg_db)
+
+                await tracker.loading("AI正在构思选题与设定...", 0.5)
+
+                # AI调用前检查取消请求
+                if await tracker.check_cancelled():
+                    raise asyncio.CancelledError("用户已取消短故事生成任务")
+
+                await tracker.generating(
+                    current_chars=0,
+                    estimated_total=target_words,
+                    message="AI正在按黄金结构生成全文...",
+                )
+
+                # 调用生成器（传入取消检查器）
+                story_data = await FullStoryGenerator.generate_full_story(
+                    ai_service=bg_ai_service,
+                    initial_idea=initial_idea,
+                    target_words=target_words,
+                    emotion_goal=emotion_goal,
+                    target_platform=target_platform,
+                    emotion_curve="",
+                    cancel_checker=tracker.check_cancelled,
+                )
+
+                # AI调用后检查取消请求
+                if await tracker.check_cancelled():
+                    raise asyncio.CancelledError("用户已取消短故事生成任务")
+
+                if not story_data or not story_data.get("title") or not story_data.get("content"):
+                    await tracker.error("AI生成结果不完整（缺少标题或正文）")
+                    # 删除占位记录，避免书架残留空故事
+                    await bg_db.execute(
+                        delete(ShortStory).where(ShortStory.id == story_id)
+                    )
+                    await bg_db.commit()
+                    return
+
+                # 重新加载占位记录并填充所有字段
+                bg_result = await bg_db.execute(
+                    select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == bg_user_id)
+                )
+                bg_story = bg_result.scalar_one_or_none()
+                if not bg_story:
+                    await tracker.error("占位故事记录不存在")
+                    return
+
+                content = story_data.get("content", "")
+                bg_story.title = story_data["title"]
+                bg_story.logline = story_data.get("logline", "")
+                bg_story.genre = story_data.get("genre", "")
+                bg_story.emotion_goal = story_data.get("emotion_goal", emotion_goal or "")
+                bg_story.emotion_curve = _build_default_emotion_curve(bg_story.emotion_goal)
+                bg_story.twist_type = story_data.get("twist_type", "")
+                bg_story.twist_content = story_data.get("twist_content", "")
+                bg_story.twist_clues = json.dumps(story_data.get("twist_clues", []), ensure_ascii=False)
+                bg_story.characters = (
+                    json.dumps(story_data.get("characters", []), ensure_ascii=False)
+                    if story_data.get("characters") else None
+                )
+                bg_story.content = content
+                bg_story.current_words = _count_chinese_and_punctuation(content)
+                bg_story.segments, _ = _recalc_segments_from_content(
+                    content, target_words, bg_story.segments
+                )
+                bg_story.status = "writing"
+                await bg_db.commit()
+
+                await tracker.complete("短故事生成完成")
+                logger.info(
+                    f"短故事后台生成写库成功: story_id={story_id}, words={bg_story.current_words}"
+                )
+
+            except asyncio.CancelledError as ce:
+                logger.warning(f"短故事后台生成已被取消: story_id={story_id}, reason={str(ce)}")
+                # 删除占位记录
+                try:
+                    await bg_db.execute(
+                        delete(ShortStory).where(ShortStory.id == story_id)
+                    )
+                    await bg_db.commit()
+                except Exception:
+                    pass
+                await tracker.error("任务已取消")
+            except Exception as e:
+                logger.error(f"❌ 短故事后台生成失败: {e}", exc_info=True)
+                # 删除占位记录，避免书架残留空故事
+                try:
+                    await bg_db.execute(
+                        delete(ShortStory).where(ShortStory.id == story_id)
+                    )
+                    await bg_db.commit()
+                except Exception:
+                    pass
+                await tracker.error(str(e))
+
+    await background_task_service.spawn_background_task(
+        task.id, user_id, _run_generate
+    )
+
+    return {
+        "task_id": task.id,
+        "story_id": story_id,
+        "task_type": "short_story_generate",
+        "status": "pending",
+        "message": "任务已创建，请通过 GET /api/tasks/{task_id} 查询进度"
+    }

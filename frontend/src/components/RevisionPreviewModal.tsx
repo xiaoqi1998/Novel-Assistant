@@ -33,22 +33,43 @@ export default function RevisionPreviewModal({
 
   // 不再提前 return null：始终渲染 Modal，由 open 控制，保留关闭动画
   const isImprove = preview?.revision_type === 'improve';
+  const isRegenerate = preview?.revision_type === 'regenerate';
   const wordsDiff = preview ? preview.new_words - preview.original_words : 0;
 
   const handleConfirm = async () => {
     if (!preview) return;
     try {
       setConfirming(true);
-      const result = await shortStoryApi.confirmRevision(storyId, {
-        new_content: preview.new_content,
-        revision_type: preview.revision_type,
-        original_words: preview.original_words,
-        score_total: preview.score_total,
-        score_level: preview.score_level,
-        top_issues: preview.top_issues,
-      });
-      message.success(result.message || '已确认保存');
-      onConfirmed({ content: result.content, current_words: result.current_words });
+      if (isRegenerate) {
+        // regenerate 整体重写：调 confirm-regenerate，传完整字段（title/logline/genre/twist_*/characters/content）
+        // 原文备份到版本历史由后端处理
+        const result = await shortStoryApi.confirmRegenerate(storyId, {
+          title: preview.title || '',
+          logline: preview.logline,
+          genre: preview.genre,
+          emotion_goal: preview.emotion_goal,
+          twist_type: preview.twist_type,
+          twist_content: preview.twist_content,
+          twist_clues: preview.twist_clues,
+          characters: preview.characters,
+          content: preview.content || preview.new_content,
+        });
+        message.success(result.message || '已确认保存，原内容已备份到版本历史');
+        // confirm-regenerate 返回不含 content，用 preview 的内容回填
+        onConfirmed({ content: preview.content || preview.new_content, current_words: result.current_words });
+      } else {
+        // polish/improve：调 confirm-revision，只写正文
+        const result = await shortStoryApi.confirmRevision(storyId, {
+          new_content: preview.new_content,
+          revision_type: preview.revision_type as 'polish' | 'improve',
+          original_words: preview.original_words,
+          score_total: preview.score_total,
+          score_level: preview.score_level,
+          top_issues: preview.top_issues,
+        });
+        message.success(result.message || '已确认保存');
+        onConfirmed({ content: result.content, current_words: result.current_words });
+      }
     } catch (error) {
       showErrorToast(error, '确认保存失败');
     } finally {
@@ -64,8 +85,8 @@ export default function RevisionPreviewModal({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <SwapOutlined />
           <span>AI修改对比预览</span>
-          <Tag color={isImprove ? 'purple' : 'blue'}>
-            {isImprove ? '基于评分改进' : 'AI精修润色'}
+          <Tag color={isRegenerate ? 'gold' : isImprove ? 'purple' : 'blue'}>
+            {isRegenerate ? 'AI重新生成' : isImprove ? '基于评分改进' : 'AI精修润色'}
           </Tag>
         </div>
       }
@@ -142,7 +163,7 @@ export default function RevisionPreviewModal({
           newValue={preview?.new_content ?? ''}
           splitView={true}
           leftTitle="原文（修改前）"
-          rightTitle={`修改后（AI ${isImprove ? '改进' : '精修'}）`}
+          rightTitle={`修改后（AI ${isRegenerate ? '重新生成' : isImprove ? '改进' : '精修'}）`}
           useDarkTheme={false}
           hideLineNumbers={false}
           styles={{

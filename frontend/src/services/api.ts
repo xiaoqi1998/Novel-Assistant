@@ -1098,8 +1098,21 @@ export const shortStoryApi = {
 
   // 确认AI重新生成正文（用户预览对比后确认保存，原内容备份到版本历史）
   // 对应后端 POST /short-stories/{id}/confirm-regenerate
-  confirmRegenerate: (id: string, newContent: string) =>
-    api.post<unknown, ShortStory>(`/short-stories/${id}/confirm-regenerate`, { new_content: newContent }),
+  // 注意：后端 ConfirmRegenerateRequest 需要完整字段（title/logline/genre/twist_*/characters/content）
+  confirmRegenerate: (
+    id: string,
+    data: {
+      title: string;
+      logline?: string;
+      genre?: string;
+      emotion_goal?: string;
+      twist_type?: string;
+      twist_content?: string;
+      twist_clues?: string;
+      characters?: string;
+      content: string;
+    }
+  ) => api.post<unknown, { id: string; title: string; current_words: number; status: string; revision_history_count: number; message: string }>(`/short-stories/${id}/confirm-regenerate`, data),
 
   // ============ SSE 流式方法 ============
 
@@ -1140,6 +1153,21 @@ export const shortStoryApi = {
     api.post<unknown, { task_id: string; task_type: string; status: string; message: string }>(
       `/short-stories/${id}/score-background`
     ),
+
+  // AI后台基于评分改进正文（返回 task_id，预览-确认模式：完成后从 task_result 读取对比预览）
+  improveFromScoreBackground: (id: string) =>
+    api.post<unknown, { task_id: string; task_type: string; status: string; message: string }>(
+      `/short-stories/${id}/improve-from-score-background`
+    ),
+
+  // AI后台一键生成完整短故事（返回 task_id + story_id，直接写库，完成后书架出现新书）
+  generateFullBackground: (
+    data: { initial_idea: string; target_words?: number; emotion_goal?: string; target_platform?: string }
+  ) =>
+    api.post<
+      unknown,
+      { task_id: string; story_id: string; task_type: string; status: string; message: string }
+    >(`/short-stories/generate-full-background`, data),
 
   // ============ Task 38: 价值对等 - AI 生成为主 ============
 

@@ -363,12 +363,23 @@ export interface RevisionPreview {
   new_content: string;
   original_words: number;
   new_words: number;
-  revision_type: 'polish' | 'improve';
+  revision_type: 'polish' | 'improve' | 'regenerate';
   score_total?: number;
   score_level?: string;
   top_issues?: string[];
   // 确认修改后是否清空旧评分（内容已变，旧评分失效）
   clears_old_score?: boolean;
+  // regenerate 专用：整体重写的完整字段（confirm-regenerate 需要）
+  // 注意：regenerate 时新正文存于 content，前端读取 task_result 时会同时映射到 new_content 供 diff 展示
+  title?: string;
+  logline?: string;
+  genre?: string;
+  emotion_goal?: string;
+  twist_type?: string;
+  twist_content?: string;
+  twist_clues?: string;
+  characters?: string;
+  content?: string;
 }
 
 // AI重新生成预览（regenerate / regenerate-stream / regenerate-background 返回，需用户确认后调用 confirm-regenerate）
