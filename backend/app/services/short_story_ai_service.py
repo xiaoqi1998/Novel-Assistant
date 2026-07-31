@@ -15,7 +15,7 @@ SEGMENT_CONTEXT_CHARS = 1500
 
 # max_tokens 配置（按调用类型分组）
 MAX_TOKENS_STORY_CONTENT = 12000   # 正文生成 / 精修 / 改进（8000-16000 区间）
-MAX_TOKENS_OUTLINE = 4000          # 设定+大纲（结构化JSON，需要适中）
+MAX_TOKENS_OUTLINE = 8000          # 设定+大纲（结构化JSON，需要适中）
 MAX_TOKENS_OPTIONS = 2000          # 梗概 / 反转 / 灵感选项（1000-2000 区间）
 MAX_TOKENS_SCORE = 4000            # 评分 / 自查清单（结构化JSON）
 
@@ -33,7 +33,13 @@ def _parse_ai_json(text: str, *, hint: str = "AI响应") -> Any:
     Raises:
         ValueError: 解析失败时附带原始预览
     """
+    if not text or not text.strip():
+        logger.error(f"❌ {hint} AI返回空响应（accumulated长度=0）")
+        raise ValueError(f"{hint}：AI返回空响应，请检查AI模型配置或稍后重试")
     cleaned = clean_json_response(text)
+    if not cleaned.strip():
+        logger.error(f"❌ {hint} 清洗后为空，原始长度={len(text)}, 预览={text[:200]!r}")
+        raise ValueError(f"{hint}：AI响应清洗后为空，无法解析")
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError as e:
@@ -235,6 +241,7 @@ class ShortStoryAIService:
             system_prompt=system_prompt,
             temperature=0.8,
             max_tokens=MAX_TOKENS_OPTIONS,
+            auto_mcp=False,
         ):
             accumulated += chunk
 
@@ -265,6 +272,7 @@ class ShortStoryAIService:
             system_prompt=system_prompt,
             temperature=0.75,
             max_tokens=MAX_TOKENS_OPTIONS,
+            auto_mcp=False,
         ):
             accumulated += chunk
 
@@ -332,6 +340,7 @@ class ShortStoryAIService:
             system_prompt=SEGMENT_SYSTEM,
             temperature=0.7,
             max_tokens=MAX_TOKENS_STORY_CONTENT,
+            auto_mcp=False,
         ):
             result += chunk
 
@@ -366,6 +375,7 @@ class ShortStoryAIService:
             system_prompt=POLISH_SYSTEM,
             temperature=0.5,
             max_tokens=MAX_TOKENS_STORY_CONTENT,
+            auto_mcp=False,
         ):
             result += chunk
 
@@ -440,6 +450,7 @@ class ShortStoryAIService:
                 system_prompt=SEGMENT_SYSTEM,
                 temperature=0.7,
                 max_tokens=MAX_TOKENS_STORY_CONTENT,
+                auto_mcp=False,
             ):
                 result += chunk
                 yield {"type": "chunk", "content": chunk}
@@ -484,6 +495,7 @@ class ShortStoryAIService:
                     system_prompt=POLISH_SYSTEM,
                     temperature=0.5,
                     max_tokens=MAX_TOKENS_STORY_CONTENT,
+                    auto_mcp=False,
                 ),
                 heartbeat_interval=15.0,
             ):
@@ -534,6 +546,7 @@ class ShortStoryAIService:
             system_prompt=system_prompt,
             temperature=temperature,
             max_tokens=MAX_TOKENS_OPTIONS,
+            auto_mcp=False,
         ):
             accumulated += chunk
 
@@ -752,13 +765,30 @@ class FullStoryGenerator:
         logger.info(f"阶段1开始：生成设定和大纲, idea_len={len(initial_idea)}, target_words={target_words}")
 
         accumulated = ""
+        # 短故事生成不需要 MCP 工具，禁用以避免工具调用路径导致空响应
         async for chunk in ai_service.generate_text_stream(
             prompt=stage1_prompt,
             system_prompt=STAGE1_SETUP_SYSTEM,
             temperature=0.75,
             max_tokens=MAX_TOKENS_OUTLINE,
+            auto_mcp=False,
         ):
             accumulated += chunk
+
+        # 空响应重试
+        if not accumulated.strip():
+            logger.warning("阶段1(非流式) AI返回空响应，重试一次")
+            async for chunk in ai_service.generate_text_stream(
+                prompt=stage1_prompt,
+                system_prompt=STAGE1_SETUP_SYSTEM,
+                temperature=0.85,
+                max_tokens=MAX_TOKENS_OUTLINE,
+                auto_mcp=False,
+            ):
+                accumulated += chunk
+
+        if not accumulated.strip():
+            raise ValueError("AI两次均返回空响应，请检查AI模型配置或稍后重试")
 
         setup_data = _parse_ai_json(accumulated, hint="短故事设定+大纲")
         if not isinstance(setup_data, dict):
@@ -849,6 +879,7 @@ class FullStoryGenerator:
                     system_prompt=STAGE2_SEGMENT_SYSTEM,
                     temperature=0.7,
                     max_tokens=MAX_TOKENS_STORY_CONTENT,
+                    auto_mcp=False,
                 ):
                     seg_content += chunk
             except Exception as seg_err:
@@ -941,12 +972,14 @@ class FullStoryGenerator:
             yield {"type": "progress", "message": "阶段1/2：AI正在构思选题、反转与黄金结构...", "progress": 5, "status": "processing"}
 
             accumulated = ""
+            # 短故事生成不需要 MCP 工具，禁用以避免工具调用路径导致空响应
             async for chunk in wrap_stream_with_heartbeat(
                 ai_service.generate_text_stream(
                     prompt=stage1_prompt,
                     system_prompt=STAGE1_SETUP_SYSTEM,
                     temperature=0.75,
                     max_tokens=MAX_TOKENS_OUTLINE,
+                    auto_mcp=False,
                 ),
                 heartbeat_interval=15.0,
             ):
@@ -957,6 +990,29 @@ class FullStoryGenerator:
                 accumulated += chunk
                 # 阶段1的chunk不透传给前端（是JSON结构，对用户无意义），仅发进度
                 yield {"type": "progress", "message": f"阶段1/2：AI正在构思设定...（{len(accumulated)}字符）", "progress": min(5 + len(accumulated) // 200, 18), "status": "processing"}
+
+            # 空响应重试：AI 偶发返回空内容，重试一次
+            if not accumulated.strip():
+                logger.warning("阶段1(流式) AI返回空响应，重试一次")
+                yield {"type": "progress", "message": "AI返回为空，正在重试...", "progress": 8, "status": "processing"}
+                async for chunk in wrap_stream_with_heartbeat(
+                    ai_service.generate_text_stream(
+                        prompt=stage1_prompt,
+                        system_prompt=STAGE1_SETUP_SYSTEM,
+                        temperature=0.85,
+                        max_tokens=MAX_TOKENS_OUTLINE,
+                        auto_mcp=False,
+                    ),
+                    heartbeat_interval=15.0,
+                ):
+                    if chunk is HEARTBEAT:
+                        yield {"type": "heartbeat"}
+                        continue
+                    accumulated += chunk
+                    yield {"type": "progress", "message": f"阶段1/2：AI重试中...（{len(accumulated)}字符）", "progress": min(5 + len(accumulated) // 200, 18), "status": "processing"}
+
+            if not accumulated.strip():
+                raise ValueError("AI两次均返回空响应，请检查AI模型配置或稍后重试")
 
             setup_data = _parse_ai_json(accumulated, hint="短故事设定+大纲(流式)")
             if not isinstance(setup_data, dict):
@@ -1056,6 +1112,7 @@ class FullStoryGenerator:
                             system_prompt=STAGE2_SEGMENT_SYSTEM,
                             temperature=0.7,
                             max_tokens=MAX_TOKENS_STORY_CONTENT,
+                            auto_mcp=False,
                         ),
                         heartbeat_interval=15.0,
                     ):
@@ -1253,6 +1310,7 @@ class StoryScorer:
             system_prompt=SCORE_SYSTEM,
             temperature=0.3,  # 评分需要稳定
             max_tokens=MAX_TOKENS_SCORE,
+            auto_mcp=False,
         ):
             accumulated += chunk
 
@@ -1460,6 +1518,7 @@ class StoryImprover:
             system_prompt=IMPROVE_SYSTEM,
             temperature=0.55,  # 修订需要一定创造性但保持稳定
             max_tokens=MAX_TOKENS_STORY_CONTENT,
+            auto_mcp=False,
         ):
             result += chunk
 
@@ -1539,6 +1598,7 @@ class StoryImprover:
                     system_prompt=IMPROVE_SYSTEM,
                     temperature=0.55,
                     max_tokens=MAX_TOKENS_STORY_CONTENT,
+                    auto_mcp=False,
                 ),
                 heartbeat_interval=15.0,
             ):
@@ -1637,6 +1697,7 @@ class ChecklistChecker:
             system_prompt=CHECKLIST_SYSTEM,
             temperature=0.2,  # 检查需要精确稳定
             max_tokens=MAX_TOKENS_SCORE,
+            auto_mcp=False,
         ):
             accumulated += chunk
 
