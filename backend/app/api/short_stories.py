@@ -1891,6 +1891,7 @@ async def improve_from_score(
                 genre=story.genre or "",
                 target_words=story.target_words or 12000,
                 emotion_curve=story.emotion_curve or "",
+                actual_words=original_words,
             )
         except Exception as ai_err:
             # 错误恢复：AI改进失败时保留原文和旧评分
@@ -2011,6 +2012,7 @@ async def improve_from_score_stream(
                 genre=story_snapshot["genre"],
                 target_words=story_snapshot["target_words"],
                 emotion_curve=story_snapshot["emotion_curve"],
+                actual_words=story_snapshot["original_words"],
             ):
                 evt_type = event.get("type")
                 if evt_type == "complete":
