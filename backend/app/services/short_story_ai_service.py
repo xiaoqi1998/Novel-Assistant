@@ -215,6 +215,17 @@ INSPIRATION_GENRE_USER = """一句话梗概：{logline}
 请推荐6个题材标签。"""
 
 
+def _count_chinese_and_punctuation_local(text: str) -> int:
+    """统计中文字符和中文标点的数量（本地版，避免循环导入）"""
+    if not text:
+        return 0
+    import re as _re
+    chinese_chars = len(_re.findall(r'[\u4e00-\u9fff]', text))
+    chinese_punctuation = len(_re.findall(r'[\u3000-\u303f\uff00-\uffef]', text))
+    english_words = len([w for w in _re.findall(r'[a-zA-Z]+', text)])
+    return chinese_chars + chinese_punctuation + english_words
+
+
 class ShortStoryAIService:
     """短故事AI生成服务"""
 
@@ -1368,7 +1379,10 @@ IMPROVE_SYSTEM = """你是短故事爆款修订专家。
 2. 保留原文的整体框架、核心反转、主要人物和关键情节，不要推倒重写
 3. 修订要精准到位：评分指出的问题必须解决，没问题的部分不要乱改
 4. 修订后必须仍然符合爆款方法论：黄金结构比例、情绪曲线节奏、人设标签化、台词功能性
-5. 修订后正文长度应与原文相近（允许±15%浮动），不要大幅扩写或删减
+5. 字数要求（严格执行）：
+   - 如果原文已达目标字数：修订后字数不得少于原文的90%，优先精修不删减
+   - 如果原文未达目标字数：修订后必须在解决问题的同时补足字数，通过增加细节描写、对话互动、心理活动、环境渲染等方式扩充内容，直到达到目标字数
+   - 严禁通过删减来"精修"，必须在保留原文信息量的前提下进行修订
 6. 直接输出修订后的完整正文，不要加任何解释、说明或前后缀
 
 【爆款方法论备忘】
@@ -1377,7 +1391,14 @@ IMPROVE_SYSTEM = """你是短故事爆款修订专家。
 - 人设：标签化（清醒大女主/极致恶毒绿茶/软饭硬吃渣男等），一眼认清阵营
 - 对话：每句台词必须具备暴露阴谋或推进爽点的功能，删日常寒暄
 - 开头：前300字必须出现核心矛盾，不写铺垫
-- 去AI味：台词口语化，删排比句和空洞形容词"""
+- 去AI味：台词口语化，删排比句和空洞形容词
+
+【扩写技巧】（当需要补足字数时使用）
+- 在冲突激化段增加反派刁难的具体手段和主角的心理活动
+- 在高潮反转段增加更多揭露真相的细节和配角反应
+- 在收尾段增加主角新生活的具体场景和读者共鸣点
+- 通过对话推进增加信息密度，每段对话推动情节
+- 增加感官描写（视觉/听觉/触觉）增强代入感"""
 
 IMPROVE_USER = """请根据AI评分的改进点，对以下短故事正文进行精准修订。
 
@@ -1387,7 +1408,8 @@ IMPROVE_USER = """请根据AI评分的改进点，对以下短故事正文进行
 一句话梗概：{logline}
 核心反转：{twist_type} - {twist_content}
 题材标签：{genre}
-目标字数：{target_words}
+目标字数：{target_words}字
+原文实际字数：{actual_words}字
 {emotion_curve_hint}
 === 当前评分 ===
 总分：{total_score}/100（{level}）
@@ -1405,7 +1427,47 @@ IMPROVE_USER = """请根据AI评分的改进点，对以下短故事正文进行
 === 原文正文 ===
 {content}
 
-请严格按上述改进点修订正文，直接输出修订后的完整正文，不要加任何解释。"""
+=== 修订要求 ===
+请严格按上述改进点修订正文。目标字数为{target_words}字，原文为{actual_words}字。
+{requirement_hint}
+
+直接输出修订后的完整正文，不要加任何解释。"""
+
+
+FILL_UP_SYSTEM = """你是短故事爆款扩写专家。
+你的任务是：在已有正文的基础上进行扩写，使总字数达到目标字数。
+
+【扩写原则】
+1. 严格保留原文内容，不要删除或重写任何已有段落
+2. 通过在段落之间插入新内容来扩写，保持故事连贯性
+3. 扩写内容必须符合爆款方法论：
+   - 黄金结构：Hook 5% + Escalation 20% + Climax 60% + Resolution 15%
+   - 情绪曲线：每1000-1500字一次小冲突/揭秘
+   - 人设标签化，每句台词推进情节
+4. 扩写方式（按优先级）：
+   - 在冲突激化段增加反派的刁难手段和主角的心理活动
+   - 在高潮段增加更多反转细节和配角反应
+   - 在关键对话中增加更多交锋和信息揭露
+   - 在每段结尾增加悬念钩子
+5. 直接输出扩写后的完整正文，不要加任何解释、说明或前后缀"""
+
+FILL_UP_USER = """请对以下短故事正文进行扩写，使总字数达到{target_words}字左右。
+
+=== 故事设定 ===
+标题：{title}
+情绪目标：{emotion_goal}
+一句话梗概：{logline}
+核心反转：{twist_type} - {twist_content}
+题材标签：{genre}
+{emotion_curve_hint}
+=== 当前正文 ===
+{content}
+
+当前正文字数：{current_words}字
+目标字数：{target_words}字
+需要扩写约{need_words}字
+
+请在保留全部原文的基础上进行扩写，使全文达到{target_words}字左右。直接输出扩写后的完整正文。"""
 
 
 def _format_emotion_curve_for_prompt(emotion_curve: str | None) -> str:
@@ -1466,6 +1528,57 @@ class StoryImprover:
     """基于评分结果的短故事改进器"""
 
     @staticmethod
+    async def _fill_up_to_target(
+        ai_service: AIService,
+        title: str,
+        content: str,
+        target_words: int,
+        emotion_goal: str = "",
+        logline: str = "",
+        twist_type: str = "",
+        twist_content: str = "",
+        genre: str = "",
+        emotion_curve: str = "",
+    ) -> str:
+        """将正文扩写至目标字数"""
+        current_words = _count_chinese_and_punctuation_local(content)
+        need_words = max(target_words - current_words, 0)
+
+        if need_words <= 0:
+            return content
+
+        emotion_curve_hint = _format_emotion_curve_for_prompt(emotion_curve)
+        user_prompt = FILL_UP_USER.format(
+            title=title or "未设定",
+            emotion_goal=emotion_goal or "未设定",
+            logline=logline or "未设定",
+            twist_type=twist_type or "未设定",
+            twist_content=twist_content or "未设定",
+            genre=genre or "未设定",
+            emotion_curve_hint=emotion_curve_hint,
+            content=content,
+            current_words=current_words,
+            target_words=target_words,
+            need_words=need_words,
+        )
+
+        result = ""
+        async for chunk in ai_service.generate_text_stream(
+            prompt=user_prompt,
+            system_prompt=FILL_UP_SYSTEM,
+            temperature=0.6,
+            max_tokens=MAX_TOKENS_STORY_CONTENT,
+            auto_mcp=False,
+        ):
+            result += chunk
+
+        new_words = _count_chinese_and_punctuation_local(result)
+        logger.info(
+            f"AI扩写完成: 原字数={current_words}, 扩写后={new_words}, 目标={target_words}"
+        )
+        return result.strip()
+
+    @staticmethod
     async def improve_from_score(
         ai_service: AIService,
         title: str,
@@ -1478,6 +1591,7 @@ class StoryImprover:
         genre: str = "",
         target_words: int = 12000,
         emotion_curve: str = "",
+        actual_words: int = 0,
     ) -> str:
         """根据AI评分结果改进正文"""
         if not content or len(content.strip()) < 100:
@@ -1493,6 +1607,16 @@ class StoryImprover:
         if not top_issues and not improvement_priority and not any(d.get("issues") or d.get("suggestions") for d in dimensions):
             raise ValueError("评分结果中没有需要改进的问题，无需改进")
 
+        if actual_words <= 0:
+            actual_words = _count_chinese_and_punctuation_local(content)
+
+        requirement_hint = (
+            f"⚠️ 原文字数不足目标字数，修订时必须补足字数到{target_words}字左右，"
+            f"通过增加细节描写、对话、心理活动等方式扩充内容，同时解决评分指出的问题。"
+            if actual_words < target_words * 0.9
+            else "✅ 原文字数已达标，修订时保持字数不低于原文的90%，聚焦于解决评分指出的问题。"
+        )
+
         emotion_curve_hint = _format_emotion_curve_for_prompt(emotion_curve)
         user_prompt = IMPROVE_USER.format(
             title=title or "未命名",
@@ -1502,6 +1626,7 @@ class StoryImprover:
             twist_content=twist_content or "未设定",
             genre=genre or "未设定",
             target_words=target_words,
+            actual_words=actual_words,
             emotion_curve_hint=emotion_curve_hint,
             total_score=score_data.get("total_score", 0),
             level=score_data.get("level", "未评级"),
@@ -1510,17 +1635,37 @@ class StoryImprover:
             improvement_priority="\n".join(f"{i+1}. {s}" for i, s in enumerate(improvement_priority)) if improvement_priority else "无",
             dimensions_detail=_format_dimensions_for_improve(dimensions),
             content=content,
+            requirement_hint=requirement_hint,
         )
 
         result = ""
         async for chunk in ai_service.generate_text_stream(
             prompt=user_prompt,
             system_prompt=IMPROVE_SYSTEM,
-            temperature=0.55,  # 修订需要一定创造性但保持稳定
+            temperature=0.55,
             max_tokens=MAX_TOKENS_STORY_CONTENT,
             auto_mcp=False,
         ):
             result += chunk
+
+        improved_words = _count_chinese_and_punctuation_local(result)
+
+        if improved_words < target_words * 0.85:
+            logger.info(
+                f"改进后字数({improved_words})不足目标({target_words})的85%，触发自动扩写补全"
+            )
+            result = await StoryImprover._fill_up_to_target(
+                ai_service=ai_service,
+                title=title,
+                content=result.strip(),
+                target_words=target_words,
+                emotion_goal=emotion_goal,
+                logline=logline,
+                twist_type=twist_type,
+                twist_content=twist_content,
+                genre=genre,
+                emotion_curve=emotion_curve,
+            )
 
         logger.info(
             f"AI基于评分改进完成: 原文长度={len(content)}, 改进后长度={len(result)}, "
@@ -1541,6 +1686,7 @@ class StoryImprover:
         genre: str = "",
         target_words: int = 12000,
         emotion_curve: str = "",
+        actual_words: int = 0,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """根据AI评分结果改进正文（流式版）。
 
@@ -1570,6 +1716,16 @@ class StoryImprover:
                 yield {"type": "error", "error": "评分结果中没有需要改进的问题，无需改进"}
                 return
 
+            if actual_words <= 0:
+                actual_words = _count_chinese_and_punctuation_local(content)
+
+            requirement_hint = (
+                f"⚠️ 原文字数不足目标字数，修订时必须补足字数到{target_words}字左右，"
+                f"通过增加细节描写、对话、心理活动等方式扩充内容，同时解决评分指出的问题。"
+                if actual_words < target_words * 0.9
+                else "✅ 原文字数已达标，修订时保持字数不低于原文的90%，聚焦于解决评分指出的问题。"
+            )
+
             emotion_curve_hint = _format_emotion_curve_for_prompt(emotion_curve)
             user_prompt = IMPROVE_USER.format(
                 title=title or "未命名",
@@ -1579,6 +1735,7 @@ class StoryImprover:
                 twist_content=twist_content or "未设定",
                 genre=genre or "未设定",
                 target_words=target_words,
+                actual_words=actual_words,
                 emotion_curve_hint=emotion_curve_hint,
                 total_score=score_data.get("total_score", 0),
                 level=score_data.get("level", "未评级"),
@@ -1587,6 +1744,7 @@ class StoryImprover:
                 improvement_priority="\n".join(f"{i+1}. {s}" for i, s in enumerate(improvement_priority)) if improvement_priority else "无",
                 dimensions_detail=_format_dimensions_for_improve(dimensions),
                 content=content,
+                requirement_hint=requirement_hint,
             )
 
             yield {"type": "progress", "message": "AI正在基于评分改进正文...", "progress": 15, "status": "processing"}
@@ -1607,6 +1765,29 @@ class StoryImprover:
                     continue
                 result += chunk
                 yield {"type": "chunk", "content": chunk}
+
+            improved_words = _count_chinese_and_punctuation_local(result)
+
+            if improved_words < target_words * 0.85:
+                yield {
+                    "type": "progress",
+                    "message": f"改进后字数({improved_words})不足目标，正在自动扩写补全...",
+                    "progress": 70,
+                    "status": "processing",
+                }
+                fill_result = await StoryImprover._fill_up_to_target(
+                    ai_service=ai_service,
+                    title=title,
+                    content=result.strip(),
+                    target_words=target_words,
+                    emotion_goal=emotion_goal,
+                    logline=logline,
+                    twist_type=twist_type,
+                    twist_content=twist_content,
+                    genre=genre,
+                    emotion_curve=emotion_curve,
+                )
+                result = fill_result
 
             logger.info(
                 f"AI基于评分改进流式完成: 原文长度={len(content)}, 改进后长度={len(result)}, "
