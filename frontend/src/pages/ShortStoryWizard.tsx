@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Card,
@@ -14,7 +14,8 @@ import {
   theme,
 } from 'antd';
 import { ArrowLeftOutlined, ThunderboltOutlined } from '@ant-design/icons';
-import { SSEPostClient } from '../utils/sseClient';
+import { shortStoryApi } from '../services/api';
+import { eventBus } from '../store/eventBus';
 import { showErrorToast } from '../utils/errorHandler';
 
 const { Title, Text } = Typography;
@@ -56,8 +57,6 @@ export default function ShortStoryWizard() {
   });
   const [genProgress, setGenProgress] = useState(0);
   const [genMessage, setGenMessage] = useState('正在准备生成...');
-  // SSE 客户端引用，用于取消生成（abort）
-  const sseClientRef = useRef<SSEPostClient | null>(null);
 
   const handleGenerate = async () => {
     if (!form.initial_idea.trim()) {
@@ -66,57 +65,39 @@ export default function ShortStoryWizard() {
     }
 
     setPhase('generating');
-    setGenProgress(0);
-    setGenMessage('正在准备生成...');
+    setGenProgress(10);
+    setGenMessage('正在创建后台生成任务...');
 
-    // 使用 SSEPostClient 直连流式端点：实时 onProgress 更新真实进度，并支持 abort 取消
-    const client = new SSEPostClient(
-      '/api/short-stories/generate-full-stream',
-      {
+    // 改用后台任务：创建后立即跳转书架，AI 在后台运行，切页面/关浏览器不影响
+    // 进度通过右下角 FloatingTaskPanel 查看，完成后书架出现新书，点击浮窗进入新故事
+    try {
+      await shortStoryApi.generateFullBackground({
         initial_idea: form.initial_idea.trim(),
         emotion_goal: form.emotion_goal,
         target_words: form.target_words,
         target_platform: form.target_platform,
-      },
-      {
-        onProgress: (msg, prog) => {
-          setGenProgress(prog);
-          if (msg) setGenMessage(msg);
-        },
-        onError: (error) => {
-          showErrorToast(error, 'AI生成失败');
-        },
-      }
-    );
-    sseClientRef.current = client;
-
-    try {
-      const story = await client.connect();
+      });
+      // 通知 FloatingTaskPanel 立即刷新
+      eventBus.emit('background-task-created');
       setGenProgress(100);
-      message.success('短故事生成完成！');
-      // 跳转到正文页（已有AI生成的完整正文）
+      setGenMessage('后台任务已创建，正在跳转书架...');
+      message.success('已创建后台生成任务，可在书架查看进度，完成后点击右下角浮窗进入新故事');
+      // 跳转书架，由 FloatingTaskPanel 显示进度
       setTimeout(() => {
-        navigate(`/short-story/${story.id}/content`);
-      }, 800);
+        navigate('/');
+      }, 1200);
     } catch (error: any) {
-      // 用户主动取消（AbortError）不报错
-      if (error?.name !== 'AbortError') {
-        showErrorToast(error, 'AI生成失败');
-      }
+      showErrorToast(error, '创建后台生成任务失败');
       setPhase('input');
-    } finally {
-      sseClientRef.current = null;
     }
   };
 
-  // 取消生成：中止 SSE 请求并返回输入页
+  // 返回输入页（后台任务创建很快，正常情况下不会用到此按钮）
   const handleCancelGenerate = () => {
-    sseClientRef.current?.abort();
-    sseClientRef.current = null;
     setPhase('input');
     setGenProgress(0);
     setGenMessage('正在准备生成...');
-    message.info('已取消生成');
+    message.info('已取消');
   };
 
   if (phase === 'generating') {

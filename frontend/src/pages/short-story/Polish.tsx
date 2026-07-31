@@ -20,6 +20,7 @@ import {
 import { SaveOutlined, CheckCircleOutlined, TrophyOutlined, ReloadOutlined, AuditOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { eventBus } from '../../store/eventBus';
 import { shortStoryApi } from '../../services/api';
+import { getTaskStatus, getProjectTasks, deleteTask } from '../../services/backgroundTaskService';
 import { showErrorToast } from '../../utils/errorHandler';
 import { useShortStoryStore } from '../../store/shortStoryStore';
 import RevisionPreviewModal from '../../components/RevisionPreviewModal';
@@ -58,11 +59,11 @@ export default function Polish() {
   const [scoreResult, setScoreResult] = useState<StoryScoreResult | null>(null);
   // 基于评分改进相关
   const [improving, setImproving] = useState(false);
-  const [improveHint, setImproveHint] = useState('');
   // AI自动检查相关
   const [autoChecking, setAutoChecking] = useState(false);
   // AI修改预览
   const [revisionPreview, setRevisionPreview] = useState<RevisionPreview | null>(null);
+  const [pendingTaskId, setPendingTaskId] = useState<string | null>(null);
   // 自动评分（改进确认后自动触发）
   const [autoScoring, setAutoScoring] = useState(false);
 
@@ -179,7 +180,7 @@ export default function Polish() {
     }
   };
 
-  // 评分按钮：默认后台评分（长任务），前台评分不再让用户选择
+  // 基于评分改进：改为后台任务（关闭页面不影响），完成后自动弹出对比预览
   const handleImprove = async () => {
     if (!scoreResult) {
       message.warning('请先进行AI评分，才能基于评分改进点修订正文');
@@ -187,19 +188,71 @@ export default function Polish() {
     }
     try {
       setImproving(true);
-      setImproveHint('AI正在基于评分改进正文...');
-      const preview = await shortStoryApi.improveFromScoreStream(story.id, {
-        onProgress: (msg) => setImproveHint(msg || 'AI正在改进正文...'),
-        onChunk: () => setImproveHint('AI正在生成改进内容...'),
-      });
-      if (preview) setRevisionPreview(preview);
+      await shortStoryApi.improveFromScoreBackground(story.id);
+      message.success('已创建后台改进任务，可关闭页面，完成后会自动弹出对比预览');
+      // 通知 FloatingTaskPanel 立即刷新
+      eventBus.emit('background-task-created');
     } catch (error) {
-      showErrorToast(error, 'AI改进失败');
+      showErrorToast(error, '创建后台改进任务失败');
     } finally {
       setImproving(false);
-      setImproveHint('');
     }
   };
+
+  // 监听后台改进任务完成：读取 task_result 弹出对比预览供用户确认
+  // （任务在后台跑，切页面不丢失；回到本页且任务完成时自动弹预览）
+  useEffect(() => {
+    if (!story.id) return;
+    const handleTaskCompleted = async (data: unknown) => {
+      const payload = data as { taskId?: string; taskType?: string; projectId?: string };
+      if (
+        payload?.taskType === 'short_story_improve' &&
+        payload.projectId === story.id &&
+        payload.taskId
+      ) {
+        try {
+          const taskStatus = await getTaskStatus(payload.taskId);
+          if (taskStatus.status === 'completed' && taskStatus.task_result) {
+            setRevisionPreview(taskStatus.task_result as unknown as RevisionPreview);
+            setPendingTaskId(payload.taskId);
+            message.success('AI改进完成，请预览确认');
+          }
+        } catch {
+          // 查询任务结果失败，忽略（用户可手动重试）
+        }
+      }
+    };
+    eventBus.on('task:completed', handleTaskCompleted);
+    return () => {
+      eventBus.off('task:completed', handleTaskCompleted);
+    };
+  }, [story.id]);
+
+  // mount 时查询是否有已完成的 improve 任务待确认（处理从别的页面跳转来的情况）
+  useEffect(() => {
+    if (!story.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const tasks = await getProjectTasks(story.id);
+        const pendingImprove = tasks.items.find(
+          (t) =>
+            t.task_type === 'short_story_improve' &&
+            t.status === 'completed' &&
+            t.task_result
+        );
+        if (!cancelled && pendingImprove) {
+          setRevisionPreview(pendingImprove.task_result as unknown as RevisionPreview);
+          setPendingTaskId(pendingImprove.id);
+        }
+      } catch {
+        // 查询失败忽略
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [story.id]);
 
   const handlePolish = async () => {
     try {
@@ -284,7 +337,7 @@ export default function Polish() {
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
-          message={<span><Spin size="small" style={{ marginRight: 8 }} />{polishing ? polishHint : improveHint}</span>}
+          message={<span><Spin size="small" style={{ marginRight: 8 }} />{polishing ? polishHint : '正在创建后台改进任务...'}</span>}
         />
       )}
 
@@ -533,10 +586,20 @@ v3：结尾增加一句留白，强化余味"
         open={!!revisionPreview}
         storyId={story.id}
         preview={revisionPreview}
-        onCancel={() => setRevisionPreview(null)}
+        onCancel={() => {
+          setRevisionPreview(null);
+          if (pendingTaskId) {
+            deleteTask(pendingTaskId).catch(() => {});
+            setPendingTaskId(null);
+          }
+        }}
         onConfirmed={async () => {
           const wasImprove = revisionPreview?.revision_type === 'improve';
           setRevisionPreview(null);
+          if (pendingTaskId) {
+            deleteTask(pendingTaskId).catch(() => {});
+            setPendingTaskId(null);
+          }
           // 改进类型：清空旧评分展示
           if (wasImprove) {
             setScoreResult(null);

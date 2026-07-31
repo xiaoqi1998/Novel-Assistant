@@ -106,6 +106,8 @@ export default function ShortStoryDetail() {
         'short_story_regenerate',
         'short_story_score',
         'short_story_polish',
+        'short_story_improve',
+        'short_story_generate',
       ];
       if (
         payload?.taskType &&

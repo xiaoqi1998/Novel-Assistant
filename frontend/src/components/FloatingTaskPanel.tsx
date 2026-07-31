@@ -459,6 +459,10 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
         return '短故事评分';
       case 'short_story_polish':
         return '短故事精修';
+      case 'short_story_improve':
+        return '短故事改进';
+      case 'short_story_generate':
+        return '短故事生成';
       default:
         return taskType;
     }
@@ -472,10 +476,12 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
     if (
       task.task_type === 'short_story_regenerate' ||
       task.task_type === 'short_story_score' ||
-      task.task_type === 'short_story_polish'
+      task.task_type === 'short_story_polish' ||
+      task.task_type === 'short_story_improve' ||
+      task.task_type === 'short_story_generate'
     ) {
-      // 评分任务跳精修页（查看评分），其他跳正文页
-      if (task.task_type === 'short_story_score') {
+      // 评分/改进任务跳精修页（查看评分/确认改进预览），其他跳正文页
+      if (task.task_type === 'short_story_score' || task.task_type === 'short_story_improve') {
         return `/short-story/${pid}/polish`;
       }
       return `/short-story/${pid}/content`;
