@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import {
   Card,
@@ -16,67 +16,46 @@ import {
   Collapse,
   Divider,
   Tooltip,
-  Dropdown,
 } from 'antd';
-import type { MenuProps } from 'antd';
-import { SaveOutlined, CheckCircleOutlined, TrophyOutlined, ReloadOutlined, AuditOutlined, DownOutlined } from '@ant-design/icons';
+import { SaveOutlined, CheckCircleOutlined, TrophyOutlined, ReloadOutlined, AuditOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { eventBus } from '../../store/eventBus';
 import { shortStoryApi } from '../../services/api';
 import { showErrorToast } from '../../utils/errorHandler';
 import { useShortStoryStore } from '../../store/shortStoryStore';
 import RevisionPreviewModal from '../../components/RevisionPreviewModal';
+import {
+  CHECKLIST_CATEGORIES,
+  SCORE_LEVEL_COLOR,
+  STORY_DIMENSIONS,
+} from '../../constants/shortStory';
 import type { ShortStory, PolishChecklistItem, StoryScoreResult, StoryScoreDimension, RevisionPreview } from '../../types';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
-
-const CATEGORY_COLOR: Record<string, string> = {
-  '开头查验': 'blue',
-  '废话查验': 'orange',
-  '卡点查验': 'gold',
-  '去AI味查验': 'red',
-  '情绪曲线': 'purple',
-  '人设查验': 'magenta',
-  '对话查验': 'cyan',
-  '选题查验': 'green',
-};
 
 interface ContextType {
   story: ShortStory;
   reload: () => Promise<void>;
 }
 
-// 评分等级颜色映射
-const LEVEL_COLOR: Record<string, string> = {
-  '优秀': '#52c41a',
-  '良好': '#1890ff',
-  '合格': '#faad14',
-  '待改进': '#ff4d4f',
-};
-
-// 维度颜色映射
-const DIMENSION_COLOR: Record<string, string> = {
-  concept: '#52c41a',
-  structure: '#1890ff',
-  emotion: '#722ed1',
-  character: '#eb2f96',
-  polish: '#fa8c16',
-};
-
 export default function Polish() {
   const { story, reload } = useOutletContext<ContextType>();
   const { token } = theme.useToken();
   const { updateCurrentStory } = useShortStoryStore();
   const [checklist, setChecklist] = useState<PolishChecklistItem[]>([]);
+  // Task 39.4: 自定义检查项草稿（按类别分组）
+  const [newItemDraft, setNewItemDraft] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState(story.polish_notes || '');
   const [saving, setSaving] = useState(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 标记用户是否已编辑对应字段，防止后台刷新覆盖编辑态
+  const notesDirtyRef = useRef(false);
+  const checklistDirtyRef = useRef(false);
   const [polishing, setPolishing] = useState(false);
   const [polishHint, setPolishHint] = useState('');
 
   // AI评分相关
   const [scoreResult, setScoreResult] = useState<StoryScoreResult | null>(null);
-  const [scoring, setScoring] = useState(false);
   // 基于评分改进相关
   const [improving, setImproving] = useState(false);
   const [improveHint, setImproveHint] = useState('');
@@ -87,6 +66,7 @@ export default function Polish() {
   // 自动评分（改进确认后自动触发）
   const [autoScoring, setAutoScoring] = useState(false);
 
+  // Effect A：仅依赖 story.id 初始化 notes 和 checklist
   useEffect(() => {
     try {
       const parsed = story.polish_checklist ? JSON.parse(story.polish_checklist) : [];
@@ -97,8 +77,14 @@ export default function Polish() {
       setChecklist([]);
     }
     setNotes(story.polish_notes || '');
+    // 切换故事时重置 dirty 标记
+    notesDirtyRef.current = false;
+    checklistDirtyRef.current = false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [story.id]);
 
-    // 加载已有评分
+  // Effect B：仅依赖 story.score_data 更新 scoreResult，不覆盖 notes/checklist
+  useEffect(() => {
     try {
       if (story.score_data) {
         const parsed = JSON.parse(story.score_data);
@@ -112,7 +98,12 @@ export default function Polish() {
       setScoreResult(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [story.id, story.score_data]);
+  }, [story.score_data]);
+
+  // 组件卸载时清理自动评分 loading 消息，避免离开页面后残留
+  useEffect(() => {
+    return () => message.destroy('autoScore');
+  }, []);
 
   const handleSave = async (showMessage = true) => {
     try {
@@ -122,6 +113,9 @@ export default function Polish() {
         polish_notes: notes,
       });
       updateCurrentStory(updated);
+      // 保存成功后重置 dirty 标记
+      notesDirtyRef.current = false;
+      checklistDirtyRef.current = false;
       if (showMessage) message.success('已保存');
     } catch (error) {
       showErrorToast(error, '保存失败');
@@ -140,31 +134,32 @@ export default function Polish() {
       item.id === id ? { ...item, checked: !item.checked } : item
     );
     setChecklist(newList);
+    checklistDirtyRef.current = true;
     scheduleAutoSave();
   };
 
-  const handleScore = async () => {
-    if (!story.content || story.content.trim().length < 100) {
-      message.warning('正文内容过短，无法评分（至少需要100字）');
-      return;
-    }
-    try {
-      setScoring(true);
-      const result = await shortStoryApi.score(story.id);
-      setScoreResult(result);
-      message.success(`AI评分完成：${result.total_score}分（${result.level}）`);
-      // 重新拉取story以同步scored_at
-      try {
-        const updated = await shortStoryApi.get(story.id);
-        updateCurrentStory(updated);
-      } catch {
-        // 同步失败不影响主流程
-      }
-    } catch (error) {
-      showErrorToast(error, 'AI评分失败');
-    } finally {
-      setScoring(false);
-    }
+  // Task 39.4: 添加自定义检查项
+  const addCustomItem = (category: string) => {
+    const text = (newItemDraft[category] || '').trim();
+    if (!text) { message.warning('请输入检查项内容'); return; }
+    const newItem: PolishChecklistItem = {
+      id: 'custom_' + Date.now() + Math.random().toString(36).slice(2, 8),
+      category,
+      item: text,
+      checked: false,
+      fix: '',
+    };
+    setChecklist([...checklist, newItem]);
+    setNewItemDraft({ ...newItemDraft, [category]: '' });
+    checklistDirtyRef.current = true;
+    scheduleAutoSave();
+  };
+
+  // Task 39.4: 删除检查项
+  const removeChecklistItem = (id: string) => {
+    setChecklist(checklist.filter((item) => item.id !== id));
+    checklistDirtyRef.current = true;
+    scheduleAutoSave();
   };
 
   // 后台评分：创建后台任务后立即返回，关闭浏览器不影响评分
@@ -184,15 +179,7 @@ export default function Polish() {
     }
   };
 
-  // 评分按钮 Dropdown 菜单：前台评分（后台评分为主按钮默认行为，下拉仅保留前台作为可选）
-  const scoreMenuItems: MenuProps['items'] = [
-    {
-      key: 'foreground',
-      label: '前台评分（阻塞等待结果，不推荐切换页面）',
-      onClick: () => handleScore(),
-    },
-  ];
-
+  // 评分按钮：默认后台评分（长任务），前台评分不再让用户选择
   const handleImprove = async () => {
     if (!scoreResult) {
       message.warning('请先进行AI评分，才能基于评分改进点修订正文');
@@ -257,11 +244,14 @@ export default function Polish() {
   };
 
   // 按类别分组
-  const grouped: Record<string, PolishChecklistItem[]> = {};
-  checklist.forEach((item) => {
-    if (!grouped[item.category]) grouped[item.category] = [];
-    grouped[item.category].push(item);
-  });
+  const grouped = useMemo(() => {
+    const result: Record<string, PolishChecklistItem[]> = {};
+    checklist.forEach((item) => {
+      if (!result[item.category]) result[item.category] = [];
+      result[item.category].push(item);
+    });
+    return result;
+  }, [checklist]);
 
   const checkedCount = checklist.filter((i) => i.checked).length;
   const totalCount = checklist.length;
@@ -273,19 +263,16 @@ export default function Polish() {
         <Title level={4} style={{ margin: 0 }}>精修笔记</Title>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <Button loading={polishing} onClick={handlePolish}>
-            AI润色正文
+            AI润色全文
           </Button>
-          <Dropdown.Button
+          <Button
             type="primary"
-            loading={scoring || improving || autoScoring}
+            loading={improving || autoScoring}
             disabled={improving || autoScoring}
             onClick={handleScoreBackground}
-            menu={{ items: scoreMenuItems }}
-            placement="bottomRight"
-            icon={<DownOutlined />}
           >
             <TrophyOutlined /> AI评分
-          </Dropdown.Button>
+          </Button>
           <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={() => handleSave(true)}>
             保存
           </Button>
@@ -330,10 +317,10 @@ export default function Polish() {
       {/* AI评分结果区 */}
       <Card
         size="small"
-        style={{ marginBottom: 16, borderColor: scoreResult ? LEVEL_COLOR[scoreResult.level] || token.colorBorder : token.colorBorder }}
+        style={{ marginBottom: 16, borderColor: token.colorBorder }}
         title={
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <TrophyOutlined style={{ color: '#fa8c16' }} />
+            <TrophyOutlined style={{ color: token.colorWarning }} />
             <span>AI评分（爆款方法论5维度）</span>
           </div>
         }
@@ -345,7 +332,7 @@ export default function Polish() {
           ) : null
         }
       >
-        {scoring || autoScoring ? (
+        {autoScoring ? (
           <div style={{ textAlign: 'center', padding: '40px 0' }}>
             <Spin tip={autoScoring ? '已确认改进，正在自动重新评分…' : 'AI正在按爆款方法论评分中…'} size="large" />
             <div style={{ marginTop: 16, color: token.colorTextSecondary, fontSize: 13 }}>
@@ -355,13 +342,13 @@ export default function Polish() {
         ) : scoreResult ? (
           <ScoreResultView
             result={scoreResult}
-            onRescore={handleScore}
+            onRescore={handleScoreBackground}
             onImprove={handleImprove}
             improving={improving}
           />
         ) : (
           <Empty
-            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            image={Empty.PRESENTED_IMAGE_DEFAULT}
             description={
               <span>
                 暂未评分
@@ -372,7 +359,7 @@ export default function Polish() {
               </span>
             }
           >
-            <Button type="primary" ghost icon={<TrophyOutlined />} onClick={handleScore} loading={scoring}>
+            <Button type="primary" ghost icon={<TrophyOutlined />} onClick={handleScoreBackground}>
               开始AI评分
             </Button>
           </Empty>
@@ -407,9 +394,9 @@ export default function Polish() {
           <Empty description="暂无自查清单" image={Empty.PRESENTED_IMAGE_SIMPLE} />
         ) : (
           Object.entries(grouped).map(([category, items]) => (
-            <div key={category} style={{ marginBottom: 16 }}>
+            <div key={category} style={{ marginBottom: 16, padding: 12, background: token.colorFillQuaternary, borderRadius: 6 }}>
               <div style={{ marginBottom: 8 }}>
-                <Tag color={CATEGORY_COLOR[category] || 'default'} style={{ marginRight: 8 }}>
+                <Tag color={CHECKLIST_CATEGORIES[category]?.color || 'default'} style={{ marginRight: 8 }}>
                   {category}
                 </Tag>
               </div>
@@ -457,9 +444,37 @@ export default function Polish() {
                         </div>
                       )}
                     </div>
+                    {/* Task 39.4: 删除检查项 */}
+                    <Tooltip title="删除该检查项">
+                      <Button
+                        type="text"
+                        size="small"
+                        danger
+                        icon={<DeleteOutlined />}
+                        onClick={() => removeChecklistItem(item.id)}
+                      />
+                    </Tooltip>
                   </div>
                 </div>
               ))}
+              {/* Task 39.4: 添加自定义检查项 */}
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <Input
+                  size="small"
+                  placeholder="添加自定义检查项..."
+                  value={newItemDraft[category] || ''}
+                  onChange={(e) => setNewItemDraft({ ...newItemDraft, [category]: e.target.value })}
+                  onPressEnter={() => addCustomItem(category)}
+                />
+                <Button
+                  size="small"
+                  type="dashed"
+                  icon={<PlusOutlined />}
+                  onClick={() => addCustomItem(category)}
+                >
+                  添加
+                </Button>
+              </div>
             </div>
           ))
         )}
@@ -474,6 +489,7 @@ export default function Polish() {
           value={notes}
           onChange={(e) => {
             setNotes(e.target.value);
+            notesDirtyRef.current = true;
             scheduleAutoSave();
           }}
           rows={6}
@@ -490,23 +506,26 @@ v3：结尾增加一句留白，强化余味"
         />
       </Card>
 
-      <Alert
-        type="info"
-        showIcon
-        message="精修核心原则"
-        description={
-          <div style={{ fontSize: 13 }}>
-            <ul style={{ margin: 0, paddingLeft: 20 }}>
-              <li>开头查验：前300字必须出现核心矛盾</li>
-              <li>废话查验：超过3行的环境/心理描写必须删掉</li>
-              <li>卡点查验：每段结尾必须勾住读者继续看</li>
-              <li>去AI味查验：台词必须像真人说的话</li>
-              <li>情绪曲线：每1000-1500字必须有一次小冲突</li>
-              <li>人设查验：角色标签化，一眼认清阵营</li>
-              <li>对话查验：每句台词必须具备暴露阴谋或推进爽点的功能</li>
-            </ul>
-          </div>
-        }
+      <Collapse
+        size="small"
+        style={{ marginTop: 16 }}
+        items={[{
+          key: 'principles',
+          label: <Text strong>精修核心原则（参考）</Text>,
+          children: (
+            <div style={{ fontSize: 13 }}>
+              <ul style={{ margin: 0, paddingLeft: 20 }}>
+                <li>开头查验：前300字必须出现核心矛盾</li>
+                <li>废话查验：超过3行的环境/心理描写必须删掉</li>
+                <li>卡点查验：每段结尾必须勾住读者继续看</li>
+                <li>去AI味查验：台词必须像真人说的话</li>
+                <li>情绪曲线：每1000-1500字必须有一次小冲突</li>
+                <li>人设查验：角色标签化，一眼认清阵营</li>
+                <li>对话查验：每句台词必须具备暴露阴谋或推进爽点的功能</li>
+              </ul>
+            </div>
+          ),
+        }]}
       />
 
       {/* AI修改对比预览Modal */}
@@ -580,7 +599,13 @@ function ScoreResultView({
   improving: boolean;
 }) {
   const { token } = theme.useToken();
-  const levelColor = LEVEL_COLOR[result.level] || token.colorText;
+  const levelColorMap: Record<string, string> = {
+    '优秀': token.colorSuccess,
+    '良好': token.colorPrimary,
+    '合格': token.colorWarning,
+    '待改进': token.colorError,
+  };
+  const levelColor = levelColorMap[result.level] || token.colorText;
 
   return (
     <div>
@@ -597,10 +622,10 @@ function ScoreResultView({
           >
             {result.total_score}
           </div>
-          <div style={{ fontSize: 13, color: token.colorTextSecondary }}>总分 / 100</div>
+          <div style={{ fontSize: 14, color: token.colorTextSecondary }}>总分 / 100</div>
         </div>
         <div style={{ flex: 1, minWidth: 200 }}>
-          <Tag color={levelColor} style={{ fontSize: 16, padding: '4px 16px', marginBottom: 8 }}>
+          <Tag color={SCORE_LEVEL_COLOR[result.level] || 'default'} style={{ fontSize: 16, padding: '4px 16px', marginBottom: 8 }}>
             {result.level}
           </Tag>
           <div style={{ color: token.colorTextSecondary, fontSize: 13, lineHeight: 1.6 }}>
@@ -636,7 +661,7 @@ function ScoreResultView({
 
       {/* Top问题 */}
       {result.top_issues && result.top_issues.length > 0 && (
-        <Card size="small" type="inner" title={<Text type="danger">⚠️ 最严重问题</Text>} style={{ marginBottom: 12 }}>
+        <Card size="small" type="inner" title={<Text type="danger">⚠️ 最严重问题</Text>} style={{ marginBottom: 12, background: token.colorErrorBg }}>
           <ul style={{ margin: 0, paddingLeft: 20 }}>
             {result.top_issues.map((issue, idx) => (
               <li key={idx} style={{ marginBottom: 4, fontSize: 13, color: token.colorText }}>
@@ -649,7 +674,7 @@ function ScoreResultView({
 
       {/* 优先改进建议 */}
       {result.improvement_priority && result.improvement_priority.length > 0 && (
-        <Card size="small" type="inner" title={<Text type="success">🎯 按优先级排序的修改建议</Text>} style={{ marginBottom: 12 }}>
+        <Card size="small" type="inner" title={<Text type="success">🎯 按优先级排序的修改建议</Text>} style={{ marginBottom: 12, background: token.colorSuccessBg }}>
           <ol style={{ margin: 0, paddingLeft: 20 }}>
             {result.improvement_priority.map((s, idx) => (
               <li key={idx} style={{ marginBottom: 6, fontSize: 13, color: token.colorText }}>
@@ -668,10 +693,10 @@ function ScoreResultView({
           label: (
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingRight: 8 }}>
               <span>
-                <Tag color={DIMENSION_COLOR[dim.key] || 'default'} style={{ marginRight: 8 }}>
+                <Tag color={STORY_DIMENSIONS[dim.key]?.color || 'default'} style={{ marginRight: 8 }}>
                   {dim.name}
                 </Tag>
-                <Text strong style={{ color: dim.score / dim.max_score >= 0.8 ? '#52c41a' : dim.score / dim.max_score >= 0.6 ? '#faad14' : '#ff4d4f' }}>
+                <Text strong style={{ color: dim.score / dim.max_score >= 0.8 ? token.colorSuccess : dim.score / dim.max_score >= 0.6 ? token.colorWarning : token.colorError }}>
                   {dim.score}/{dim.max_score}
                 </Text>
               </span>
@@ -688,15 +713,16 @@ function ScoreResultView({
 }
 
 function DimensionRow({ dim }: { dim: StoryScoreDimension }) {
+  const { token } = theme.useToken();
   const percent = Math.round((dim.score / dim.max_score) * 100);
-  const color = DIMENSION_COLOR[dim.key] || '#1890ff';
+  const color = STORY_DIMENSIONS[dim.key]?.color || 'blue';
   const status = percent >= 80 ? 'success' : percent >= 60 ? 'normal' : 'exception';
 
   return (
     <div style={{ marginBottom: 10 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
         <Text style={{ fontSize: 13 }}>
-          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: color, marginRight: 8 }} />
+          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: token.colorPrimary, marginRight: 8 }} />
           {dim.name}
         </Text>
         <Text style={{ fontSize: 13, fontWeight: 600 }}>
@@ -718,7 +744,7 @@ function DimensionDetail({ dim }: { dim: StoryScoreDimension }) {
       </div>
 
       {dim.evidence && (
-        <div style={{ marginBottom: 8, padding: 8, background: token.colorFillAlter, borderRadius: 4, borderLeft: `3px solid ${DIMENSION_COLOR[dim.key] || '#1890ff'}` }}>
+        <div style={{ marginBottom: 8, padding: 8, background: token.colorFillAlter, borderRadius: 4, borderLeft: `3px solid ${token.colorBorderSecondary}` }}>
           <Text strong>正文证据：</Text>
           <Text type="secondary" style={{ fontStyle: 'italic' }}>
             "{dim.evidence}"

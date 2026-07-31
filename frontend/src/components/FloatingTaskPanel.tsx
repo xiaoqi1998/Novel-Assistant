@@ -270,7 +270,7 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
   }, [taskList]);
 
   // 取消任务
-  const handleCancelTask = async (task: TaskStatus) => {
+  const handleCancelTask = useCallback(async (task: TaskStatus) => {
     try {
       if (task.task_type === 'chapter_batch') {
         await cancelBatchTask(task.id);
@@ -281,20 +281,20 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
     } catch (error) {
       console.error('取消任务失败:', error);
     }
-  };
+  }, [loadTasks]);
 
   // 删除任务记录
-  const handleDeleteTask = async (taskId: string) => {
+  const handleDeleteTask = useCallback(async (taskId: string) => {
     try {
       await deleteTask(taskId);
       loadTasks();
     } catch (error) {
       console.error('删除任务记录失败:', error);
     }
-  };
+  }, [loadTasks]);
 
   // 一键清理已结束的任务记录（带 5 秒撤销窗口）
-  const handleClearTasks = async () => {
+  const handleClearTasks = useCallback(async () => {
     // 若已有待执行的清理，先取消（用户重复点击）
     if (clearTimerRef.current !== null) {
       window.clearTimeout(clearTimerRef.current);
@@ -347,10 +347,10 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
     clearTimerRef.current = window.setTimeout(() => {
       void performClear();
     }, 5000);
-  };
+  }, [projectId, loadTasks]);
 
   // 拖拽：使用原生 mousedown/mousemove/mouseup 实现，拖拽手柄位于标题区左侧
-  const handleDragStart = (e: React.MouseEvent) => {
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
     // 仅响应鼠标左键
     if (e.button !== 0) return;
     const container = containerRef.current;
@@ -413,7 +413,7 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
 
     document.addEventListener('mousemove', handleMove);
     document.addEventListener('mouseup', handleUp);
-  };
+  }, []);
 
   // 获取任务状态标签
   const getTaskStatusTag = (status: TaskStatus['status']) => {
@@ -465,7 +465,7 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
   };
 
   // 根据任务类型获取跳转路由
-  const getTaskRoute = (task: TaskStatus): string => {
+  const getTaskRoute = useCallback((task: TaskStatus): string => {
     // 优先使用组件已知的 projectId，避免后端数据缺失导致 undefined
     const pid = task.project_id || projectId;
     // 短故事任务：跳转到短故事详情页
@@ -498,14 +498,14 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
       default:
         return base;
     }
-  };
+  }, [projectId]);
 
   // 点击完成任务跳转到对应页面
-  const handleCompletedTaskClick = (task: TaskStatus) => {
+  const handleCompletedTaskClick = useCallback((task: TaskStatus) => {
     if (task.status === 'completed') {
       navigate(getTaskRoute(task));
     }
-  };
+  }, [navigate, getTaskRoute]);
 
   const activeTasks = taskList.filter((t) => t.status === 'running' || t.status === 'pending');
   const hasActiveTasks = activeTasks.length > 0;

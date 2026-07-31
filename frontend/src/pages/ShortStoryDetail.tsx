@@ -1,18 +1,16 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, Outlet, Link, useLocation } from 'react-router-dom';
-import { Layout, Typography, Button, Spin, theme, Dropdown, message, Result, Drawer, Modal } from 'antd';
+import { Layout, Typography, Button, Spin, theme, Dropdown, message, Result, Drawer, Modal, Tag, Divider } from 'antd';
 import type { MenuProps } from 'antd';
 import {
   ArrowLeftOutlined,
   SettingOutlined,
-  LineChartOutlined,
   EditOutlined,
   CheckSquareOutlined,
   ThunderboltOutlined,
   DownloadOutlined,
   PictureOutlined,
-  FileTextOutlined,
-  FileMarkdownOutlined,
+  EyeOutlined,
 } from '@ant-design/icons';
 import { shortStoryApi } from '../services/api';
 import { showErrorToast } from '../utils/errorHandler';
@@ -22,19 +20,14 @@ import AppSidebar, { SidebarContent, EXPANDED_SIDER_WIDTH, COLLAPSED_SIDER_WIDTH
 import AppTopBar from '../components/AppTopBar';
 import AppFooter from '../components/AppFooter';
 import FloatingTaskPanel from '../components/FloatingTaskPanel';
+import ExportConfirmModal from '../components/ExportConfirmModal';
 import { getStoredSidebarCollapsed, setStoredSidebarCollapsed } from '../utils/sidebarState';
 import { useIsMobile } from '../utils/useIsMobile';
 import { alphaColor } from '../utils/color';
+import { STORY_STATUS_CONFIG } from '../constants/shortStory';
 
 const { Content } = Layout;
 const { Text } = Typography;
-
-const STATUS_CONFIG: Record<string, { color: string; text: string }> = {
-  planning: { color: 'blue', text: '规划' },
-  writing: { color: 'green', text: '创作' },
-  polishing: { color: 'orange', text: '精修' },
-  completed: { color: 'purple', text: '已完结' },
-};
 
 export default function ShortStoryDetail() {
   const { storyId } = useParams<{ storyId: string }>();
@@ -42,13 +35,17 @@ export default function ShortStoryDetail() {
   const location = useLocation();
   const mobile = useIsMobile();
   const { token } = theme.useToken();
-  const { currentStory, setCurrentStory, loading, setLoading } = useShortStoryStore();
+  const { currentStory, setCurrentStory, updateCurrentStory, loading, setLoading } = useShortStoryStore();
+  // 用于取消旧的 loadStory 请求：每次调用自增，请求返回时若 ID 不匹配则忽略结果
+  const loadStoryRequestIdRef = useRef(0);
   const [collapsed, setCollapsed] = useState<boolean>(() => getStoredSidebarCollapsed());
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [coverLoading, setCoverLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exportFormat, setExportFormat] = useState<'markdown' | 'txt'>('markdown');
+  // Task 39.5: 发布预览
+  const [previewModalOpen, setPreviewModalOpen] = useState(false);
 
   // 切回桌面端时自动关闭抽屉
   useEffect(() => {
@@ -63,17 +60,25 @@ export default function ShortStoryDetail() {
 
   const loadStory = async () => {
     if (!storyId) return;
+    // 自增请求 ID，标记当前请求为最新；旧请求返回时若 ID 不匹配则忽略结果
+    const requestId = ++loadStoryRequestIdRef.current;
     try {
       setLoading(true);
       setLoadError(null);
       const story = await shortStoryApi.get(storyId);
+      // 已被新请求取代，丢弃旧结果（防止快速切换时旧请求覆盖新数据）
+      if (requestId !== loadStoryRequestIdRef.current) return;
       setCurrentStory(story);
     } catch (error) {
+      if (requestId !== loadStoryRequestIdRef.current) return;
       const msg = error instanceof Error ? error.message : '加载失败';
       setLoadError(msg);
       showErrorToast(error, '加载短故事失败');
     } finally {
-      setLoading(false);
+      // 只有最新请求才负责清除 loading，避免旧请求误清
+      if (requestId === loadStoryRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   };
 
@@ -81,6 +86,14 @@ export default function ShortStoryDetail() {
     loadStory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storyId]);
+
+  // 组件卸载时清理 currentStory，避免返回书架再进入新故事时短暂显示旧数据
+  useEffect(() => {
+    return () => {
+      setCurrentStory(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 监听后台任务完成事件：短故事相关任务完成后自动刷新 story
   // （如后台评分完成后，Polish 页面能自动显示最新评分结果）
@@ -121,7 +134,6 @@ export default function ShortStoryDetail() {
         label: '创作管理',
         children: [
           { key: 'setup', icon: <SettingOutlined />, label: <Link to={`/short-story/${storyId}/setup`}>故事设定</Link> },
-          { key: 'emotion-curve', icon: <LineChartOutlined />, label: <Link to={`/short-story/${storyId}/emotion-curve`}>情绪曲线</Link> },
           { key: 'content', icon: <EditOutlined />, label: <Link to={`/short-story/${storyId}/content`}>正文创作</Link> },
           { key: 'polish', icon: <CheckSquareOutlined />, label: <Link to={`/short-story/${storyId}/polish`}>精修笔记</Link> },
         ],
@@ -134,7 +146,6 @@ export default function ShortStoryDetail() {
   const menuItemsCollapsed: MenuProps['items'] = useMemo(
     () => [
       { key: 'setup', icon: <SettingOutlined />, label: <Link to={`/short-story/${storyId}/setup`}>故事设定</Link> },
-      { key: 'emotion-curve', icon: <LineChartOutlined />, label: <Link to={`/short-story/${storyId}/emotion-curve`}>情绪曲线</Link> },
       { key: 'content', icon: <EditOutlined />, label: <Link to={`/short-story/${storyId}/content`}>正文创作</Link> },
       { key: 'polish', icon: <CheckSquareOutlined />, label: <Link to={`/short-story/${storyId}/polish`}>精修笔记</Link> },
     ],
@@ -144,7 +155,6 @@ export default function ShortStoryDetail() {
   const selectedKey = useMemo(() => {
     const path = location.pathname;
     if (path.includes('/setup')) return 'setup';
-    if (path.includes('/emotion-curve')) return 'emotion-curve';
     if (path.includes('/content')) return 'content';
     if (path.includes('/polish')) return 'polish';
     return 'setup';
@@ -155,7 +165,12 @@ export default function ShortStoryDetail() {
     try {
       setCoverLoading(true);
       const res = await shortStoryApi.generateCover(currentStory.id);
-      setCurrentStory({ ...currentStory, cover_image_url: res.cover_image_url });
+      // 使用 updateCurrentStory 合并全部封面相关字段，避免手动 spread 丢失 cover_status/cover_prompt
+      updateCurrentStory({
+        cover_image_url: res.cover_image_url,
+        cover_status: res.cover_status,
+        cover_prompt: res.cover_prompt,
+      });
       message.success('封面已生成');
     } catch (error) {
       showErrorToast(error, '生成封面失败');
@@ -183,18 +198,6 @@ export default function ShortStoryDetail() {
     } catch (error) {
       showErrorToast(error, '导出失败，请重试');
     }
-  };
-
-  // 导出格式说明
-  const exportFormatMeta: Record<'markdown' | 'txt', { label: string; tip: string }> = {
-    markdown: {
-      label: 'Markdown 电子书（推荐）',
-      tip: '含元信息头（类型/状态/字数/情绪目标）、故事设定（梗概/反转/题材/平台）、正文，可在 VS Code / Typora 大纲栏快速跳转，可转换为 EPUB/PDF。',
-    },
-    txt: {
-      label: 'TXT 纯文本',
-      tip: '仅标题+正文，纯文本格式，便于复制粘贴到其他平台或再次拆书导入。',
-    },
   };
 
   // 加载失败显示重试（对齐长篇小说）
@@ -226,13 +229,15 @@ export default function ShortStoryDetail() {
     );
   }
 
-  const statusCfg = STATUS_CONFIG[currentStory.status] || STATUS_CONFIG.planning;
+  const statusCfg = STORY_STATUS_CONFIG[currentStory.status] || STORY_STATUS_CONFIG.planning;
   const desktopSiderWidth = collapsed ? COLLAPSED_SIDER_WIDTH : EXPANDED_SIDER_WIDTH;
   const headerHeight = mobile ? 56 : HEADER_HEIGHT;
 
-  // 顶栏右侧统计卡片
+  // 顶栏右侧统计卡片（移动端隐藏统计卡片，仅保留封面按钮，避免顶栏拥挤）
   const statsActions = (
     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      {!mobile && (
+        <>
       <div
         className="glass-card"
         style={{
@@ -286,10 +291,32 @@ export default function ShortStoryDetail() {
           <span style={{ fontSize: 9, marginLeft: 2, opacity: 0.7 }}>字</span>
         </span>
       </div>
+        </>
+      )}
+      <Dropdown
+        menu={{
+          items: [
+            { key: 'cover', label: '生成封面', icon: <PictureOutlined /> },
+            { key: 'preview', label: '发布预览', icon: <EyeOutlined /> },
+          ],
+          onClick: ({ key }) => {
+            if (key === 'cover') handleGenerateCover();
+            else if (key === 'preview') setPreviewModalOpen(true);
+          },
+        }}
+        placement="bottomRight"
+      >
+        <Button
+          type="text"
+          icon={<PictureOutlined />}
+          loading={coverLoading}
+          title="生成封面"
+        />
+      </Dropdown>
     </div>
   );
 
-  // 侧边栏底部额外区域：导出 + 封面 + 返回主页
+  // 侧边栏底部额外区域：导出 + 返回主页
   const footerExtra = (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: collapsed ? '0' : '0 4px' }}>
       {collapsed ? (
@@ -328,14 +355,6 @@ export default function ShortStoryDetail() {
               导出
             </Button>
           </Dropdown>
-          <Button
-            icon={<PictureOutlined />}
-            block
-            loading={coverLoading}
-            onClick={handleGenerateCover}
-          >
-            生成封面
-          </Button>
           <Button
             type="text"
             icon={<ArrowLeftOutlined />}
@@ -381,10 +400,10 @@ export default function ShortStoryDetail() {
               <Text
                 style={{
                   fontSize: 12,
-                  color: statusCfg.color === 'green' ? token.colorSuccess : token.colorTextSecondary,
+                  color: currentStory.status === 'writing' ? token.colorSuccess : token.colorTextSecondary,
                 }}
               >
-                · {statusCfg.text}
+                · {statusCfg.label}
               </Text>
             </div>
           }
@@ -474,64 +493,54 @@ export default function ShortStoryDetail() {
       {/* 后台任务浮窗（复用长篇小说 FloatingTaskPanel，传 storyId 作为 scope） */}
       <FloatingTaskPanel projectId={currentStory.id} />
 
-      {/* 导出确认弹窗（对齐长篇小说 Chapters.tsx 的导出体验） */}
-      <Modal
-        title="导出短故事"
+      {/* 导出确认弹窗（共享组件 ExportConfirmModal） */}
+      <ExportConfirmModal
         open={exportModalOpen}
         onCancel={() => setExportModalOpen(false)}
-        onOk={handleConfirmExport}
-        okText="确定导出"
-        cancelText="取消"
+        onConfirm={handleConfirmExport}
+        format={exportFormat}
+        onFormatChange={setExportFormat}
+        subjectName={currentStory.title}
+        wordCount={currentStory.current_words}
+        extraInfo={
+          currentStory.target_platform ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <Text type="secondary" style={{ fontSize: 13 }}>目标平台：</Text>
+              <Tag color="blue">{currentStory.target_platform}</Tag>
+              <Text type="warning" style={{ fontSize: 12 }}>格式适配开发中（导出文件名将附带平台后缀）</Text>
+            </div>
+          ) : null
+        }
+      />
+
+      {/* Task 39.5: 发布预览 Modal（按 target_platform 模拟排版） */}
+      <Modal
+        title="发布预览"
+        open={previewModalOpen}
+        onCancel={() => setPreviewModalOpen(false)}
+        footer={<Button onClick={() => setPreviewModalOpen(false)}>关闭</Button>}
+        width={mobile ? '100%' : 720}
         centered
       >
-        <div style={{ marginBottom: 12 }}>
-          <Text strong>《{currentStory.title}》</Text>
-          <Text type="secondary" style={{ marginLeft: 8 }}>
-            共 {currentStory.current_words} 字
-          </Text>
+        <div>
+          <Typography.Title level={3} style={{ marginBottom: 8 }}>
+            {currentStory.title}
+          </Typography.Title>
+          <div style={{ marginBottom: 12, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            {currentStory.target_platform && <Tag color="blue">{currentStory.target_platform}</Tag>}
+            {currentStory.genre && <Tag>{currentStory.genre}</Tag>}
+            <Text type="secondary" style={{ fontSize: 12 }}>共 {currentStory.current_words} 字</Text>
+          </div>
+          {currentStory.logline && (
+            <Typography.Paragraph type="secondary" style={{ fontStyle: 'italic', marginBottom: 0 }}>
+              {currentStory.logline}
+            </Typography.Paragraph>
+          )}
+          <Divider style={{ margin: '12px 0' }} />
+          <Typography.Paragraph style={{ whiteSpace: 'pre-wrap', lineHeight: 1.9, fontSize: 15, marginBottom: 0 }}>
+            {currentStory.content || '(暂无正文)'}
+          </Typography.Paragraph>
         </div>
-        <div
-          style={{
-            display: 'flex',
-            gap: 12,
-            marginBottom: 16,
-          }}
-        >
-          {(['markdown', 'txt'] as const).map((fmt) => {
-            const meta = exportFormatMeta[fmt];
-            const selected = exportFormat === fmt;
-            return (
-              <div
-                key={fmt}
-                onClick={() => setExportFormat(fmt)}
-                style={{
-                  flex: 1,
-                  padding: 12,
-                  border: `2px solid ${selected ? token.colorPrimary : token.colorBorderSecondary}`,
-                  borderRadius: 8,
-                  cursor: 'pointer',
-                  background: selected ? alphaColor(token.colorPrimary, 0.06) : 'transparent',
-                  transition: 'all 0.2s',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                  {fmt === 'markdown' ? (
-                    <FileMarkdownOutlined style={{ color: token.colorPrimary, fontSize: 18 }} />
-                  ) : (
-                    <FileTextOutlined style={{ color: token.colorTextSecondary, fontSize: 18 }} />
-                  )}
-                  <Text strong>{meta.label}</Text>
-                </div>
-                <Text type="secondary" style={{ fontSize: 12, lineHeight: 1.5 }}>
-                  {meta.tip}
-                </Text>
-              </div>
-            );
-          })}
-        </div>
-        <Text type="secondary" style={{ fontSize: 12 }}>
-          导出后将以文件下载方式保存到本地。
-        </Text>
       </Modal>
     </Layout>
   );

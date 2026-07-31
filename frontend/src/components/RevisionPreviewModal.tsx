@@ -1,12 +1,13 @@
 import { useState } from 'react';
-import { Modal, Button, Typography, Tag, Row, Col, message } from 'antd';
+import { Modal, Button, Typography, Tag, Row, Col, message, theme } from 'antd';
 import { CheckOutlined, CloseOutlined, SwapOutlined } from '@ant-design/icons';
+import ReactDiffViewer from 'react-diff-viewer-continued';
 import { shortStoryApi } from '../services/api';
 import { showErrorToast } from '../utils/errorHandler';
 import type { RevisionPreview } from '../types';
 import { formatWordCount } from '../utils/format';
 
-const { Text, Paragraph } = Typography;
+const { Text } = Typography;
 
 interface RevisionPreviewModalProps {
   open: boolean;
@@ -28,13 +29,14 @@ export default function RevisionPreviewModal({
   onConfirmed,
 }: RevisionPreviewModalProps) {
   const [confirming, setConfirming] = useState(false);
+  const { token } = theme.useToken();
 
-  if (!preview) return null;
-
-  const isImprove = preview.revision_type === 'improve';
-  const wordsDiff = preview.new_words - preview.original_words;
+  // 不再提前 return null：始终渲染 Modal，由 open 控制，保留关闭动画
+  const isImprove = preview?.revision_type === 'improve';
+  const wordsDiff = preview ? preview.new_words - preview.original_words : 0;
 
   const handleConfirm = async () => {
+    if (!preview) return;
     try {
       setConfirming(true);
       const result = await shortStoryApi.confirmRevision(storyId, {
@@ -56,7 +58,7 @@ export default function RevisionPreviewModal({
 
   return (
     <Modal
-      open={open}
+      open={open && !!preview}
       onCancel={onCancel}
       title={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -86,39 +88,39 @@ export default function RevisionPreviewModal({
       ]}
     >
       {/* 字数对比信息 */}
-      <div style={{ marginBottom: 16, padding: 12, background: '#fafafa', borderRadius: 8 }}>
+      <div style={{ marginBottom: 16, padding: 12, background: token.colorFillQuaternary, borderRadius: 8 }}>
         <Row gutter={16} align="middle">
           <Col>
             <Text type="secondary">原文字数：</Text>
-            <Text strong>{formatWordCount(preview.original_words)}</Text>
+            <Text strong>{formatWordCount(preview?.original_words ?? 0)}</Text>
           </Col>
           <Col>
-            <SwapOutlined style={{ color: '#999' }} />
+            <SwapOutlined style={{ color: token.colorTextTertiary }} />
           </Col>
           <Col>
             <Text type="secondary">修改后：</Text>
-            <Text strong>{formatWordCount(preview.new_words)}</Text>
+            <Text strong>{formatWordCount(preview?.new_words ?? 0)}</Text>
             <Tag
-              color={wordsDiff > 0 ? 'orange' : wordsDiff < 0 ? 'green' : 'default'}
+              color={wordsDiff > 0 ? 'blue' : wordsDiff < 0 ? 'default' : 'default'}
               style={{ marginLeft: 8 }}
             >
               {wordsDiff > 0 ? `+${wordsDiff}` : wordsDiff} 字
             </Tag>
           </Col>
-          {isImprove && preview.score_total != null && (
+          {isImprove && preview?.score_total != null && (
             <Col>
               <Text type="secondary">原评分：</Text>
-              <Text strong style={{ color: '#722ed1' }}>
+              <Text strong style={{ color: token.colorPrimary }}>
                 {preview.score_total}/100（{preview.score_level}）
               </Text>
             </Col>
           )}
         </Row>
-        {isImprove && preview.top_issues && preview.top_issues.length > 0 && (
+        {isImprove && preview?.top_issues && preview.top_issues.length > 0 && (
           <div style={{ marginTop: 8 }}>
             <Text type="secondary" style={{ fontSize: 12 }}>本次重点解决：</Text>
             {preview.top_issues.map((issue, i) => (
-              <Tag key={i} color="red" style={{ marginLeft: 4, fontSize: 12 }}>
+              <Tag key={i} color="error" style={{ marginLeft: 4, fontSize: 12 }}>
                 {issue}
               </Tag>
             ))}
@@ -133,61 +135,22 @@ export default function RevisionPreviewModal({
         )}
       </div>
 
-      {/* 左右对比 */}
-      <Row gutter={16}>
-        <Col span={12}>
-          <div
-            style={{
-              border: '1px solid #d9d9d9',
-              borderRadius: 8,
-              height: '50vh',
-              overflow: 'auto',
-              padding: 12,
-              background: '#fffbe6',
-            }}
-          >
-            <div style={{ marginBottom: 8, paddingBottom: 8, borderBottom: '1px solid #ffe58f' }}>
-              <Tag color="warning">原文（修改前）</Tag>
-            </div>
-            <Paragraph
-              style={{
-                whiteSpace: 'pre-wrap',
-                fontSize: 14,
-                lineHeight: 1.8,
-                margin: 0,
-              }}
-            >
-              {preview.original_content}
-            </Paragraph>
-          </div>
-        </Col>
-        <Col span={12}>
-          <div
-            style={{
-              border: '1px solid #d9d9d9',
-              borderRadius: 8,
-              height: '50vh',
-              overflow: 'auto',
-              padding: 12,
-              background: '#f6ffed',
-            }}
-          >
-            <div style={{ marginBottom: 8, paddingBottom: 8, borderBottom: '1px solid #b7eb8f' }}>
-              <Tag color="success">修改后（AI {isImprove ? '改进' : '精修'}）</Tag>
-            </div>
-            <Paragraph
-              style={{
-                whiteSpace: 'pre-wrap',
-                fontSize: 14,
-                lineHeight: 1.8,
-                margin: 0,
-              }}
-            >
-              {preview.new_content}
-            </Paragraph>
-          </div>
-        </Col>
-      </Row>
+      {/* 行级 diff 对比（react-diff-viewer-continued，splitView 左右并排高亮新增/删除行） */}
+      <div style={{ border: `1px solid ${token.colorBorder}`, borderRadius: 8, overflow: 'hidden' }}>
+        <ReactDiffViewer
+          oldValue={preview?.original_content ?? ''}
+          newValue={preview?.new_content ?? ''}
+          splitView={true}
+          leftTitle="原文（修改前）"
+          rightTitle={`修改后（AI ${isImprove ? '改进' : '精修'}）`}
+          useDarkTheme={false}
+          hideLineNumbers={false}
+          styles={{
+            contentText: { fontSize: 14, lineHeight: 1.8 },
+            lineNumber: { fontSize: 12 },
+          }}
+        />
+      </div>
     </Modal>
   );
 }

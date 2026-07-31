@@ -72,6 +72,7 @@ import type {
   BatchAnalyzeUnanalyzedResponse,
   PolishChecklistItem,
   RevisionPreview,
+  ShortStoryCharacter,
 } from '../types';
 
 interface MCPPluginSimpleCreate {
@@ -1043,10 +1044,6 @@ export const shortStoryApi = {
   generateSegment: (id: string, segmentStage: string) =>
     api.post<unknown, { content: string }>(`/short-stories/${id}/generate-segment`, { segment_stage: segmentStage }),
 
-  // AI精修润色
-  polish: (id: string) =>
-    api.post<unknown, RevisionPreview>(`/short-stories/${id}/polish`),
-
   // 导出Markdown
   exportMarkdown: (id: string) => {
     window.open(`/api/short-stories/${id}/export-markdown`, '_blank');
@@ -1059,7 +1056,7 @@ export const shortStoryApi = {
 
   // 生成封面
   generateCover: (id: string) =>
-    api.post<unknown, { cover_status: string; cover_image_url: string; cover_prompt: string; message: string }>(`/short-stories/${id}/generate-cover`),
+    api.post<unknown, { cover_status: 'none' | 'generating' | 'ready' | 'failed'; cover_image_url: string; cover_prompt: string; message: string }>(`/short-stories/${id}/generate-cover`),
 
   // AI一键生成完整短故事（设定+全文）
   generateFull: (data: { initial_idea: string; target_words?: number; emotion_goal?: string; target_platform?: string }) =>
@@ -1076,10 +1073,6 @@ export const shortStoryApi = {
   // 获取短故事评分结果
   getScore: (id: string) =>
     api.get<unknown, StoryScoreResult>(`/short-stories/${id}/score`),
-
-  // 基于AI评分改进点生成修改预览（不直接写入DB，需用户确认）
-  improveFromScore: (id: string) =>
-    api.post<unknown, RevisionPreview>(`/short-stories/${id}/improve-from-score`),
 
   // AI自动检查自查清单（逐项检查并标记通过/不通过）
   autoCheck: (id: string) =>
@@ -1102,6 +1095,11 @@ export const shortStoryApi = {
       original_words: number;
       message: string;
     }>(`/short-stories/${id}/confirm-revision`, data),
+
+  // 确认AI重新生成正文（用户预览对比后确认保存，原内容备份到版本历史）
+  // 对应后端 POST /short-stories/{id}/confirm-regenerate
+  confirmRegenerate: (id: string, newContent: string) =>
+    api.post<unknown, ShortStory>(`/short-stories/${id}/confirm-regenerate`, { new_content: newContent }),
 
   // ============ SSE 流式方法 ============
 
@@ -1141,6 +1139,34 @@ export const shortStoryApi = {
   scoreBackground: (id: string) =>
     api.post<unknown, { task_id: string; task_type: string; status: string; message: string }>(
       `/short-stories/${id}/score-background`
+    ),
+
+  // ============ Task 38: 价值对等 - AI 生成为主 ============
+
+  // AI生成铺垫线索（Task 38.1）
+  generateClues: (id: string, params: { title?: string; logline?: string; genre?: string }) =>
+    api.post<unknown, { clues: string[] }>(`/short-stories/${id}/generate-clues`, params),
+
+  // AI生成标签化人设（Task 38.2）
+  generateCharacters: (id: string, params: { title?: string; logline?: string; genre?: string }) =>
+    api.post<unknown, { characters: ShortStoryCharacter[] }>(`/short-stories/${id}/generate-characters`, params),
+
+  // AI一键补全设定（Task 38.3）：基于最小输入生成 logline/twist/clues/characters
+  autoCompleteSetup: (id: string, params: { title: string; genre?: string; emotion_goal?: string }) =>
+    api.post<unknown, {
+      logline: string;
+      twist_type: string;
+      twist_content: string;
+      clues: string[];
+      characters: ShortStoryCharacter[];
+    }>(`/short-stories/${id}/auto-complete-setup`, params),
+
+  // ============ Task 39: 功能补全 ============
+
+  // 获取正文版本历史（Task 39.1）
+  getRevisionHistory: (id: string) =>
+    api.get<unknown, Array<{ content: string; saved_at: string; revision_type: string }>>(
+      `/short-stories/${id}/revision-history`
     ),
 };
 export const shortInspirationApi = {

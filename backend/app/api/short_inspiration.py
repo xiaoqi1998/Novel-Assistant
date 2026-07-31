@@ -33,9 +33,15 @@ STEP_GUIDE = {
 @router.post("/generate-options", response_model=GenerateOptionsResponse, summary="生成短故事灵感选项")
 async def generate_options(
     req: GenerateOptionsRequest,
+    request: Request,
     ai_service: AIService = Depends(get_user_ai_service),
 ):
     try:
+        # 显式鉴权：对齐 short_stories.py 风格，从 request.state 取用户身份
+        user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="未登录")
+
         if req.step not in STEP_GUIDE:
             raise HTTPException(status_code=400, detail=f"不支持的步骤: {req.step}，支持: emotion_goal/logline/twist/genre")
 
@@ -48,6 +54,10 @@ async def generate_options(
         options = result.get("options", [])
         guide = STEP_GUIDE.get(req.step, "")
 
+        logger.info(
+            f"生成短故事灵感选项成功: user_id={user_id}, step={req.step}, "
+            f"options_count={len(options) if isinstance(options, list) else 0}"
+        )
         return GenerateOptionsResponse(
             prompt=guide,
             options=options if isinstance(options, list) else [],

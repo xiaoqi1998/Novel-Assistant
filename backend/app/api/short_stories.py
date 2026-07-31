@@ -1,11 +1,11 @@
 """短故事管理API"""
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func, delete, update
 from pydantic import BaseModel
 from typing import Optional
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 import json
 import re
 import os
@@ -14,11 +14,14 @@ from datetime import datetime
 
 from app.database import get_db
 from app.models.short_story import ShortStory
+from app.models.background_task import BackgroundTask
 from app.schemas.short_story import (
     ShortStoryCreate,
     ShortStoryUpdate,
     ShortStoryResponse,
-    ShortStoryListResponse
+    ShortStoryListResponse,
+    RegeneratePreviewResponse,
+    ConfirmRegenerateRequest
 )
 from app.services.ai_service import AIService
 from app.services.short_story_ai_service import ShortStoryAIService, FullStoryGenerator, StoryScorer, StoryImprover, ChecklistChecker
@@ -185,13 +188,13 @@ async def create_short_story(
         raise
     except Exception as e:
         logger.error(f"创建短故事失败: {str(e)}", exc_info=True)
-        raise
+        raise HTTPException(status_code=500, detail=f"创建短故事失败: {str(e)}")
 
 
 @router.get("", response_model=ShortStoryListResponse, summary="获取短故事列表")
 async def get_short_stories(
     skip: int = 0,
-    limit: int = 100,
+    limit: int = Query(default=100, le=200, ge=1),
     db: AsyncSession = Depends(get_db),
     request: Request = None
 ):
@@ -219,7 +222,7 @@ async def get_short_stories(
         raise
     except Exception as e:
         logger.error(f"获取短故事列表失败: {str(e)}", exc_info=True)
-        raise
+        raise HTTPException(status_code=500, detail=f"获取短故事列表失败: {str(e)}")
 
 
 @router.get("/{story_id}", response_model=ShortStoryResponse, summary="获取短故事详情")
@@ -247,7 +250,7 @@ async def get_short_story(
         raise
     except Exception as e:
         logger.error(f"获取短故事详情失败: {str(e)}", exc_info=True)
-        raise
+        raise HTTPException(status_code=500, detail=f"获取短故事详情失败: {str(e)}")
 
 
 @router.put("/{story_id}", response_model=ShortStoryResponse, summary="更新短故事")
@@ -274,26 +277,47 @@ async def update_short_story(
 
         update_data = story_update.model_dump(exclude_unset=True)
 
-        # 如果更新了正文，重新计算字数和分段
-        if 'content' in update_data:
-            target_words = story.target_words or 12000
-            new_content = update_data['content'] or ""
-            update_data['current_words'] = _count_chinese_and_punctuation(new_content)
-            update_data['segments'], _ = _recalc_segments_from_content(
-                new_content, target_words, story.segments
-            )
+        # 重算分段：content 和 target_words 独立处理，避免互相覆盖丢失 actual_words/target_words
+        # - 仅 target_words 变更：基于新 target_words 重算 target_words，保留原 actual_words
+        # - 仅 content 变更：基于新 content 重算 actual_words，保留原 target_words
+        # - 两者都变更：基于新 content + 新 target_words 一起重算
+        has_content = 'content' in update_data
+        has_target_words = 'target_words' in update_data and update_data['target_words']
+        if has_content or has_target_words:
+            new_content = update_data['content'] if has_content else (story.content or "")
+            target_words = update_data['target_words'] if has_target_words else (story.target_words or 12000)
+            if has_content:
+                update_data['current_words'] = _count_chinese_and_punctuation(new_content)
 
-        # 如果更新了目标字数，重新计算分段的目标字数
-        if 'target_words' in update_data and update_data['target_words']:
-            target_words = update_data['target_words']
-            existing_segments = story.segments
+            # 解析现有 segments
             try:
-                segments = json.loads(existing_segments) if existing_segments else []
-                for seg in segments:
-                    seg['target_words'] = int(target_words * seg.get('target_ratio', 0))
-                update_data['segments'] = json.dumps(segments, ensure_ascii=False)
+                segments = json.loads(story.segments) if story.segments else []
             except (json.JSONDecodeError, TypeError):
-                update_data['segments'] = _build_default_segments(target_words)
+                segments = json.loads(_build_default_segments(target_words))
+            if not segments:
+                segments = json.loads(_build_default_segments(target_words))
+
+            if has_content and has_target_words:
+                # 两者都变更：基于新 content + 新 target_words 一起重算
+                update_data['segments'], _ = _recalc_segments_from_content(
+                    new_content, target_words, story.segments
+                )
+            elif has_content:
+                # 仅 content 变更：重算 actual_words，保留原 target_words
+                total_words = _count_chinese_and_punctuation(new_content)
+                for seg in segments:
+                    if total_words > 0:
+                        seg["actual_words"] = int(total_words * seg["target_ratio"])
+                        seg["status"] = "completed"
+                    else:
+                        seg["actual_words"] = 0
+                        seg["status"] = "pending"
+                update_data['segments'] = json.dumps(segments, ensure_ascii=False)
+            else:
+                # 仅 target_words 变更：重算 target_words，保留原 actual_words 和 status
+                for seg in segments:
+                    seg["target_words"] = int(target_words * seg["target_ratio"])
+                update_data['segments'] = json.dumps(segments, ensure_ascii=False)
 
         for field, value in update_data.items():
             setattr(story, field, value)
@@ -309,7 +333,7 @@ async def update_short_story(
         raise
     except Exception as e:
         logger.error(f"更新短故事失败: {str(e)}", exc_info=True)
-        raise
+        raise HTTPException(status_code=500, detail=f"更新短故事失败: {str(e)}")
 
 
 @router.delete("/{story_id}", summary="删除短故事")
@@ -333,6 +357,11 @@ async def delete_short_story(
         if not story:
             raise HTTPException(status_code=404, detail="短故事不存在")
 
+        # 删除关联的后台任务记录（project_id=story_id），避免残留孤儿任务
+        await db.execute(
+            delete(BackgroundTask).where(BackgroundTask.project_id == story_id)
+        )
+
         await db.delete(story)
         await db.commit()
         logger.info(f"删除短故事: story_id={story_id}, user_id={user_id}")
@@ -341,7 +370,7 @@ async def delete_short_story(
         raise
     except Exception as e:
         logger.error(f"删除短故事失败: {str(e)}", exc_info=True)
-        raise
+        raise HTTPException(status_code=500, detail=f"删除短故事失败: {str(e)}")
 
 
 # ============ AI 生成端点 ============
@@ -582,11 +611,11 @@ async def export_markdown(
         if not story:
             raise HTTPException(status_code=404, detail="短故事不存在")
 
-        # 构建安全文件名
-        safe_title = re.sub(r'[^\w\u4e00-\u9fa5\s\-_，。、]', '', story.title)[:50].strip() or "短故事"
+        # 构建安全文件名（对齐 projects.py 的 isalnum 白名单策略）
+        safe_title = "".join(c for c in (story.title or "短故事") if c.isalnum() or c in (' ', '-', '_', '，', '。', '、'))[:50].strip() or "短故事"
         safe_title = safe_title.replace(' ', '_')
 
-        status_map = {"planning": "规划中", "writing": "创作中", "polishing": "精修中", "completed": "已完结"}
+        status_map = {"planning": "规划中", "writing": "创作中", "generating": "生成中", "generated": "已生成", "polishing": "精修中", "completed": "已完结"}
         export_time = datetime.now().strftime("%Y-%m-%d %H:%M")
 
         logger.info(f"导出Markdown: story_id={story_id}, title={story.title}, words={story.current_words}")
@@ -632,7 +661,7 @@ async def export_markdown(
         raise
     except Exception as e:
         logger.error(f"导出短故事Markdown失败: {str(e)}", exc_info=True)
-        raise
+        raise HTTPException(status_code=500, detail=f"导出失败: {str(e)}")
 
 
 @router.get("/{story_id}/export-txt", summary="导出短故事为TXT")
@@ -653,7 +682,7 @@ async def export_txt(
         if not story:
             raise HTTPException(status_code=404, detail="短故事不存在")
 
-        safe_title = re.sub(r'[^\w\u4e00-\u9fa5\s\-_，。、]', '', story.title)[:50].strip() or "短故事"
+        safe_title = "".join(c for c in (story.title or "短故事") if c.isalnum() or c in (' ', '-', '_', '，', '。', '、'))[:50].strip() or "短故事"
         safe_title = safe_title.replace(' ', '_')
 
         txt = f"""{story.title}
@@ -673,7 +702,7 @@ async def export_txt(
         raise
     except Exception as e:
         logger.error(f"导出短故事TXT失败: {str(e)}", exc_info=True)
-        raise
+        raise HTTPException(status_code=500, detail=f"导出失败: {str(e)}")
 
 
 # ============ 封面生成端点 ============
@@ -695,9 +724,6 @@ async def generate_cover(
         story = result.scalar_one_or_none()
         if not story:
             raise HTTPException(status_code=404, detail="短故事不存在")
-
-        if story.cover_status == "generating":
-            raise HTTPException(status_code=409, detail="封面正在生成中，请稍候")
 
         # 延迟导入，避免循环依赖
         from app.services.cover_generation_service import (
@@ -723,9 +749,22 @@ async def generate_cover(
         # 构建封面提示词（复用 PromptService）
         cover_prompt = await PromptService.build_novel_cover_prompt(story, user_id, db)
 
-        story.cover_status = "generating"
-        story.cover_prompt = cover_prompt
+        # 原子加锁：仅当 cover_status != 'generating' 时置为 generating，避免并发竞态
+        # 根据 affected_rows 判断是否成功获取到锁
+        old_cover_url = story.cover_image_url
+        lock_result = await db.execute(
+            update(ShortStory)
+            .where(
+                ShortStory.id == story_id,
+                ShortStory.user_id == user_id,
+                ShortStory.cover_status != "generating",
+            )
+            .values(cover_status="generating", cover_prompt=cover_prompt)
+        )
+        if lock_result.rowcount == 0:
+            raise HTTPException(status_code=409, detail="封面正在生成中，请稍候")
         await db.commit()
+        await db.refresh(story)
         logger.info(f"开始生成封面: story_id={story_id}, title={story.title}")
 
         try:
@@ -756,6 +795,18 @@ async def generate_cover(
             await db.refresh(story)
             logger.info(f"封面生成成功: story_id={story_id}, cover_url={cover_url}")
 
+            # 重新生成时清理旧封面文件，避免文件泄漏
+            if old_cover_url:
+                try:
+                    old_filename = unquote(old_cover_url.rsplit("/", 1)[-1])
+                    old_file_path = GENERATED_COVER_STORAGE_DIR / user_id / old_filename
+                    if os.path.exists(old_file_path):
+                        os.remove(old_file_path)
+                except Exception as cleanup_err:
+                    logger.warning(
+                        f"清理旧封面文件失败(忽略): story_id={story_id}, error={cleanup_err}"
+                    )
+
             return {
                 "cover_status": "ready",
                 "cover_image_url": cover_url,
@@ -775,7 +826,7 @@ async def generate_cover(
         raise
     except Exception as e:
         logger.error(f"生成短故事封面失败: {str(e)}", exc_info=True)
-        raise
+        raise HTTPException(status_code=500, detail=f"生成短故事封面失败: {str(e)}")
 
 
 # ============ 端到端生成端点 ============
@@ -897,16 +948,17 @@ async def generate_full_story(
         raise HTTPException(status_code=500, detail=f"生成失败: {str(e)}")
 
 
-@router.post("/{story_id}/regenerate", summary="AI重新生成现有短故事的正文（更新而非新建）")
+@router.post("/{story_id}/regenerate", summary="AI重新生成现有短故事的正文（返回预览，需确认后写库）")
 async def regenerate_story(
     story_id: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
     ai_service: AIService = Depends(get_user_ai_service),
 ):
-    """对已有短故事重新AI生成正文，更新当前记录而非创建新记录。
+    """对已有短故事重新AI生成正文，返回预览数据（不写库）。
 
-    保留原story_id，覆盖title/logline/content等字段。
+    保留原story_id；用户预览对比后需调用 confirm-regenerate 端点确认写库。
+    原文会在确认时备份到 revision_history。
     """
     try:
         user_id = getattr(request.state, 'user_id', None)
@@ -920,11 +972,21 @@ async def regenerate_story(
         if not story:
             raise HTTPException(status_code=404, detail="短故事不存在")
 
+        original_content = story.content or ""
+        original_words = story.current_words or _count_chinese_and_punctuation(original_content)
         initial_idea = story.logline or story.title or "重写一个精彩短故事"
         logger.info(
-            f"开始AI重新生成短故事: story_id={story_id}, idea={initial_idea[:50]}, "
+            f"开始AI重新生成短故事(预览): story_id={story_id}, idea={initial_idea[:50]}, "
             f"target_words={story.target_words}"
         )
+
+        # 标记为生成中，清空旧评分和失效封面（不覆盖 content，content 由 confirm-regenerate 写入）
+        story.status = "generating"
+        story.score_data = None
+        story.scored_at = None
+        if story.cover_status not in ("ready", "completed"):
+            story.cover_status = "none"
+        await db.commit()
 
         try:
             story_data = await FullStoryGenerator.generate_full_story(
@@ -945,42 +1007,41 @@ async def regenerate_story(
         if not story_data or not story_data.get("title") or not story_data.get("content"):
             raise HTTPException(status_code=500, detail="AI生成结果不完整，原文未改动")
 
-        # 更新现有记录
-        old_words = story.current_words or 0
-        story.title = story_data["title"]
-        story.logline = story_data.get("logline", story.logline)
-        story.genre = story_data.get("genre", story.genre)
-        story.emotion_goal = story_data.get("emotion_goal", story.emotion_goal)
-        story.twist_type = story_data.get("twist_type", story.twist_type)
-        story.twist_content = story_data.get("twist_content", story.twist_content)
-        story.twist_clues = json.dumps(story_data.get("twist_clues", []), ensure_ascii=False)
-        if story_data.get("characters"):
-            story.characters = json.dumps(story_data.get("characters", []), ensure_ascii=False)
-        story.content = story_data.get("content", "")
-        story.current_words = _count_chinese_and_punctuation(story.content)
-        story.segments, _ = _recalc_segments_from_content(
-            story.content, story.target_words or 12000, story.segments
-        )
-        # 清空旧评分（内容已变）
-        story.score_data = None
-        story.scored_at = None
-        story.status = "writing"
+        new_content = story_data.get("content", "")
+        new_words = _count_chinese_and_punctuation(new_content)
 
+        # AI 生成完成，标记为已生成（content 仍不写库，由 confirm-regenerate 写入）
+        story.status = "generated"
         await db.commit()
-        await db.refresh(story)
+
+        # 不写库，返回预览数据
+        preview = {
+            "title": story_data["title"],
+            "logline": story_data.get("logline", story.logline),
+            "genre": story_data.get("genre", story.genre),
+            "emotion_goal": story_data.get("emotion_goal", story.emotion_goal),
+            "twist_type": story_data.get("twist_type", story.twist_type),
+            "twist_content": story_data.get("twist_content", story.twist_content),
+            "twist_clues": json.dumps(story_data.get("twist_clues", []), ensure_ascii=False),
+            "characters": (
+                json.dumps(story_data.get("characters", []), ensure_ascii=False)
+                if story_data.get("characters") else story.characters
+            ),
+            "content": new_content,
+            "original_content": original_content,
+            "original_words": original_words,
+            "new_words": new_words,
+            "revision_type": "regenerate",
+        }
 
         logger.info(
-            f"AI重新生成成功: story_id={story_id}, {old_words}字→{story.current_words}字"
+            f"AI重新生成预览生成(未写库): story_id={story_id}, {original_words}字→{new_words}字（待用户确认）"
         )
-        return story
+        return preview
     except HTTPException:
         raise
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        logger.error(f"AI重新生成失败(已回滚): story_id={story_id}, error={str(e)}", exc_info=True)
+        logger.error(f"AI重新生成失败: story_id={story_id}, error={str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"重新生成失败: {str(e)}")
 
 
@@ -1139,6 +1200,14 @@ async def regenerate_story_stream(
             story = result.scalar_one_or_none()
             if not story:
                 raise HTTPException(status_code=404, detail="短故事不存在")
+            # 标记为生成中，清空旧评分和失效封面（不覆盖 content）
+            story.status = "generating"
+            story.score_data = None
+            story.scored_at = None
+            if story.cover_status not in ("ready", "completed"):
+                story.cover_status = "none"
+            await temp_db.commit()
+
             story_snapshot = {
                 "id": story.id,
                 "logline": story.logline or story.title or "重写一个精彩短故事",
@@ -1146,6 +1215,8 @@ async def regenerate_story_stream(
                 "emotion_goal": story.emotion_goal or "",
                 "target_platform": story.target_platform or "知乎盐言",
                 "emotion_curve": story.emotion_curve or "",
+                "original_content": story.content or "",
+                "original_words": story.current_words or _count_chinese_and_punctuation(story.content or ""),
             }
         finally:
             await temp_db.close()
@@ -1184,43 +1255,46 @@ async def regenerate_story_stream(
                 yield await SSEResponse.send_done()
                 return
 
-            # 更新DB
+            # 不写库，构建预览数据返回（用户确认后调用 confirm-regenerate）
+            new_content = story_data.get("content", "")
+            new_words = _count_chinese_and_punctuation(new_content)
+
+            # AI 生成完成，标记为已生成（content 仍不写库）
             async for db_session in get_db(request):
-                result = await db_session.execute(
-                    select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
-                )
-                story = result.scalar_one_or_none()
-                if not story:
-                    yield await SSEResponse.send_error("短故事不存在", 404)
-                    yield await SSEResponse.send_done()
-                    break
-
-                story.title = story_data["title"]
-                story.logline = story_data.get("logline", story.logline)
-                story.genre = story_data.get("genre", story.genre)
-                story.emotion_goal = story_data.get("emotion_goal", story.emotion_goal)
-                story.twist_type = story_data.get("twist_type", story.twist_type)
-                story.twist_content = story_data.get("twist_content", story.twist_content)
-                story.twist_clues = json.dumps(story_data.get("twist_clues", []), ensure_ascii=False)
-                if story_data.get("characters"):
-                    story.characters = json.dumps(story_data.get("characters", []), ensure_ascii=False)
-                story.content = story_data.get("content", "")
-                story.current_words = _count_chinese_and_punctuation(story.content)
-                story.segments, _ = _recalc_segments_from_content(
-                    story.content, story.target_words or 12000, story.segments
-                )
-                story.score_data = None
-                story.scored_at = None
-                story.status = "writing"
-                await db_session.commit()
-                await db_session.refresh(story)
-
-                logger.info(f"AI流式重新生成成功: story_id={story_id}, words={story.current_words}")
-                from app.schemas.short_story import ShortStoryResponse
-                story_resp = ShortStoryResponse.model_validate(story).model_dump(mode='json')
-                yield await SSEResponse.send_result(story_resp)
+                try:
+                    await db_session.execute(
+                        update(ShortStory)
+                        .where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+                        .values(status="generated")
+                    )
+                    await db_session.commit()
+                finally:
+                    await db_session.close()
                 break
 
+            preview = {
+                "title": story_data["title"],
+                "logline": story_data.get("logline", story_snapshot["logline"]),
+                "genre": story_data.get("genre", ""),
+                "emotion_goal": story_data.get("emotion_goal", story_snapshot["emotion_goal"]),
+                "twist_type": story_data.get("twist_type", ""),
+                "twist_content": story_data.get("twist_content", ""),
+                "twist_clues": json.dumps(story_data.get("twist_clues", []), ensure_ascii=False),
+                "characters": (
+                    json.dumps(story_data.get("characters", []), ensure_ascii=False)
+                    if story_data.get("characters") else None
+                ),
+                "content": new_content,
+                "original_content": story_snapshot["original_content"],
+                "original_words": story_snapshot["original_words"],
+                "new_words": new_words,
+                "revision_type": "regenerate",
+            }
+            logger.info(
+                f"AI流式重新生成预览生成(未写库): story_id={story_id}, "
+                f"{story_snapshot['original_words']}字→{new_words}字（待用户确认）"
+            )
+            yield await SSEResponse.send_result(preview)
             yield await SSEResponse.send_done()
         except GeneratorExit:
             logger.warning("短故事流式重新生成被提前关闭（SSE断开）")
@@ -1906,10 +1980,18 @@ async def confirm_revision(
                 f"请重新评分验证改进效果。"
             )
         else:
+            # 精修类型：内容已变，同样清空过期评分（与 improve 分支对齐）
+            story.score_data = None
+            story.scored_at = None
             improve_record = (
                 f"\n---\n[AI精修润色] 原文 {original_words}字 → 精修后 {new_words}字\n"
             )
         story.polish_notes = (story.polish_notes or "") + improve_record
+        # 截断到最近 20 条记录（按记录分隔符 --- 分割），避免无限增长
+        _parts = story.polish_notes.split("---")
+        _parts = [p for p in _parts if p.strip()]
+        if len(_parts) > 20:
+            story.polish_notes = "---".join(_parts[-20:])
 
         await db.commit()
         await db.refresh(story)
@@ -1933,6 +2015,99 @@ async def confirm_revision(
         except Exception:
             pass
         logger.error(f"确认AI修改失败(已回滚): story_id={story_id}, error={str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"确认失败: {str(e)}")
+
+
+@router.post("/{story_id}/confirm-regenerate", summary="确认AI重新生成（写入新内容，原内容备份到版本历史）")
+async def confirm_regenerate(
+    story_id: str,
+    req: ConfirmRegenerateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """用户预览AI重新生成结果后确认写库。
+
+    流程：
+    1. AI重新生成预览（regenerate / regenerate-stream / regenerate-background 返回预览，不写库）
+    2. 前端展示原文vs新内容对比Modal
+    3. 用户确认后调用本端点：将当前原文存入 revision_history，再写入新内容
+    """
+    try:
+        user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="未登录")
+
+        result = await db.execute(
+            select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+        )
+        story = result.scalar_one_or_none()
+        if not story:
+            raise HTTPException(status_code=404, detail="短故事不存在")
+
+        if not req.content or len(req.content.strip()) < 50:
+            raise HTTPException(status_code=400, detail="新内容为空或过短")
+
+        # 将当前原文存入版本历史（JSON数组追加 {content, title, saved_at}）
+        try:
+            revision_history = json.loads(story.revision_history) if story.revision_history else []
+            if not isinstance(revision_history, list):
+                revision_history = []
+        except (json.JSONDecodeError, TypeError):
+            revision_history = []
+
+        revision_history.append({
+            "content": story.content or "",
+            "title": story.title or "",
+            "saved_at": datetime.now().isoformat(),
+            "revision_type": "regenerate",
+        })
+        story.revision_history = json.dumps(revision_history, ensure_ascii=False)
+
+        # 写入新内容
+        old_words = story.current_words or 0
+        story.title = req.title
+        story.logline = req.logline
+        story.genre = req.genre
+        story.emotion_goal = req.emotion_goal
+        story.twist_type = req.twist_type
+        story.twist_content = req.twist_content
+        story.twist_clues = req.twist_clues
+        story.characters = req.characters
+        story.content = req.content
+        story.current_words = _count_chinese_and_punctuation(req.content)
+        story.segments, _ = _recalc_segments_from_content(
+            req.content, story.target_words or 12000, story.segments
+        )
+        # 内容已变，清空旧评分，清失效封面
+        story.score_data = None
+        story.scored_at = None
+        if story.cover_status not in ("ready", "completed"):
+            story.cover_status = "none"
+        story.status = "generated"
+
+        await db.commit()
+        await db.refresh(story)
+
+        logger.info(
+            f"用户确认AI重新生成成功: story_id={story_id}, {old_words}字→{story.current_words}字"
+        )
+
+        return {
+            "id": story.id,
+            "title": story.title,
+            "current_words": story.current_words,
+            "status": story.status,
+            "revision_history_count": len(revision_history),
+            "message": "已确认写入新内容，原内容已备份到版本历史",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"确认AI重新生成失败(已回滚): story_id={story_id}, error={str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"确认失败: {str(e)}")
 
 
@@ -2005,7 +2180,18 @@ async def regenerate_story_background(
 
                 await tracker.loading("准备AI提示词...", 0.5)
 
-                # 调用生成器
+                original_content = bg_story.content or ""
+                original_words = bg_story.current_words or _count_chinese_and_punctuation(original_content)
+
+                # 标记为生成中，清空旧评分和失效封面（不覆盖 content）
+                bg_story.status = "generating"
+                bg_story.score_data = None
+                bg_story.scored_at = None
+                if bg_story.cover_status not in ("ready", "completed"):
+                    bg_story.cover_status = "none"
+                await bg_db.commit()
+
+                # 调用生成器（传入取消检查器，在分段之间检查取消请求）
                 story_data = await FullStoryGenerator.generate_full_story(
                     ai_service=bg_ai_service,
                     initial_idea=bg_story.logline or bg_story.title or "",
@@ -2013,35 +2199,50 @@ async def regenerate_story_background(
                     emotion_goal=bg_story.emotion_goal or "",
                     target_platform=bg_story.target_platform or "知乎盐言",
                     emotion_curve=bg_story.emotion_curve or "",
+                    cancel_checker=tracker.check_cancelled,
                 )
 
-                await tracker.generating(current_chars=0, estimated_total=bg_story.target_words or 12000, message="AI生成完成，正在保存...")
+                await tracker.generating(current_chars=0, estimated_total=bg_story.target_words or 12000, message="AI生成完成，正在准备预览...")
 
                 if not story_data or not story_data.get("content"):
                     await tracker.error("AI生成结果不完整")
                     return
 
-                # 更新故事记录
-                bg_story.title = story_data.get("title", bg_story.title)
-                bg_story.logline = story_data.get("logline", bg_story.logline)
-                bg_story.emotion_goal = story_data.get("emotion_goal", bg_story.emotion_goal)
-                bg_story.twist_type = story_data.get("twist_type", bg_story.twist_type)
-                bg_story.twist_content = story_data.get("twist_content", bg_story.twist_content)
-                bg_story.twist_clues = json.dumps(story_data.get("twist_clues", []), ensure_ascii=False)
-                bg_story.genre = story_data.get("genre", bg_story.genre)
-                bg_story.content = story_data.get("content", "")
-                bg_story.current_words = _count_chinese_and_punctuation(bg_story.content)
-                bg_story.segments, _ = _recalc_segments_from_content(
-                    bg_story.content, bg_story.target_words or 12000, bg_story.segments
-                )
-                # 重新生成后清空旧评分
-                bg_story.score_data = None
-                bg_story.scored_at = None
+                # AI 生成完成，标记为已生成（content 仍不写库，由 confirm-regenerate 写入）
+                bg_story.status = "generated"
                 await bg_db.commit()
 
-                await tracker.complete("短故事重新生成完成")
-                logger.info(f"短故事后台重写成功: story_id={story_id}, words={bg_story.current_words}")
+                # 不直接写库，构建预览数据存入 task_result（用户确认后调用 confirm-regenerate）
+                new_content = story_data.get("content", "")
+                new_words = _count_chinese_and_punctuation(new_content)
+                preview = {
+                    "title": story_data.get("title", bg_story.title),
+                    "logline": story_data.get("logline", bg_story.logline),
+                    "genre": story_data.get("genre", bg_story.genre),
+                    "emotion_goal": story_data.get("emotion_goal", bg_story.emotion_goal),
+                    "twist_type": story_data.get("twist_type", bg_story.twist_type),
+                    "twist_content": story_data.get("twist_content", bg_story.twist_content),
+                    "twist_clues": json.dumps(story_data.get("twist_clues", []), ensure_ascii=False),
+                    "characters": (
+                        json.dumps(story_data.get("characters", []), ensure_ascii=False)
+                        if story_data.get("characters") else bg_story.characters
+                    ),
+                    "content": new_content,
+                    "original_content": original_content,
+                    "original_words": original_words,
+                    "new_words": new_words,
+                    "revision_type": "regenerate",
+                }
+                await tracker.set_result(preview)
+                await tracker.complete("短故事重新生成完成，待用户确认")
+                logger.info(
+                    f"短故事后台重写预览生成(未写库): story_id={story_id}, "
+                    f"{original_words}字→{new_words}字（待用户确认）"
+                )
 
+            except asyncio.CancelledError as ce:
+                logger.warning(f"短故事后台重写已被取消: story_id={story_id}, reason={str(ce)}")
+                await tracker.error("任务已取消")
             except Exception as e:
                 logger.error(f"❌ 短故事后台重写失败: {e}", exc_info=True)
                 await tracker.error(str(e))
@@ -2125,6 +2326,10 @@ async def score_story_background(
 
                 await tracker.loading("AI正在分析选题维度...", 0.5)
 
+                # AI调用前检查取消请求
+                if await tracker.check_cancelled():
+                    raise asyncio.CancelledError("用户已取消短故事评分任务")
+
                 # 调用评分器
                 score_result = await StoryScorer.score_story(
                     ai_service=bg_ai_service,
@@ -2139,6 +2344,10 @@ async def score_story_background(
                     emotion_curve=bg_story.emotion_curve or "",
                 )
 
+                # AI调用后检查取消请求
+                if await tracker.check_cancelled():
+                    raise asyncio.CancelledError("用户已取消短故事评分任务")
+
                 await tracker.generating(current_chars=100, estimated_total=100, message="正在保存评分结果...")
 
                 # 保存评分
@@ -2152,6 +2361,9 @@ async def score_story_background(
                     f"total_score={score_result.get('total_score')}, level={score_result.get('level')}"
                 )
 
+            except asyncio.CancelledError as ce:
+                logger.warning(f"短故事后台评分已被取消: story_id={story_id}, reason={str(ce)}")
+                await tracker.error("任务已取消")
             except Exception as e:
                 logger.error(f"❌ 短故事后台评分失败: {e}", exc_info=True)
                 await tracker.error(str(e))

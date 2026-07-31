@@ -2,10 +2,11 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, Input, Button, Typography, message, Spin, Tag, theme, Space, Result, Steps, Progress } from 'antd';
 import { SendOutlined, ArrowLeftOutlined, ThunderboltOutlined, ReloadOutlined, CheckCircleOutlined, EditOutlined, BulbOutlined, ClockCircleOutlined } from '@ant-design/icons';
-import { shortInspirationApi } from '../services/api';
+import { shortInspirationApi, shortStoryApi } from '../services/api';
 import { showErrorToast } from '../utils/errorHandler';
 import { SSEPostClient } from '../utils/sseClient';
 import type { ShortStory } from '../types';
+import { EMOTION_GOAL_COLOR } from '../constants/shortStory';
 
 const { Text, Title } = Typography;
 const { TextArea } = Input;
@@ -22,11 +23,6 @@ const CREATIVE_TIPS = [
   '爆款公式：极致反差 + 道德冲突 + 强身份标签 + 迫切危机',
   '反转要早埋线索，后文揭晓才不会突兀',
   '情绪目标是故事的灵魂，决定读者读完后产生什么反应',
-  '对话承担人物塑造与剧情推进双重功能',
-  '开篇 300 字定生死，第一段必须抛出核心危机',
-  '爽感来自压抑后的释放，压制越狠反转越爽',
-  '一个具体物品的细节，胜过百字抽象描述',
-  '人物动机越强烈，读者代入越深',
   '结尾留白，让读者意难平才会反复回味',
 ];
 
@@ -57,6 +53,8 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
   const [tipIndex, setTipIndex] = useState(0);
   const [elapsedSecs, setElapsedSecs] = useState(0);
   const sseClientRef = useRef<SSEPostClient | null>(null);
+  // 记录流式生成过程中后端已创建的 storyId，用于取消时清理孤儿故事
+  const createdStoryIdRef = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -67,7 +65,7 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
   useEffect(() => {
     if (phase !== 'generating') return;
     const tickTimer = setInterval(() => setElapsedSecs((s) => s + 1), 1000);
-    const tipTimer = setInterval(() => setTipIndex((i) => (i + 1) % CREATIVE_TIPS.length), 7000);
+    const tipTimer = setInterval(() => setTipIndex((i) => (i + 1) % CREATIVE_TIPS.length), 10000);
     return () => {
       clearInterval(tickTimer);
       clearInterval(tipTimer);
@@ -90,6 +88,7 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
     setSegWordCounts([]);
     setTipIndex(0);
     setElapsedSecs(0);
+    createdStoryIdRef.current = null;
   };
 
   // 阶段1：提交想法，获取情绪目标选项
@@ -129,6 +128,14 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
   const handleCancelGenerate = () => {
     sseClientRef.current?.abort();
     sseClientRef.current = null;
+    // 清理孤儿故事：若后端已创建 story 记录但用户取消生成，则删除避免残留
+    const orphanId = createdStoryIdRef.current;
+    if (orphanId) {
+      createdStoryIdRef.current = null;
+      shortStoryApi.delete(orphanId).catch(() => {
+        // 静默失败：清理孤儿失败不阻塞用户流程
+      });
+    }
     setPhase('emotion_goal');
     resetGenState();
     message.info('已取消生成');
@@ -179,6 +186,10 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
         },
         onError: (error) => {
           showErrorToast(error, 'AI生成失败');
+        },
+        onResult: (data) => {
+          // 后端在保存后发送 result 事件，携带完整 story（含 id）；记录以便取消时清理孤儿
+          if (data?.id) createdStoryIdRef.current = data.id;
         },
       }
     );
@@ -296,9 +307,11 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
 
     // 当前段实时字数
     const currentWords = currentSegIdx >= 0 ? (segWordCounts[currentSegIdx] || 0) : 0;
-    // 已用时长 vs 预计
-    const estimatedMin = 2;
-    const estimatedMax = 5;
+    // 动态 ETA：基于已用时长和当前进度估算剩余时间（进度不足时提示计算中）
+    const etaText =
+      genProgress > 5 && elapsedSecs > 2
+        ? `预计剩余 ${formatElapsed(Math.max(0, Math.round(elapsedSecs / (genProgress / 100) - elapsedSecs)))}`
+        : '预计时间计算中...';
 
     return (
       <div style={{ padding: '32px 8px' }}>
@@ -309,10 +322,7 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
         >
           <div className="orb-ring ring1" />
           <div className="orb-ring ring2" />
-          <div className="orb-ring ring3" />
           <div className="orbit orbit-a"><span className="particle" /></div>
-          <div className="orbit orbit-b"><span className="particle" /></div>
-          <div className="orbit orbit-c"><span className="particle" /></div>
           <div className="orb-core">
             <ThunderboltOutlined />
           </div>
@@ -324,7 +334,7 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
             AI 正在创作短故事
           </Title>
           <Space size="middle" style={{ color: token.colorTextSecondary, fontSize: 13 }}>
-            <span><ClockCircleOutlined style={{ marginRight: 4 }} />预计 {estimatedMin}-{estimatedMax} 分钟</span>
+            <span><ClockCircleOutlined style={{ marginRight: 4 }} />{etaText}</span>
             <span>已用时 <Text strong style={{ color: token.colorPrimary }}>{formatElapsed(elapsedSecs)}</Text></span>
           </Space>
         </div>
@@ -414,12 +424,12 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
             font-size: 30px;
             color: #fff;
             background: radial-gradient(circle at 35% 30%, var(--orb-color), color-mix(in srgb, var(--orb-color) 60%, #000 40%));
-            box-shadow: 0 0 24px var(--orb-glow), 0 0 48px var(--orb-glow), inset 0 0 12px rgba(255,255,255,0.3);
+            box-shadow: 0 0 24px var(--orb-glow), 0 0 48px var(--orb-glow), inset 0 0 12px rgba(255,255,255,0.15);
             animation: orbCorePulse 2.4s ease-in-out infinite;
             z-index: 3;
           }
           @keyframes orbCorePulse {
-            0%, 100% { box-shadow: 0 0 18px var(--orb-glow), 0 0 36px var(--orb-glow), inset 0 0 12px rgba(255,255,255,0.3); transform: translate(-50%, -50%) scale(1); }
+            0%, 100% { box-shadow: 0 0 18px var(--orb-glow), 0 0 36px var(--orb-glow), inset 0 0 12px rgba(255,255,255,0.15); transform: translate(-50%, -50%) scale(1); }
             50% { box-shadow: 0 0 28px var(--orb-glow), 0 0 64px var(--orb-glow), inset 0 0 16px rgba(255,255,255,0.45); transform: translate(-50%, -50%) scale(1.08); }
           }
           /* 脉动光环：三层错开延迟向外扩散 */
@@ -435,12 +445,11 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
           }
           .ai-creative-orb .ring1 { width: 64px; height: 64px; animation: orbRingPulse 2.4s ease-out infinite; }
           .ai-creative-orb .ring2 { width: 64px; height: 64px; animation: orbRingPulse 2.4s ease-out infinite 0.8s; }
-          .ai-creative-orb .ring3 { width: 64px; height: 64px; animation: orbRingPulse 2.4s ease-out infinite 1.6s; }
           @keyframes orbRingPulse {
             0% { transform: translate(-50%, -50%) scale(0.6); opacity: 0.7; border-width: 2px; }
             100% { transform: translate(-50%, -50%) scale(2.6); opacity: 0; border-width: 1px; }
           }
-          /* 轨道粒子：三条椭圆轨道，粒子沿边缘旋转 */
+          /* 轨道粒子：单条椭圆轨道，粒子沿边缘旋转 */
           .ai-creative-orb .orbit {
             position: absolute;
             top: 50%;
@@ -452,14 +461,6 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
           .ai-creative-orb .orbit-a {
             width: 120px; height: 120px;
             animation: orbSpin 6s linear infinite;
-          }
-          .ai-creative-orb .orbit-b {
-            width: 150px; height: 150px;
-            animation: orbSpin 9s linear infinite reverse;
-          }
-          .ai-creative-orb .orbit-c {
-            width: 176px; height: 176px;
-            animation: orbSpin 12s linear infinite;
           }
           @keyframes orbSpin {
             from { transform: translate(-50%, -50%) rotate(0deg); }
@@ -474,7 +475,7 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
             height: 8px;
             border-radius: 50%;
             background: var(--orb-color);
-            box-shadow: 0 0 8px var(--orb-color), 0 0 14px var(--orb-glow);
+            box-shadow: 0 0 4px var(--orb-color), 0 0 7px var(--orb-glow);
           }
           @media (prefers-reduced-motion: reduce) {
             .ai-creative-orb .orb-core,
@@ -498,7 +499,7 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
         subTitle={
           <div>
             <div style={{ marginBottom: 8 }}>
-              {generatedStory.emotion_goal && <Tag color="orange">{generatedStory.emotion_goal}</Tag>}
+              {generatedStory.emotion_goal && <Tag color={EMOTION_GOAL_COLOR[generatedStory.emotion_goal]?.color}>{generatedStory.emotion_goal}</Tag>}
               {generatedStory.genre && <Tag color="blue">{generatedStory.genre}</Tag>}
               {generatedStory.twist_type && <Tag color="red">{generatedStory.twist_type}</Tag>}
             </div>
@@ -583,7 +584,7 @@ const ShortStoryInspiration: React.FC<{ onBack: () => void }> = ({ onBack }) => 
               开始创作
             </Button>
 
-            <div style={{ marginTop: 24, padding: 16, background: token.colorBgTextHover, borderRadius: 8 }}>
+            <div style={{ marginTop: 24, padding: 12, background: token.colorFillQuaternary, borderRadius: 6, border: `1px dashed ${token.colorBorder}` }}>
               <Text strong style={{ fontSize: 13 }}>
                 <ThunderboltOutlined style={{ marginRight: 6 }} />
                 爆款选题公式

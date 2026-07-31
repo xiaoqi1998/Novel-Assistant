@@ -53,9 +53,10 @@ interface ActiveBatchTaskResponse {
 
 /**
  * 查询任务状态
+ * @param signal 可选的 AbortSignal，用于取消请求
  */
-export async function getTaskStatus(taskId: string): Promise<TaskStatus> {
-  const response = await fetch(`${API_BASE}/${taskId}`);
+export async function getTaskStatus(taskId: string, signal?: AbortSignal): Promise<TaskStatus> {
+  const response = await fetch(`${API_BASE}/${taskId}`, { signal });
   if (!response.ok) {
     throw new Error(`查询任务状态失败: ${response.statusText}`);
   }
@@ -139,13 +140,21 @@ export type TaskErrorCallback = (error: string, status: TaskStatus) => void;
 
 /**
  * 轮询任务直到完成
- * 
+ *
+ * 网络抖动容忍与指数退避：
+ * - 业务错误（非网络类）：按 min(intervalMs * 2^retryCount, 30000) 退避重试，最多 5 次，
+ *   超过则停止轮询并回调 onError。
+ * - 网络错误（ERR_NETWORK / timeout / Failed to fetch 等）：单独计数，不计入业务重试次数，
+ *   给予更长的重试上限（10 次），同样按指数退避。
+ * - 设有最大轮询时长上限（默认 30 分钟），超时后回调 onError。
+ * - 取消函数会清理所有定时器与 AbortController（中止进行中的请求）。
+ *
  * @param taskId 任务ID
  * @param onProgress 进度回调
  * @param onComplete 完成回调
  * @param onError 错误回调
  * @param intervalMs 轮询间隔（毫秒），默认2000
- * @returns 取消轮询的函数
+ * @returns 取消轮询的函数（清理所有定时器与 AbortController）
  */
 export function pollTaskUntilComplete(
   taskId: string,
@@ -155,15 +164,72 @@ export function pollTaskUntilComplete(
   intervalMs: number = 2000
 ): () => void {
   let cancelled = false;
-  let timerId: ReturnType<typeof setTimeout>;
+  let timerId: ReturnType<typeof setTimeout> | null = null;
+  let abortController: AbortController | null = null;
+  let retryCount = 0; // 业务错误重试计数（0-indexed）
+  let networkRetryCount = 0; // 网络错误重试计数（0-indexed，不计入业务重试次数）
+  const MAX_RETRIES = 5; // 业务错误最大重试次数
+  const MAX_NETWORK_RETRIES = 10; // 网络错误最大重试次数（更长上限）
+  const MAX_BACKOFF_MS = 30000; // 指数退避上限 30 秒
+  const MAX_POLLING_DURATION_MS = 30 * 60 * 1000; // 最大轮询时长 30 分钟
+  const startTime = Date.now();
+
+  // 判断是否为网络错误（不计入业务重试次数）
+  // 注意：用户主动取消产生的 AbortError 由 cancelled 标记处理，不算网络错误
+  const isNetworkError = (err: unknown): boolean => {
+    if (!(err instanceof Error)) return false;
+    if (err.name === 'AbortError') return false;
+    const msg = err.message || '';
+    return (
+      msg.includes('ERR_NETWORK') ||
+      msg.includes('NetworkError') ||
+      msg.includes('Failed to fetch') ||
+      msg.includes('Network request failed') ||
+      msg.includes('timeout') ||
+      msg.includes('Timeout') ||
+      msg.includes('ECONNABORTED')
+    );
+  };
+
+  // 清理所有定时器
+  const clearTimer = () => {
+    if (timerId !== null) {
+      clearTimeout(timerId);
+      timerId = null;
+    }
+  };
+
+  // 中止进行中的请求并清理 AbortController
+  const abortInFlight = () => {
+    if (abortController) {
+      try {
+        abortController.abort();
+      } catch {
+        // ignore
+      }
+      abortController = null;
+    }
+  };
 
   const poll = async () => {
     if (cancelled) return;
 
+    // 超过最大轮询时长，触发 onError 终止
+    if (Date.now() - startTime > MAX_POLLING_DURATION_MS) {
+      onError('任务轮询超时（超过 30 分钟）', {} as TaskStatus);
+      return;
+    }
+
+    abortController = new AbortController();
     try {
-      const status = await getTaskStatus(taskId);
+      const status = await getTaskStatus(taskId, abortController.signal);
+      abortController = null;
 
       if (cancelled) return;
+
+      // 成功响应，重置失败计数器
+      retryCount = 0;
+      networkRetryCount = 0;
 
       onProgress(status);
 
@@ -186,8 +252,38 @@ export function pollTaskUntilComplete(
       const nextInterval = status.status === 'running' ? intervalMs : intervalMs * 2;
       timerId = setTimeout(poll, nextInterval);
     } catch (err) {
-      if (!cancelled) {
-        onError(err instanceof Error ? err.message : '查询任务状态失败', {} as TaskStatus);
+      if (cancelled) return;
+      abortController = null;
+
+      if (isNetworkError(err)) {
+        // 网络错误单独处理，不计入业务重试次数
+        if (networkRetryCount >= MAX_NETWORK_RETRIES) {
+          onError(
+            err instanceof Error ? err.message : '网络错误，查询任务状态失败',
+            {} as TaskStatus
+          );
+          return;
+        }
+        // 指数退避：min(intervalMs * 2^networkRetryCount, 30000)
+        const backoffMs = Math.min(
+          intervalMs * Math.pow(2, networkRetryCount),
+          MAX_BACKOFF_MS
+        );
+        networkRetryCount += 1;
+        timerId = setTimeout(poll, backoffMs);
+      } else {
+        // 业务错误
+        if (retryCount >= MAX_RETRIES) {
+          onError(
+            err instanceof Error ? err.message : '查询任务状态失败',
+            {} as TaskStatus
+          );
+          return;
+        }
+        // 指数退避：min(intervalMs * 2^retryCount, 30000)
+        const backoffMs = Math.min(intervalMs * Math.pow(2, retryCount), MAX_BACKOFF_MS);
+        retryCount += 1;
+        timerId = setTimeout(poll, backoffMs);
       }
     }
   };
@@ -195,10 +291,11 @@ export function pollTaskUntilComplete(
   // 立即开始第一次轮询
   timerId = setTimeout(poll, 0);
 
-  // 返回取消函数
+  // 返回取消函数（清理所有定时器与 AbortController）
   return () => {
     cancelled = true;
-    clearTimeout(timerId);
+    clearTimer();
+    abortInFlight();
   };
 }
 

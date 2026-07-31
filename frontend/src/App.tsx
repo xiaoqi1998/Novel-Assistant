@@ -31,7 +31,6 @@ import FullReview from './pages/FullReview';
 import ShortStoryWizard from './pages/ShortStoryWizard';
 import ShortStoryDetail from './pages/ShortStoryDetail';
 import ShortStorySetup from './pages/short-story/Setup';
-import ShortStoryEmotionCurve from './pages/short-story/EmotionCurve';
 import ShortStoryContent from './pages/short-story/Content';
 import ShortStoryPolish from './pages/short-story/Polish';
 import Login from './pages/Login';
@@ -93,7 +92,6 @@ function App() {
           <Route path="/short-story/:storyId" element={<ProtectedRoute><ShortStoryDetail /></ProtectedRoute>}>
             <Route index element={<Navigate to="setup" replace />} />
             <Route path="setup" element={<ShortStorySetup />} />
-            <Route path="emotion-curve" element={<ShortStoryEmotionCurve />} />
             <Route path="content" element={<ShortStoryContent />} />
             <Route path="polish" element={<ShortStoryPolish />} />
           </Route>

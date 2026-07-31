@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Button, Spin, Empty, Tag, Dropdown, message, Modal, theme, Typography, Result } from 'antd';
-import { PlusOutlined, ThunderboltOutlined, BookOutlined, DeleteOutlined, DownloadOutlined, ReloadOutlined, FileTextOutlined, FileMarkdownOutlined } from '@ant-design/icons';
+import { Card, Button, Spin, Empty, Tag, Dropdown, message, Modal, theme, Typography, Result, Input, Select } from 'antd';
+import { PlusOutlined, ThunderboltOutlined, BookOutlined, DeleteOutlined, DownloadOutlined, ReloadOutlined } from '@ant-design/icons';
 import { shortStoryApi } from '../services/api';
 import { showErrorToast } from '../utils/errorHandler';
 import { formatWordCount } from '../utils/format';
+import { STORY_STATUS_CONFIG, EMOTION_GOAL_COLOR } from '../constants/shortStory';
+import ExportConfirmModal from '../components/ExportConfirmModal';
 import type { ShortStory } from '../types';
 
 const { Text, Title } = Typography;
@@ -12,22 +14,6 @@ const { Text, Title } = Typography;
 interface Props {
   isMobile: boolean;
 }
-
-const EMOTION_GOAL_CONFIG: Record<string, { color: string; label: string }> = {
-  '意难平': { color: 'purple', label: '意难平' },
-  '反转震撼': { color: 'red', label: '反转震撼' },
-  '爽感释放': { color: 'orange', label: '爽感释放' },
-  '治愈温暖': { color: 'green', label: '治愈温暖' },
-  '细思极恐': { color: 'magenta', label: '细思极恐' },
-  '共鸣感动': { color: 'blue', label: '共鸣感动' },
-};
-
-const STATUS_CONFIG: Record<string, { color: string; text: string }> = {
-  planning: { color: 'blue', text: '规划' },
-  writing: { color: 'green', text: '创作' },
-  polishing: { color: 'orange', text: '精修' },
-  completed: { color: 'purple', text: '已完结' },
-};
 
 export default function ShortStoryBookshelf({ isMobile }: Props) {
   const navigate = useNavigate();
@@ -39,10 +25,13 @@ export default function ShortStoryBookshelf({ isMobile }: Props) {
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exportFormat, setExportFormat] = useState<'markdown' | 'txt'>('markdown');
   const [exportTargetStory, setExportTargetStory] = useState<ShortStory | null>(null);
+  const [keyword, setKeyword] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [sortKey, setSortKey] = useState<'updated' | 'created' | 'words'>('updated');
 
-  const loadStories = async () => {
+  const loadStories = async (silent: boolean = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       setLoadError(null);
       const result = await shortStoryApi.list({ limit: 100 });
       setStories(result.items || []);
@@ -51,7 +40,7 @@ export default function ShortStoryBookshelf({ isMobile }: Props) {
       setLoadError(msg);
       showErrorToast(error, '加载短故事列表失败');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -59,9 +48,9 @@ export default function ShortStoryBookshelf({ isMobile }: Props) {
     loadStories();
   }, []);
 
-  // 切回标签页时自动刷新列表
+  // 切回标签页时静默刷新列表（不触发 loading，避免全屏 Spin 闪烁）
   useEffect(() => {
-    const handleFocus = () => loadStories();
+    const handleFocus = () => loadStories(true);
     window.addEventListener('focus', handleFocus);
     return () => window.removeEventListener('focus', handleFocus);
   }, []);
@@ -113,18 +102,6 @@ export default function ShortStoryBookshelf({ isMobile }: Props) {
     }
   };
 
-  // 导出格式说明
-  const exportFormatMeta: Record<'markdown' | 'txt', { label: string; tip: string }> = {
-    markdown: {
-      label: 'Markdown 电子书（推荐）',
-      tip: '含元信息头（类型/状态/字数/情绪目标）、故事设定（梗概/反转/题材/平台）、正文，可在 VS Code / Typora 大纲栏快速跳转，可转换为 EPUB/PDF。',
-    },
-    txt: {
-      label: 'TXT 纯文本',
-      tip: '仅标题+正文，纯文本格式，便于复制粘贴到其他平台或再次拆书导入。',
-    },
-  };
-
   const getProgress = (current: number, target: number) => {
     if (!target) return 0;
     return Math.min(Math.round((current / target) * 100), 100);
@@ -138,6 +115,7 @@ export default function ShortStoryBookshelf({ isMobile }: Props) {
   };
 
   const formatDate = (dateString: string) => {
+    if (!dateString || isNaN(new Date(dateString).getTime())) return '';
     const date = new Date(dateString);
     const now = new Date();
     const diff = now.getTime() - date.getTime();
@@ -163,6 +141,20 @@ export default function ShortStoryBookshelf({ isMobile }: Props) {
     },
   ];
 
+  // 搜索 + 状态筛选 + 排序
+  const filteredStories = useMemo(() => {
+    const list = stories.filter(
+      (s) =>
+        (keyword === '' || s.title.includes(keyword) || s.logline?.includes(keyword)) &&
+        (statusFilter === 'all' || s.status === statusFilter)
+    );
+    return [...list].sort((a, b) => {
+      if (sortKey === 'words') return b.current_words - a.current_words;
+      if (sortKey === 'created') return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+    });
+  }, [stories, keyword, statusFilter, sortKey]);
+
   if (loading) {
     return (
       <div style={{ textAlign: 'center', padding: '80px 0' }}>
@@ -180,7 +172,7 @@ export default function ShortStoryBookshelf({ isMobile }: Props) {
           title="加载短故事列表失败"
           subTitle={loadError}
           extra={[
-            <Button type="primary" key="retry" icon={<ReloadOutlined />} onClick={loadStories}>
+            <Button type="primary" key="retry" icon={<ReloadOutlined />} onClick={() => loadStories()}>
               重试
             </Button>,
             <Button key="home" onClick={() => navigate('/')}>
@@ -225,10 +217,10 @@ export default function ShortStoryBookshelf({ isMobile }: Props) {
 
       {stories.length === 0 ? (
         <Empty
-          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          image={Empty.PRESENTED_IMAGE_DEFAULT}
           description={
             <span>
-              还没有短故事
+              还没有短故事，开始创建你的第一个吧
               <br />
               <Text type="secondary" style={{ fontSize: 12 }}>
                 短故事以情绪为核心，单文档创作，适合知乎盐言/番茄短篇等平台
@@ -242,6 +234,41 @@ export default function ShortStoryBookshelf({ isMobile }: Props) {
           </Button>
         </Empty>
       ) : (
+        <>
+          <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+            <Input.Search
+              placeholder="搜索标题或梗概"
+              allowClear
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+              style={{ width: isMobile ? '100%' : 240 }}
+            />
+            <Select
+              value={statusFilter}
+              onChange={setStatusFilter}
+              style={{ width: isMobile ? '100%' : 140 }}
+              options={[
+                { value: 'all', label: '全部状态' },
+                { value: 'planning', label: '规划' },
+                { value: 'writing', label: '创作' },
+                { value: 'polishing', label: '精修' },
+                { value: 'completed', label: '已完结' },
+              ]}
+            />
+            <Select
+              value={sortKey}
+              onChange={(v) => setSortKey(v)}
+              style={{ width: isMobile ? '100%' : 140 }}
+              options={[
+                { value: 'updated', label: '最近更新' },
+                { value: 'created', label: '创建时间' },
+                { value: 'words', label: '字数' },
+              ]}
+            />
+          </div>
+          {filteredStories.length === 0 ? (
+            <Empty description="没有匹配的短故事" style={{ padding: '60px 0' }} />
+          ) : (
         <div
           style={{
             display: 'grid',
@@ -249,18 +276,18 @@ export default function ShortStoryBookshelf({ isMobile }: Props) {
             gap: 16,
           }}
         >
-          {stories.map((story) => {
+          {filteredStories.map((story) => {
             const progress = getProgress(story.current_words, story.target_words || 12000);
             const progressColor = getProgressColor(progress);
-            const statusCfg = STATUS_CONFIG[story.status] || STATUS_CONFIG.planning;
-            const emotionCfg = story.emotion_goal ? EMOTION_GOAL_CONFIG[story.emotion_goal] : null;
+            const statusCfg = STORY_STATUS_CONFIG[story.status] || STORY_STATUS_CONFIG.planning;
+            const emotionCfg = story.emotion_goal ? EMOTION_GOAL_COLOR[story.emotion_goal] : null;
 
             return (
               <Card
                 key={story.id}
                 hoverable
                 style={{ overflow: 'hidden', position: 'relative' }}
-                bodyStyle={{ padding: 0 }}
+                styles={{ body: { padding: 0 } }}
                 onClick={() => handleEnter(story)}
                 actions={[
                   <Dropdown
@@ -294,7 +321,7 @@ export default function ShortStoryBookshelf({ isMobile }: Props) {
                 {/* 封面区域 */}
                 <div
                   style={{
-                    height: 160,
+                    height: 80,
                     background: story.cover_image_url
                       ? `url(${story.cover_image_url}) center/cover`
                       : `linear-gradient(135deg, ${token.colorPrimaryBg}, ${token.colorInfoBg})`,
@@ -305,13 +332,13 @@ export default function ShortStoryBookshelf({ isMobile }: Props) {
                   }}
                 >
                   {!story.cover_image_url && (
-                    <BookOutlined style={{ fontSize: 48, color: token.colorPrimary, opacity: 0.5 }} />
+                    <BookOutlined style={{ fontSize: 32, color: token.colorPrimary, opacity: 0.35 }} />
                   )}
                   <Tag
                     color={statusCfg.color}
                     style={{ position: 'absolute', top: 8, right: 8, margin: 0, borderRadius: 4 }}
                   >
-                    {statusCfg.text}
+                    {statusCfg.label}
                   </Tag>
                   {emotionCfg && (
                     <Tag
@@ -337,7 +364,7 @@ export default function ShortStoryBookshelf({ isMobile }: Props) {
                     <Text
                       type="secondary"
                       ellipsis={{ tooltip: story.logline }}
-                      style={{ display: 'block', fontSize: 12, marginBottom: 8, lineHeight: 1.4 }}
+                      style={{ display: 'block', fontSize: 13, marginBottom: 8, lineHeight: 1.4 }}
                     >
                       {story.logline}
                     </Text>
@@ -354,7 +381,7 @@ export default function ShortStoryBookshelf({ isMobile }: Props) {
                         marginBottom: 2,
                       }}
                     >
-                      <span>{formatWordCount(story.current_words)} 字</span>
+                      <span>{formatWordCount(story.current_words)} 字 · {formatDate(story.updated_at)}</span>
                       <span>{progress}%</span>
                     </div>
                     <div
@@ -375,83 +402,28 @@ export default function ShortStoryBookshelf({ isMobile }: Props) {
                       />
                     </div>
                   </div>
-
-                  <Text type="secondary" style={{ fontSize: 11 }}>
-                    {formatDate(story.updated_at)}
-                  </Text>
                 </div>
               </Card>
             );
           })}
         </div>
+          )}
+        </>
       )}
 
-      {/* 导出确认弹窗（对齐短故事详情页和长篇小说的导出体验） */}
-      <Modal
-        title="导出短故事"
+      {/* 导出确认弹窗（共享组件 ExportConfirmModal） */}
+      <ExportConfirmModal
         open={exportModalOpen}
         onCancel={() => {
           setExportModalOpen(false);
           setExportTargetStory(null);
         }}
-        onOk={handleConfirmExport}
-        okText="确定导出"
-        cancelText="取消"
-        centered
-      >
-        {exportTargetStory && (
-          <>
-            <div style={{ marginBottom: 12 }}>
-              <Text strong>《{exportTargetStory.title}》</Text>
-              <Text type="secondary" style={{ marginLeft: 8 }}>
-                共 {exportTargetStory.current_words} 字
-              </Text>
-            </div>
-            <div
-              style={{
-                display: 'flex',
-                gap: 12,
-                marginBottom: 16,
-              }}
-            >
-              {(['markdown', 'txt'] as const).map((fmt) => {
-                const meta = exportFormatMeta[fmt];
-                const selected = exportFormat === fmt;
-                return (
-                  <div
-                    key={fmt}
-                    onClick={() => setExportFormat(fmt)}
-                    style={{
-                      flex: 1,
-                      padding: 12,
-                      border: `2px solid ${selected ? token.colorPrimary : token.colorBorderSecondary}`,
-                      borderRadius: 8,
-                      cursor: 'pointer',
-                      background: selected ? token.colorPrimaryBg : 'transparent',
-                      transition: 'all 0.2s',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                      {fmt === 'markdown' ? (
-                        <FileMarkdownOutlined style={{ color: token.colorPrimary, fontSize: 18 }} />
-                      ) : (
-                        <FileTextOutlined style={{ color: token.colorTextSecondary, fontSize: 18 }} />
-                      )}
-                      <Text strong>{meta.label}</Text>
-                    </div>
-                    <Text type="secondary" style={{ fontSize: 12, lineHeight: 1.5 }}>
-                      {meta.tip}
-                    </Text>
-                  </div>
-                );
-              })}
-            </div>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              导出后将以文件下载方式保存到本地。
-            </Text>
-          </>
-        )}
-      </Modal>
+        onConfirm={handleConfirmExport}
+        format={exportFormat}
+        onFormatChange={setExportFormat}
+        subjectName={exportTargetStory?.title || ''}
+        wordCount={exportTargetStory?.current_words}
+      />
     </div>
   );
 }

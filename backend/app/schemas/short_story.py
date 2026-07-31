@@ -1,6 +1,6 @@
 """短故事相关的Pydantic模型"""
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional
+from typing import Optional, Literal
 from datetime import datetime
 
 
@@ -46,7 +46,7 @@ class ShortStoryUpdate(BaseModel):
     segments: Optional[str] = None
     polish_notes: Optional[str] = None
     polish_checklist: Optional[str] = None
-    status: Optional[str] = None
+    status: Optional[Literal['writing', 'generating', 'generated', 'polishing', 'completed']] = None
     # current_words 由正文内容自动计算，不允许手动修改
 
 
@@ -71,6 +71,7 @@ class ShortStoryResponse(ShortStoryBase):
     cover_status: Optional[str] = None
     score_data: Optional[str] = None
     scored_at: Optional[datetime] = None
+    revision_history: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -81,3 +82,32 @@ class ShortStoryListResponse(BaseModel):
     """短故事列表响应模型"""
     total: int
     items: list[ShortStoryResponse]
+
+
+class RegeneratePreviewResponse(BaseModel):
+    """重生成预览响应（不写库，需用户确认后调用 confirm-regenerate）"""
+    title: str
+    logline: Optional[str] = None
+    genre: Optional[str] = None
+    emotion_goal: Optional[str] = None
+    twist_type: Optional[str] = None
+    twist_content: Optional[str] = None
+    twist_clues: Optional[str] = None
+    characters: Optional[str] = None
+    content: str
+    original_content: Optional[str] = None
+    original_words: int = 0
+    new_words: int = 0
+
+
+class ConfirmRegenerateRequest(BaseModel):
+    """确认重生成请求（写入新内容，原内容存入版本历史）"""
+    title: str
+    logline: Optional[str] = None
+    genre: Optional[str] = None
+    emotion_goal: Optional[str] = None
+    twist_type: Optional[str] = None
+    twist_content: Optional[str] = None
+    twist_clues: Optional[str] = None
+    characters: Optional[str] = None
+    content: str

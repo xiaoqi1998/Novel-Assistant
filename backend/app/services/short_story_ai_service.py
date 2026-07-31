@@ -1,12 +1,47 @@
 """短故事AI生成服务"""
 import json
-from typing import Optional, AsyncGenerator, Dict, Any
+import asyncio
+from typing import Optional, AsyncGenerator, Dict, Any, Callable, Awaitable
 from app.services.ai_service import AIService
 from app.services.json_helper import clean_json_response
 from app.utils.sse_response import wrap_stream_with_heartbeat, HEARTBEAT
 from app.logger import get_logger
 
 logger = get_logger(__name__)
+
+# ============ 模块级常量（可配置） ============
+# 段落衔接上下文长度（从已有正文末尾取多少字给AI作衔接参考）
+SEGMENT_CONTEXT_CHARS = 1500
+
+# max_tokens 配置（按调用类型分组）
+MAX_TOKENS_STORY_CONTENT = 12000   # 正文生成 / 精修 / 改进（8000-16000 区间）
+MAX_TOKENS_OUTLINE = 4000          # 设定+大纲（结构化JSON，需要适中）
+MAX_TOKENS_OPTIONS = 2000          # 梗概 / 反转 / 灵感选项（1000-2000 区间）
+MAX_TOKENS_SCORE = 4000            # 评分 / 自查清单（结构化JSON）
+
+
+def _parse_ai_json(text: str, *, hint: str = "AI响应") -> Any:
+    """统一处理 AI 返回的 JSON：清洗 + 解析 + 失败抛错。
+
+    Args:
+        text: AI 原始响应文本
+        hint: 调用场景描述，用于错误信息定位
+
+    Returns:
+        解析后的 Python 对象（dict / list）
+
+    Raises:
+        ValueError: 解析失败时附带原始预览
+    """
+    cleaned = clean_json_response(text)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError as e:
+        preview = (cleaned or text)[:200] if (cleaned or text) else ""
+        logger.error(
+            f"❌ {hint} JSON解析失败: {e}, 清洗后长度={len(cleaned)}, 预览={preview!r}"
+        )
+        raise ValueError(f"{hint}解析失败: {e}") from e
 
 
 # ============ Prompt 模板 ============
@@ -196,13 +231,15 @@ class ShortStoryAIService:
 
         accumulated = ""
         async for chunk in ai_service.generate_text_stream(
-            prompt=user_prompt, system_prompt=system_prompt, temperature=0.8
+            prompt=user_prompt,
+            system_prompt=system_prompt,
+            temperature=0.8,
+            max_tokens=MAX_TOKENS_OPTIONS,
         ):
             accumulated += chunk
 
-        cleaned = clean_json_response(accumulated)
-        data = json.loads(cleaned)
-        options = data.get("options", [])
+        data = _parse_ai_json(accumulated, hint="生成梗概")
+        options = data.get("options", []) if isinstance(data, dict) else []
         result = [str(o) for o in options if o][:6]
         logger.debug(f"AI生成梗概完成: 返回{len(result)}个选项, 响应长度={len(accumulated)}")
         return result
@@ -224,13 +261,15 @@ class ShortStoryAIService:
 
         accumulated = ""
         async for chunk in ai_service.generate_text_stream(
-            prompt=user_prompt, system_prompt=system_prompt, temperature=0.75
+            prompt=user_prompt,
+            system_prompt=system_prompt,
+            temperature=0.75,
+            max_tokens=MAX_TOKENS_OPTIONS,
         ):
             accumulated += chunk
 
-        cleaned = clean_json_response(accumulated)
-        data = json.loads(cleaned)
-        options = data.get("options", [])
+        data = _parse_ai_json(accumulated, hint="生成反转")
+        options = data.get("options", []) if isinstance(data, dict) else []
         result = [o for o in options if isinstance(o, dict)][:6]
         logger.debug(f"AI生成反转完成: 返回{len(result)}个选项, 响应长度={len(accumulated)}")
         return result
@@ -247,8 +286,9 @@ class ShortStoryAIService:
         # 构建上下文提示
         context_hint = ""
         if existing_content:
-            # 取已有正文的最后500字作为上下文
-            tail = existing_content[-500:] if len(existing_content) > 500 else existing_content
+            # 取已有正文的末尾作为衔接上下文（可配置，默认1500字）
+            ctx_len = min(SEGMENT_CONTEXT_CHARS, len(existing_content))
+            tail = existing_content[-ctx_len:] if ctx_len > 0 else existing_content
             context_hint = f"已有正文（最后部分）：\n...{tail}\n\n请衔接上文继续写作。"
 
         clues_raw = story_data.get("twist_clues", "")
@@ -288,7 +328,10 @@ class ShortStoryAIService:
 
         result = ""
         async for chunk in ai_service.generate_text_stream(
-            prompt=user_prompt, system_prompt=SEGMENT_SYSTEM, temperature=0.7
+            prompt=user_prompt,
+            system_prompt=SEGMENT_SYSTEM,
+            temperature=0.7,
+            max_tokens=MAX_TOKENS_STORY_CONTENT,
         ):
             result += chunk
 
@@ -319,7 +362,10 @@ class ShortStoryAIService:
 
         result = ""
         async for chunk in ai_service.generate_text_stream(
-            prompt=user_prompt, system_prompt=POLISH_SYSTEM, temperature=0.5
+            prompt=user_prompt,
+            system_prompt=POLISH_SYSTEM,
+            temperature=0.5,
+            max_tokens=MAX_TOKENS_STORY_CONTENT,
         ):
             result += chunk
 
@@ -347,7 +393,8 @@ class ShortStoryAIService:
         try:
             context_hint = ""
             if existing_content:
-                tail = existing_content[-500:] if len(existing_content) > 500 else existing_content
+                ctx_len = min(SEGMENT_CONTEXT_CHARS, len(existing_content))
+                tail = existing_content[-ctx_len:] if ctx_len > 0 else existing_content
                 context_hint = f"已有正文（最后部分）：\n...{tail}\n\n请衔接上文继续写作。"
 
             clues_raw = story_data.get("twist_clues", "")
@@ -389,7 +436,10 @@ class ShortStoryAIService:
 
             result = ""
             async for chunk in ai_service.generate_text_stream(
-                prompt=user_prompt, system_prompt=SEGMENT_SYSTEM, temperature=0.7
+                prompt=user_prompt,
+                system_prompt=SEGMENT_SYSTEM,
+                temperature=0.7,
+                max_tokens=MAX_TOKENS_STORY_CONTENT,
             ):
                 result += chunk
                 yield {"type": "chunk", "content": chunk}
@@ -430,7 +480,10 @@ class ShortStoryAIService:
             result = ""
             async for chunk in wrap_stream_with_heartbeat(
                 ai_service.generate_text_stream(
-                    prompt=user_prompt, system_prompt=POLISH_SYSTEM, temperature=0.5
+                    prompt=user_prompt,
+                    system_prompt=POLISH_SYSTEM,
+                    temperature=0.5,
+                    max_tokens=MAX_TOKENS_STORY_CONTENT,
                 ),
                 heartbeat_interval=15.0,
             ):
@@ -477,13 +530,15 @@ class ShortStoryAIService:
 
         accumulated = ""
         async for chunk in ai_service.generate_text_stream(
-            prompt=user_prompt, system_prompt=system_prompt, temperature=temperature
+            prompt=user_prompt,
+            system_prompt=system_prompt,
+            temperature=temperature,
+            max_tokens=MAX_TOKENS_OPTIONS,
         ):
             accumulated += chunk
 
-        cleaned = clean_json_response(accumulated)
-        data = json.loads(cleaned)
-        return data
+        data = _parse_ai_json(accumulated, hint=f"灵感模式-{step}")
+        return data if isinstance(data, dict) else {"options": []}
 
 
 # ============ 端到端生成 Prompt ============
@@ -658,6 +713,7 @@ class FullStoryGenerator:
         emotion_goal: str = "",
         target_platform: str = "知乎盐言",
         emotion_curve: str = "",
+        cancel_checker: Optional[Callable[[], Awaitable[bool]]] = None,
     ) -> dict:
         """两阶段生成完整短故事（设定+分段正文），解决单次AI调用超时问题
 
@@ -670,6 +726,7 @@ class FullStoryGenerator:
             emotion_goal: 情绪目标（可选，未指定则AI自选）
             target_platform: 目标平台
             emotion_curve: 情绪曲线JSON（可选）
+            cancel_checker: 可选的异步取消检查回调，返回True时抛出异常终止生成
 
         Returns:
             dict: {title, logline, emotion_goal, twist_type, twist_content,
@@ -699,11 +756,13 @@ class FullStoryGenerator:
             prompt=stage1_prompt,
             system_prompt=STAGE1_SETUP_SYSTEM,
             temperature=0.75,
+            max_tokens=MAX_TOKENS_OUTLINE,
         ):
             accumulated += chunk
 
-        cleaned = clean_json_response(accumulated)
-        setup_data = json.loads(cleaned)
+        setup_data = _parse_ai_json(accumulated, hint="短故事设定+大纲")
+        if not isinstance(setup_data, dict):
+            raise ValueError("AI生成设定格式错误：期望JSON对象")
 
         # 校验必要字段
         required = ["title", "logline"]
@@ -756,6 +815,11 @@ class FullStoryGenerator:
             seg_target_words = seg.get("target_words", 1000)
             seg_plot = seg.get("plot", "")
 
+            # 在分段生成之间检查取消请求
+            if cancel_checker is not None:
+                if await cancel_checker():
+                    raise asyncio.CancelledError("用户已取消短故事生成任务")
+
             logger.info(
                 f"阶段2-分段{idx+1}/{len(segments_outline)}开始: "
                 f"stage={seg_stage}, target_words={seg_target_words}"
@@ -774,15 +838,17 @@ class FullStoryGenerator:
                 segment_stage=seg_stage,
                 segment_target_words=seg_target_words,
                 segment_plot=seg_plot,
-                previous_ending=previous_ending[-500:] if previous_ending else "（本段为开篇，无前文）",
+                previous_ending=previous_ending[-SEGMENT_CONTEXT_CHARS:] if previous_ending else "（本段为开篇，无前文）",
             )
 
             seg_content = ""
+            seg_failed = False
             try:
                 async for chunk in ai_service.generate_text_stream(
                     prompt=seg_prompt,
                     system_prompt=STAGE2_SEGMENT_SYSTEM,
                     temperature=0.7,
+                    max_tokens=MAX_TOKENS_STORY_CONTENT,
                 ):
                     seg_content += chunk
             except Exception as seg_err:
@@ -790,16 +856,31 @@ class FullStoryGenerator:
                     f"阶段2-分段{idx+1}生成失败: stage={seg_stage}, error={str(seg_err)}",
                     exc_info=True,
                 )
-                # 单段失败用占位符，保证整体能返回（用户可手动重写该段）
-                seg_content = f"\n\n【{seg_label}段生成失败，请手动重写：{str(seg_err)[:100]}】\n\n"
+                # 单段失败：不嵌入错误占位符到正文，跳过该段，记录错误日志
+                seg_failed = True
+                seg_content = ""
+                setup_data.setdefault("_segment_errors", []).append({
+                    "index": idx,
+                    "stage": seg_stage,
+                    "label": seg_label,
+                    "error": str(seg_err)[:200],
+                })
 
-            full_content_parts.append(seg_content.strip())
-            # 取末尾500字作为下一段的衔接上下文
-            previous_ending = seg_content[-500:] if seg_content else ""
+            # 仅将成功生成的段写入正文（空内容不拼接）
+            if not seg_failed and seg_content.strip():
+                full_content_parts.append(seg_content.strip())
+                # 取末尾作为下一段的衔接上下文（长度可配置）
+                previous_ending = seg_content[-SEGMENT_CONTEXT_CHARS:] if seg_content else ""
+            else:
+                # 失败段不更新 previous_ending，下一段沿用上文
+                logger.warning(
+                    f"阶段2-分段{idx+1}跳过: stage={seg_stage}, seg_failed={seg_failed}, "
+                    f"actual_chars={len(seg_content)}"
+                )
 
             logger.info(
                 f"阶段2-分段{idx+1}/{len(segments_outline)}完成: "
-                f"stage={seg_stage}, actual_chars={len(seg_content)}"
+                f"stage={seg_stage}, seg_failed={seg_failed}, actual_chars={len(seg_content)}"
             )
 
         # 合并所有分段
@@ -865,6 +946,7 @@ class FullStoryGenerator:
                     prompt=stage1_prompt,
                     system_prompt=STAGE1_SETUP_SYSTEM,
                     temperature=0.75,
+                    max_tokens=MAX_TOKENS_OUTLINE,
                 ),
                 heartbeat_interval=15.0,
             ):
@@ -876,8 +958,9 @@ class FullStoryGenerator:
                 # 阶段1的chunk不透传给前端（是JSON结构，对用户无意义），仅发进度
                 yield {"type": "progress", "message": f"阶段1/2：AI正在构思设定...（{len(accumulated)}字符）", "progress": min(5 + len(accumulated) // 200, 18), "status": "processing"}
 
-            cleaned = clean_json_response(accumulated)
-            setup_data = json.loads(cleaned)
+            setup_data = _parse_ai_json(accumulated, hint="短故事设定+大纲(流式)")
+            if not isinstance(setup_data, dict):
+                raise ValueError("AI生成设定格式错误：期望JSON对象")
 
             required = ["title", "logline"]
             for field in required:
@@ -960,17 +1043,19 @@ class FullStoryGenerator:
                     segment_stage=seg_stage,
                     segment_target_words=seg_target_words,
                     segment_plot=seg_plot,
-                    previous_ending=previous_ending[-500:] if previous_ending else "（本段为开篇，无前文）",
+                    previous_ending=previous_ending[-SEGMENT_CONTEXT_CHARS:] if previous_ending else "（本段为开篇，无前文）",
                 )
 
                 seg_content = ""
                 seg_chunk_count = 0
+                seg_failed = False
                 try:
                     async for chunk in wrap_stream_with_heartbeat(
                         ai_service.generate_text_stream(
                             prompt=seg_prompt,
                             system_prompt=STAGE2_SEGMENT_SYSTEM,
                             temperature=0.7,
+                            max_tokens=MAX_TOKENS_STORY_CONTENT,
                         ),
                         heartbeat_interval=15.0,
                     ):
@@ -994,11 +1079,33 @@ class FullStoryGenerator:
                             }
                 except Exception as seg_err:
                     logger.error(f"阶段2-分段{idx + 1}生成失败(流式): stage={seg_stage}, error={str(seg_err)}", exc_info=True)
-                    seg_content = f"\n\n【{seg_label}段生成失败，请手动重写：{str(seg_err)[:100]}】\n\n"
-                    yield {"type": "chunk", "content": seg_content, "segment_index": idx}
+                    # 单段失败：发送 error 事件，不嵌入错误占位符到正文
+                    seg_failed = True
+                    seg_content = ""
+                    setup_data.setdefault("_segment_errors", []).append({
+                        "index": idx,
+                        "stage": seg_stage,
+                        "label": seg_label,
+                        "error": str(seg_err)[:200],
+                    })
+                    yield {
+                        "type": "error",
+                        "error": f"第 {idx + 1}/{total_segments} 段「{seg_label}」生成失败：{str(seg_err)[:150]}",
+                        "segment_index": idx,
+                        "segment_stage": seg_stage,
+                        "recoverable": True,
+                    }
 
-                full_content_parts.append(seg_content.strip())
-                previous_ending = seg_content[-500:] if seg_content else ""
+                # 仅将成功生成的段写入正文（空内容不拼接）
+                if not seg_failed and seg_content.strip():
+                    full_content_parts.append(seg_content.strip())
+                    previous_ending = seg_content[-SEGMENT_CONTEXT_CHARS:] if seg_content else ""
+                else:
+                    # 失败段不更新 previous_ending，下一段沿用上文
+                    logger.warning(
+                        f"阶段2-分段{idx + 1}跳过(流式): stage={seg_stage}, seg_failed={seg_failed}, "
+                        f"actual_chars={len(seg_content)}"
+                    )
                 # 段完成，推进到段结束进度
                 yield {
                     "type": "progress",
@@ -1145,22 +1252,50 @@ class StoryScorer:
             prompt=user_prompt,
             system_prompt=SCORE_SYSTEM,
             temperature=0.3,  # 评分需要稳定
+            max_tokens=MAX_TOKENS_SCORE,
         ):
             accumulated += chunk
 
-        cleaned = clean_json_response(accumulated)
-        data = json.loads(cleaned)
+        data = _parse_ai_json(accumulated, hint="短故事评分")
+        if not isinstance(data, dict):
+            raise ValueError("AI评分结果格式错误：期望JSON对象")
 
-        # 校验
+        # 校验必要字段
         if "total_score" not in data or "dimensions" not in data:
-            raise ValueError("AI评分结果格式错误")
+            raise ValueError("AI评分结果格式错误：缺少 total_score 或 dimensions")
 
-        if not isinstance(data["dimensions"], list) or len(data["dimensions"]) != 5:
-            raise ValueError("AI评分结果维度不完整")
+        dimensions = data["dimensions"]
+        if not isinstance(dimensions, list) or not dimensions:
+            raise ValueError("AI评分结果维度不完整：dimensions 为空或非列表")
+
+        # 放宽维度强制要求：支持 4-6 维度容错（标准为5个）
+        if len(dimensions) < 4 or len(dimensions) > 6:
+            logger.warning(
+                f"AI评分维度数量异常: 期望4-6个, 实际{len(dimensions)}个, "
+                f"将按实际维度处理"
+            )
+
+        # 维度 key 缺失时用 'unknown' 占位，确保下游字段访问安全
+        normalized_dims = []
+        for dim in dimensions:
+            if not isinstance(dim, dict):
+                continue
+            normalized_dim = {
+                "key": dim.get("key") or "unknown",
+                "name": dim.get("name") or "unknown",
+                "score": dim.get("score", 0),
+                "max_score": dim.get("max_score", 0),
+                "evaluation": dim.get("evaluation", ""),
+                "evidence": dim.get("evidence", ""),
+                "issues": dim.get("issues", []) or [],
+                "suggestions": dim.get("suggestions", []) or [],
+            }
+            normalized_dims.append(normalized_dim)
+        data["dimensions"] = normalized_dims
 
         logger.info(
             f"AI评分完成: total_score={data.get('total_score')}, level={data.get('level')}, "
-            f"content_length={len(content)}"
+            f"dimensions={len(normalized_dims)}, content_length={len(content)}"
         )
         return data
 
@@ -1324,6 +1459,7 @@ class StoryImprover:
             prompt=user_prompt,
             system_prompt=IMPROVE_SYSTEM,
             temperature=0.55,  # 修订需要一定创造性但保持稳定
+            max_tokens=MAX_TOKENS_STORY_CONTENT,
         ):
             result += chunk
 
@@ -1402,6 +1538,7 @@ class StoryImprover:
                     prompt=user_prompt,
                     system_prompt=IMPROVE_SYSTEM,
                     temperature=0.55,
+                    max_tokens=MAX_TOKENS_STORY_CONTENT,
                 ),
                 heartbeat_interval=15.0,
             ):
@@ -1499,15 +1636,25 @@ class ChecklistChecker:
             prompt=user_prompt,
             system_prompt=CHECKLIST_SYSTEM,
             temperature=0.2,  # 检查需要精确稳定
+            max_tokens=MAX_TOKENS_SCORE,
         ):
             accumulated += chunk
 
-        cleaned = clean_json_response(accumulated)
-        data = json.loads(cleaned)
+        data = _parse_ai_json(accumulated, hint="自查清单检查")
+        if not isinstance(data, dict):
+            raise ValueError("AI检查结果格式错误：期望JSON对象")
 
         results = data.get("items", [])
         if not isinstance(results, list):
-            raise ValueError("AI检查结果格式错误")
+            raise ValueError("AI检查结果格式错误：items 字段非列表")
+
+        # 空结果不写入"假成功"：AI 未返回检查项时，明确报错而非返回空 checked=true 列表
+        if not results:
+            logger.warning(
+                f"AI自查清单未返回任何检查项: content_length={len(content)}, "
+                f"checklist_count={len(checklist)}, accumulated_length={len(accumulated)}"
+            )
+            raise ValueError("AI 未返回检查项（items 为空），无法完成自查")
 
         logger.info(
             f"AI自查清单完成: items={len(results)}, "

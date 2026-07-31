@@ -259,6 +259,7 @@ export interface ShortStory {
   cover_status?: 'none' | 'generating' | 'ready' | 'failed';
   score_data?: string; // AI评分结果JSON
   scored_at?: string; // 最近评分时间
+  revision_history?: string; // 正文版本历史JSON（Task 39.1）
   created_at: string;
   updated_at: string;
 }
@@ -330,8 +331,9 @@ export interface EmotionNode {
 }
 
 export interface ShortStoryCharacter {
+  id?: string;
   name: string;
-  role: 'protagonist' | 'key';
+  role: 'protagonist' | 'key' | 'antagonist';
   desc: string;
   relationship?: string;
 }
@@ -365,6 +367,54 @@ export interface RevisionPreview {
   score_total?: number;
   score_level?: string;
   top_issues?: string[];
+  // 确认修改后是否清空旧评分（内容已变，旧评分失效）
+  clears_old_score?: boolean;
+}
+
+// AI重新生成预览（regenerate / regenerate-stream / regenerate-background 返回，需用户确认后调用 confirm-regenerate）
+// 注意：当前后端 regenerate 系列方法仍返回完整 ShortStory，切换为预览数据需后端配合，
+// 本轮先在前端类型中声明该接口，供后续适配使用。
+export interface RegeneratePreview {
+  original_content: string;
+  new_content: string;
+  original_words: number;
+  new_words: number;
+  revision_type: 'regenerate';
+}
+
+// 短故事版本历史条目（原内容备份，存于 ShortStory.revision_history JSON 数组）
+export interface ShortStoryRevisionHistory {
+  content: string;
+  title?: string;
+  saved_at: string;
+  revision_type?: string;
+}
+
+// 短故事分段（ShortStory.segments 字段为 JSON 字符串，运行时通过 parseSegments 解析为该类型数组）
+export interface ShortStorySegment {
+  stage: string;
+  target_words: number;
+  actual_words: number;
+  status: 'pending' | 'writing' | 'completed' | string;
+  // 兼容旧 StorySegment 的可选字段
+  label?: string;
+  target_ratio?: number;
+  desc?: string;
+}
+
+// 短故事评分结果（与 StoryScoreResult 同构，命名空间归一化）
+export type ShortStoryScoreResult = StoryScoreResult;
+
+// 短故事自查清单条目（与 PolishChecklistItem 同构，命名空间归一化）
+export type ShortStoryChecklistItem = PolishChecklistItem;
+
+// 短故事本地草稿（统一保存 content / polish_notes / checklist，用于编辑恢复）
+export interface ShortStoryDraft {
+  storyId: string;
+  content: string;
+  polish_notes: string;
+  checklist: ShortStoryChecklistItem[];
+  savedAt: number;
 }
 
 // 大纲类型定义

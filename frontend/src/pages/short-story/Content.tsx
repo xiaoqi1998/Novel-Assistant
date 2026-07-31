@@ -2,8 +2,10 @@ import { useEffect, useState, useRef, useMemo } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import {
   Card,
+  Collapse,
   Typography,
   Input,
+  InputNumber,
   Button,
   message,
   Tag,
@@ -13,34 +15,30 @@ import {
   theme,
   Grid,
   Modal,
-  Dropdown,
+  Drawer,
+  Empty,
+  Spin,
 } from 'antd';
-import type { MenuProps } from 'antd';
-import { SaveOutlined, CheckCircleOutlined, ClockCircleOutlined, ReloadOutlined, RobotOutlined, DownOutlined, CloudUploadOutlined } from '@ant-design/icons';
+import { SaveOutlined, CheckCircleOutlined, ClockCircleOutlined, ReloadOutlined, RobotOutlined, CloseOutlined, EditOutlined, HistoryOutlined } from '@ant-design/icons';
 import { shortStoryApi } from '../../services/api';
 import { showErrorToast } from '../../utils/errorHandler';
 import { useShortStoryStore } from '../../store/shortStoryStore';
 import { formatWordCount } from '../../utils/format';
 import RevisionPreviewModal from '../../components/RevisionPreviewModal';
 import { SSELoadingOverlay } from '../../components/SSELoadingOverlay';
+import { SSEPostClient } from '../../utils/sseClient';
 import { eventBus } from '../../store/eventBus';
 import {
   loadStoryContentDraft,
   saveStoryContentDraft,
   clearStoryContentDraft,
 } from '../../utils/shortStoryDraft';
+import { STORY_STAGE_CONFIG } from '../../constants/shortStory';
 import type { ShortStory, StorySegment, RevisionPreview } from '../../types';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
 const { useBreakpoint } = Grid;
-
-const STAGE_COLOR: Record<string, string> = {
-  hook: '#1677ff',
-  escalation: '#fa8c16',
-  climax: '#f5222d',
-  resolution: '#722ed1',
-};
 
 const STATUS_CONFIG: Record<string, { color: string; text: string; icon: React.ReactNode }> = {
   pending: { color: 'default', text: '待写', icon: <ClockCircleOutlined /> },
@@ -55,10 +53,10 @@ interface ContextType {
 
 function countWords(text: string): number {
   if (!text) return 0;
-  const chineseChars = (text.match(/[\u4e00-\u9fff]/g) || []).length;
-  const chinesePunctuation = (text.match(/[\u3000-\u303f\uff00-\uffef]/g) || []).length;
-  const englishWords = (text.match(/[a-zA-Z]+/g) || []).length;
-  return chineseChars + chinesePunctuation + englishWords;
+  const chineseChars = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
+  const stripped = text.replace(/[\u4e00-\u9fa5]/g, ' ');
+  const englishWords = (stripped.match(/[A-Za-z0-9]+/g) || []).length;
+  return chineseChars + englishWords;
 }
 
 export default function Content() {
@@ -75,6 +73,8 @@ export default function Content() {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contentRef = useRef<string>(content);
+  const sseClientRef = useRef<SSEPostClient | null>(null);
+  const prevStoryIdRef = useRef<string>(story.id);
   const [generatingSegment, setGeneratingSegment] = useState<string | null>(null);
   const [polishing, setPolishing] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
@@ -86,6 +86,14 @@ export default function Content() {
   const [sseTitle, setSseTitle] = useState('AI生成中...');
   // 分段生成时的实时内容预览
   const [segmentPreview, setSegmentPreview] = useState('');
+
+  // Task 39.1: 版本历史
+  const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
+  const [revisionHistory, setRevisionHistory] = useState<Array<{ content: string; saved_at: string; revision_type: string }>>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  // Task 39.2: 目标字数动态调整
+  const [targetWordsInput, setTargetWordsInput] = useState(story.target_words || 12000);
+  const targetWordsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     contentRef.current = content;
@@ -131,6 +139,17 @@ export default function Content() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [story.id]);
 
+  // 监听 story.content 变化：当 story.id 不变但 content 变化时（如重写/精修完成后 reload 触发），
+  // 同步 content state。[story.id] effect 负责初次加载和切故事时的初始化（含草稿检测）。
+  useEffect(() => {
+    if (prevStoryIdRef.current === story.id && contentRef.current !== (story.content || '')) {
+      setContent(story.content || '');
+      contentRef.current = story.content || '';
+    }
+    prevStoryIdRef.current = story.id;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [story.content, story.id]);
+
   const currentWords = useMemo(() => countWords(content), [content]);
   const targetWords = story.target_words || 12000;
   const progress = Math.min(Math.round((currentWords / targetWords) * 100), 100);
@@ -174,23 +193,103 @@ export default function Content() {
     scheduleDraftSave();
   };
 
+  // Task 39.2: 同步目标字数（切故事或后端更新后）
+  useEffect(() => {
+    setTargetWordsInput(story.target_words || 12000);
+  }, [story.target_words, story.id]);
+
+  // Task 39.2: 修改目标字数（防抖调用 update API，后端 Task 2 会重算 segments）
+  const handleTargetWordsChange = (v: number | null) => {
+    if (v == null) return;
+    setTargetWordsInput(v);
+    if (targetWordsTimerRef.current) clearTimeout(targetWordsTimerRef.current);
+    targetWordsTimerRef.current = setTimeout(async () => {
+      try {
+        const updated = await shortStoryApi.update(story.id, { target_words: v });
+        updateCurrentStory(updated);
+        // 同步后端重算的 segments
+        if (updated.segments) {
+          try {
+            const parsed = JSON.parse(updated.segments);
+            if (Array.isArray(parsed)) setSegments(parsed);
+          } catch {
+            // segments 解析失败忽略
+          }
+        }
+        message.success('目标字数已更新，分段已重算');
+      } catch (error) {
+        showErrorToast(error, '更新目标字数失败');
+      }
+    }, 800);
+  };
+
+  // Task 39.1: 打开版本历史 Drawer
+  const handleOpenHistory = async () => {
+    setHistoryDrawerOpen(true);
+    setLoadingHistory(true);
+    try {
+      const history = await shortStoryApi.getRevisionHistory(story.id);
+      setRevisionHistory(Array.isArray(history) ? history : []);
+    } catch (error: any) {
+      if (error?.response?.status === 404) {
+        // 后端未实现，从 story.revision_history 字段解析
+        try {
+          const parsed = story.revision_history ? JSON.parse(story.revision_history) : [];
+          setRevisionHistory(Array.isArray(parsed) ? parsed : []);
+        } catch {
+          setRevisionHistory([]);
+        }
+      } else {
+        showErrorToast(error, '加载版本历史失败');
+        setRevisionHistory([]);
+      }
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  // Task 39.1: 回滚到指定版本
+  const handleRollback = (revision: { content: string; saved_at: string; revision_type: string }) => {
+    Modal.confirm({
+      title: '确认回滚到该版本？',
+      content: `保存时间：${revision.saved_at ? new Date(revision.saved_at).toLocaleString('zh-CN') : '未知'}，当前正文将被覆盖。`,
+      okText: '确认回滚',
+      cancelText: '取消',
+      centered: true,
+      onOk: async () => {
+        try {
+          setContent(revision.content);
+          contentRef.current = revision.content;
+          const updated = await shortStoryApi.update(story.id, { content: revision.content });
+          updateCurrentStory(updated);
+          setHistoryDrawerOpen(false);
+          message.success('已回滚到该版本');
+        } catch (error) {
+          showErrorToast(error, '回滚失败');
+        }
+      },
+    });
+  };
+
   // 组件卸载时清理定时器
   useEffect(() => {
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+      if (targetWordsTimerRef.current) clearTimeout(targetWordsTimerRef.current);
     };
   }, []);
 
-  const handleSegmentStatusChange = (index: number, status: StorySegment['status']) => {
-    const newSegs = [...segments];
-    newSegs[index] = { ...newSegs[index], status };
-    setSegments(newSegs);
-    // 同步保存分段状态
-    shortStoryApi
-      .update(story.id, { segments: JSON.stringify(newSegs) })
-      .then((updated) => updateCurrentStory(updated))
-      .catch((err) => showErrorToast(err, '更新分段状态失败'));
+  // SSE 取消生成：中止请求并重置所有 SSE 相关状态
+  const handleSseCancel = () => {
+    sseClientRef.current?.abort();
+    sseClientRef.current = null;
+    setSseVisible(false);
+    setRegenerating(false);
+    setPolishing(false);
+    setGeneratingSegment(null);
+    setSegmentPreview('');
+    message.info('已取消生成');
   };
 
   const handleGenerateSegment = async (stage: string) => {
@@ -203,76 +302,89 @@ export default function Content() {
     setSseVisible(true);
 
     try {
-      const res = await shortStoryApi.generateSegmentStream(story.id, stage, {
-        onProgress: (msg, prog) => {
-          setSseProgress(prog);
-          setSseMessage(msg);
-        },
-        onChunk: (chunk) => {
-          setSegmentPreview((prev) => prev + chunk);
-        },
-      });
-      const newContent = contentRef.current + (contentRef.current ? '\n\n' : '') + (res.content || '');
+      const client = new SSEPostClient(
+        `/api/short-stories/${story.id}/generate-segment-stream`,
+        { segment_stage: stage },
+        {
+          onProgress: (msg, prog) => {
+            setSseProgress(prog);
+            setSseMessage(msg);
+          },
+          onChunk: (chunk) => {
+            setSegmentPreview((prev) => prev + chunk);
+          },
+        }
+      );
+      sseClientRef.current = client;
+      const res = await client.connect() as { content: string };
+      const generatedContent = res.content || '';
+      const newContent = contentRef.current + (contentRef.current ? '\n\n' : '') + generatedContent;
       setContent(newContent);
       scheduleAutoSave();
+
+      // 回写分段 actual_words
+      const segIndex = segments.findIndex((s) => s.stage === stage);
+      if (segIndex >= 0) {
+        const wordCount = countWords(generatedContent);
+        const newSegments = [...segments];
+        newSegments[segIndex] = { ...newSegments[segIndex], actual_words: wordCount };
+        setSegments(newSegments);
+        updateCurrentStory({ segments: JSON.stringify(newSegments) });
+        shortStoryApi
+          .update(story.id, { segments: JSON.stringify(newSegments) })
+          .catch((err) => showErrorToast(err, '更新分段进度失败'));
+      }
+
       message.success('已生成本段内容');
-    } catch (error) {
-      showErrorToast(error, 'AI生成分段失败');
+    } catch (error: any) {
+      if (error?.name !== 'AbortError') {
+        showErrorToast(error, 'AI生成分段失败');
+      }
     } finally {
       setGeneratingSegment(null);
       setSseVisible(false);
       setSegmentPreview('');
+      sseClientRef.current = null;
     }
   };
 
   const handlePolish = async () => {
+    if (!content || content.trim().length < 100) {
+      message.warning('正文内容过短，无法精修（至少需要100字）');
+      return;
+    }
     setPolishing(true);
-    setSseTitle('AI精修润色全文');
+    setSseTitle('AI润色全文');
     setSseProgress(0);
     setSseMessage('正在准备精修...');
     setSseVisible(true);
 
     try {
-      const preview = await shortStoryApi.polishStream(story.id, {
-        onProgress: (msg, prog) => {
-          setSseProgress(prog);
-          setSseMessage(msg);
-        },
-      });
+      const client = new SSEPostClient(
+        `/api/short-stories/${story.id}/polish-stream`,
+        {},
+        {
+          onProgress: (msg, prog) => {
+            setSseProgress(prog);
+            setSseMessage(msg);
+          },
+        }
+      );
+      sseClientRef.current = client;
+      const preview = await client.connect() as RevisionPreview;
       setRevisionPreview(preview);
-    } catch (error) {
-      showErrorToast(error, 'AI精修失败');
+    } catch (error: any) {
+      if (error?.name !== 'AbortError') {
+        showErrorToast(error, 'AI润色失败');
+      }
     } finally {
       setPolishing(false);
       setSseVisible(false);
+      sseClientRef.current = null;
     }
   };
 
   const hasGeneratedContent = currentWords > 100;
-
-  const handleRegenerate = async () => {
-    setRegenerating(true);
-    setSseTitle('AI重新生成全文');
-    setSseProgress(0);
-    setSseMessage('正在准备重新生成...');
-    setSseVisible(true);
-
-    try {
-      await shortStoryApi.regenerateStream(story.id, {
-        onProgress: (msg, prog) => {
-          setSseProgress(prog);
-          setSseMessage(msg);
-        },
-      });
-      await reload();
-      message.success('已重新生成全文');
-    } catch (error) {
-      showErrorToast(error, 'AI重新生成失败');
-    } finally {
-      setRegenerating(false);
-      setSseVisible(false);
-    }
-  };
 
   // 后台重写：创建后台任务后立即返回，关闭浏览器不影响生成
   // 任务进度通过 FloatingTaskPanel 查看，完成后自动保存
@@ -296,21 +408,6 @@ export default function Content() {
     });
   };
 
-  // 重写按钮 Dropdown 菜单：前台重写 / 后台重写
-  const regenerateMenuItems: MenuProps['items'] = [
-    {
-      key: 'foreground',
-      label: '前台重写（SSE实时进度）',
-      onClick: () => handleRegenerate(),
-    },
-    {
-      key: 'background',
-      label: '后台重写（可关页面）',
-      icon: <CloudUploadOutlined />,
-      onClick: () => handleRegenerateBackground(),
-    },
-  ];
-
   return (
     <div style={{ padding: 24, maxWidth: 1200, margin: '0 auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -332,26 +429,44 @@ export default function Content() {
             保存
           </Button>
           {hasGeneratedContent && (
-            <Dropdown menu={{ items: regenerateMenuItems }} placement="bottomRight">
-              <Button
-                icon={<ReloadOutlined />}
-                loading={regenerating}
-                danger
-              >
-                AI一键重写全文 <DownOutlined />
-              </Button>
-            </Dropdown>
+            <Button
+              icon={<ReloadOutlined />}
+              loading={regenerating}
+              danger
+              onClick={handleRegenerateBackground}
+            >
+              AI一键重写全文
+            </Button>
           )}
           <Button loading={polishing} onClick={handlePolish}>
-            AI精修全文
+            AI润色全文
           </Button>
         </div>
+      </div>
+
+      {/* Task 39.2: 目标字数动态调整 + Task 39.1: 版本历史入口 */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Text type="secondary" style={{ fontSize: 13 }}>目标字数</Text>
+          <InputNumber
+            size="small"
+            min={8000}
+            max={20000}
+            step={1000}
+            value={targetWordsInput}
+            onChange={handleTargetWordsChange}
+            style={{ width: 110 }}
+          />
+          <Text type="secondary" style={{ fontSize: 12 }}>修改后分段将自动重算</Text>
+        </div>
+        <Button icon={<HistoryOutlined />} onClick={handleOpenHistory}>
+          版本历史
+        </Button>
       </div>
 
       {hasGeneratedContent && (
         <Alert
           type="success"
-          showIcon
           icon={<RobotOutlined />}
           style={{ marginBottom: 16 }}
           message="正文已由AI自动生成完成"
@@ -365,20 +480,22 @@ export default function Content() {
         />
       )}
 
-      <Alert
-        type="info"
-        showIcon
+      <Collapse
+        size="small"
         style={{ marginBottom: 16 }}
-        message="黄金结构（1.5万字标准）"
-        description={
-          <div style={{ fontSize: 13 }}>
-            <Text>Hook 5% · Escalation 20% · Climax 60% · Resolution 15%</Text>
-            <br />
-            <Text type="secondary">
-              死亡黄金钩子前5%抛出危机现场 → 冲突激化20%积攒怒气 → 绝地反击60%剥洋葱式揭露 → 极致爽点15%清算收尾
-            </Text>
-          </div>
-        }
+        items={[{
+          key: 'structure',
+          label: <Text strong>参考结构（约占字数比例，非硬约束）</Text>,
+          children: (
+            <div style={{ fontSize: 13 }}>
+              <Text>开头 5% · 铺垫 20% · 高潮 60% · 结尾 15%（参考值）</Text>
+              <br />
+              <Text type="secondary">
+                开头前5%抛出核心冲突 → 铺垫20%逐步激化矛盾 → 高潮60%展开反转与揭露 → 结尾15%收束情绪
+              </Text>
+            </div>
+          ),
+        }]}
       />
 
       <div style={{ display: 'flex', gap: 16, flexDirection: isMobile ? 'column' : 'row' }}>
@@ -406,8 +523,8 @@ export default function Content() {
           </div>
 
           {/* 各段进度 */}
-          {segments.map((seg, index) => {
-            const color = STAGE_COLOR[seg.stage] || token.colorPrimary;
+          {segments.map((seg) => {
+            const color = STORY_STAGE_CONFIG[seg.stage]?.color || token.colorPrimary;
             const segProgress = seg.target_words > 0 ? Math.min(Math.round((seg.actual_words / seg.target_words) * 100), 100) : 0;
             const statusCfg = STATUS_CONFIG[seg.status] || STATUS_CONFIG.pending;
 
@@ -419,24 +536,14 @@ export default function Content() {
                   padding: 8,
                   background: token.colorBgTextHover,
                   borderRadius: 6,
-                  borderLeft: `3px solid ${color}`,
+                  borderLeft: `3px solid ${token.colorBorderSecondary}`,
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                   <Text strong style={{ fontSize: 13 }}>{seg.label}</Text>
-                  <Tooltip title={`点击切换状态`}>
-                    <Tag
-                      color={statusCfg.color}
-                      style={{ cursor: 'pointer', margin: 0 }}
-                      onClick={() => {
-                        const nextStatus: StorySegment['status'] =
-                          seg.status === 'pending' ? 'writing' : seg.status === 'writing' ? 'completed' : 'pending';
-                        handleSegmentStatusChange(index, nextStatus);
-                      }}
-                    >
-                      {statusCfg.icon} {statusCfg.text}
-                    </Tag>
-                  </Tooltip>
+                  <Tag color={statusCfg.color} style={{ margin: 0 }} aria-label={`分段状态：${statusCfg.text}`}>
+                    {statusCfg.icon} {statusCfg.text}
+                  </Tag>
                 </div>
                 <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>
                   目标 {formatWordCount(seg.target_words)} 字（{Math.round(seg.target_ratio * 100)}%）
@@ -470,10 +577,16 @@ export default function Content() {
             </div>
           }
         >
+          {!content && (
+            <div style={{ textAlign: 'center', padding: '40px 0', color: token.colorTextSecondary }}>
+              <EditOutlined style={{ fontSize: 48, marginBottom: 16, display: 'block' }} />
+              <Text>开始创作你的短故事，或点击右上角"AI润色全文"让AI帮你生成</Text>
+            </div>
+          )}
           <TextArea
             value={content}
             onChange={handleContentChange}
-            autoSize={{ minRows: 20 }}
+            autoSize={{ minRows: isMobile ? 10 : 20 }}
             style={{
               border: 'none',
               borderRadius: 0,
@@ -509,6 +622,7 @@ export default function Content() {
         onCancel={() => setRevisionPreview(null)}
         onConfirmed={async (result) => {
           setContent(result.content);
+          contentRef.current = result.content;
           setRevisionPreview(null);
           await reload();
           message.success('已确认保存AI修改');
@@ -524,6 +638,7 @@ export default function Content() {
         title={sseTitle}
         showMinimize={false}
         cancelButtonText="取消生成"
+        onCancel={handleSseCancel}
       />
 
       {/* 分段生成实时预览 */}
@@ -531,14 +646,22 @@ export default function Content() {
         <Card
           size="small"
           title="实时生成预览"
+          extra={
+            <Button
+              type="text"
+              size="small"
+              icon={<CloseOutlined />}
+              onClick={() => setSegmentPreview('')}
+            />
+          }
           style={{
             position: 'fixed',
             bottom: 16,
             right: 16,
-            width: 400,
+            width: isMobile ? 'calc(100vw - 32px)' : 400,
             maxHeight: 300,
             zIndex: 1001,
-            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            boxShadow: token.boxShadowSecondary,
           }}
           styles={{ body: { maxHeight: 240, overflow: 'auto', padding: 12 } }}
         >
@@ -555,6 +678,56 @@ export default function Content() {
           </Typography.Paragraph>
         </Card>
       )}
+
+      {/* Task 39.1: 版本历史 Drawer */}
+      <Drawer
+        title="版本历史"
+        open={historyDrawerOpen}
+        onClose={() => setHistoryDrawerOpen(false)}
+        width={isMobile ? '100%' : 480}
+      >
+        {loadingHistory ? (
+          <div style={{ textAlign: 'center', padding: '40px 0' }}>
+            <Spin tip="加载版本历史..." />
+          </div>
+        ) : revisionHistory.length === 0 ? (
+          <Empty description="暂无版本历史" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+        ) : (
+          <div>
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
+              点击某条历史可回滚到该版本（当前正文将被覆盖）
+            </Text>
+            {revisionHistory.map((rev, idx) => {
+              const typeColor =
+                rev.revision_type === 'polish' ? 'blue' :
+                rev.revision_type === 'improve' ? 'purple' :
+                rev.revision_type === 'regenerate' ? 'gold' : 'default';
+              return (
+                <Card
+                  key={idx}
+                  size="small"
+                  hoverable
+                  style={{ marginBottom: 8 }}
+                  onClick={() => handleRollback(rev)}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Tag color={typeColor}>{rev.revision_type || 'save'}</Tag>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {rev.saved_at ? new Date(rev.saved_at).toLocaleString('zh-CN') : '未知时间'}
+                    </Text>
+                  </div>
+                  <Typography.Paragraph
+                    ellipsis={{ rows: 3 }}
+                    style={{ marginTop: 8, marginBottom: 0, fontSize: 13, color: token.colorTextSecondary }}
+                  >
+                    {rev.content || '(空内容)'}
+                  </Typography.Paragraph>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </Drawer>
     </div>
   );
 }

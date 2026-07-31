@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Card,
@@ -14,7 +14,7 @@ import {
   theme,
 } from 'antd';
 import { ArrowLeftOutlined, ThunderboltOutlined } from '@ant-design/icons';
-import { shortStoryApi } from '../services/api';
+import { SSEPostClient } from '../utils/sseClient';
 import { showErrorToast } from '../utils/errorHandler';
 
 const { Title, Text } = Typography;
@@ -55,6 +55,9 @@ export default function ShortStoryWizard() {
     target_words: 12000,
   });
   const [genProgress, setGenProgress] = useState(0);
+  const [genMessage, setGenMessage] = useState('正在准备生成...');
+  // SSE 客户端引用，用于取消生成（abort）
+  const sseClientRef = useRef<SSEPostClient | null>(null);
 
   const handleGenerate = async () => {
     if (!form.initial_idea.trim()) {
@@ -63,55 +66,77 @@ export default function ShortStoryWizard() {
     }
 
     setPhase('generating');
-    setGenProgress(10);
+    setGenProgress(0);
+    setGenMessage('正在准备生成...');
 
-    const progressTimer = setInterval(() => {
-      setGenProgress((p) => (p >= 90 ? p : p + Math.random() * 8));
-    }, 1500);
-
-    try {
-      const story = await shortStoryApi.generateFull({
+    // 使用 SSEPostClient 直连流式端点：实时 onProgress 更新真实进度，并支持 abort 取消
+    const client = new SSEPostClient(
+      '/api/short-stories/generate-full-stream',
+      {
         initial_idea: form.initial_idea.trim(),
         emotion_goal: form.emotion_goal,
         target_words: form.target_words,
         target_platform: form.target_platform,
-      });
+      },
+      {
+        onProgress: (msg, prog) => {
+          setGenProgress(prog);
+          if (msg) setGenMessage(msg);
+        },
+        onError: (error) => {
+          showErrorToast(error, 'AI生成失败');
+        },
+      }
+    );
+    sseClientRef.current = client;
 
-      clearInterval(progressTimer);
+    try {
+      const story = await client.connect();
       setGenProgress(100);
       message.success('短故事生成完成！');
       // 跳转到正文页（已有AI生成的完整正文）
       setTimeout(() => {
         navigate(`/short-story/${story.id}/content`);
       }, 800);
-    } catch (error) {
-      clearInterval(progressTimer);
-      showErrorToast(error, 'AI生成失败');
+    } catch (error: any) {
+      // 用户主动取消（AbortError）不报错
+      if (error?.name !== 'AbortError') {
+        showErrorToast(error, 'AI生成失败');
+      }
       setPhase('input');
+    } finally {
+      sseClientRef.current = null;
     }
+  };
+
+  // 取消生成：中止 SSE 请求并返回输入页
+  const handleCancelGenerate = () => {
+    sseClientRef.current?.abort();
+    sseClientRef.current = null;
+    setPhase('input');
+    setGenProgress(0);
+    setGenMessage('正在准备生成...');
+    message.info('已取消生成');
   };
 
   if (phase === 'generating') {
     return (
       <div style={{ maxWidth: 600, margin: '0 auto', padding: '60px 24px', textAlign: 'center' }}>
-        <Spin size="large" />
+        <Spin size="large" tip="AI正在创作中..." />
         <Title level={3} style={{ marginTop: 24, marginBottom: 8 }}>
           <ThunderboltOutlined style={{ color: token.colorPrimary, marginRight: 8 }} />
           AI 正在创作短故事
         </Title>
         <Text type="secondary" style={{ display: 'block', marginBottom: 32 }}>
-          正在按黄金结构生成完整故事（设定+全文），请稍候...
+          {genMessage || '正在按黄金结构生成完整故事（设定+全文），请稍候...'}
         </Text>
         <div style={{ maxWidth: 400, margin: '0 auto' }}>
           <Progress percent={Math.round(genProgress)} status="active" strokeColor={token.colorPrimary} />
         </div>
         <div style={{ marginTop: 24 }}>
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            {genProgress < 30 && '构思高概念选题...'}
-            {genProgress >= 30 && genProgress < 60 && '设计核心反转与铺垫线索...'}
-            {genProgress >= 60 && genProgress < 90 && '按黄金结构创作正文...'}
-            {genProgress >= 90 && '精修润色...'}
-          </Text>
+          <Button danger onClick={handleCancelGenerate} icon={<ArrowLeftOutlined />}>
+            取消生成
+          </Button>
         </div>
       </div>
     );
@@ -205,6 +230,7 @@ export default function ShortStoryWizard() {
               onChange={(v) => setForm({ ...form, target_words: v || 12000 })}
               style={{ width: '100%' }}
               formatter={(value) => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+              parser={(value) => (value ? Number(value.replace(/[^\d]/g, '')) : 0)}
             />
           </div>
         </div>
