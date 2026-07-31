@@ -1,5 +1,5 @@
 """短故事数据模型"""
-from sqlalchemy import Column, String, Text, DateTime, Integer
+from sqlalchemy import Column, String, Text, DateTime, Integer, CheckConstraint
 from sqlalchemy.sql import func
 from app.database import Base
 import uuid
@@ -58,6 +58,17 @@ class ShortStory(Base):
 
     created_at = Column(DateTime, server_default=func.now(), comment="创建时间")
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), comment="更新时间")
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('planning', 'writing', 'generating', 'generated', 'polishing', 'completed')",
+            name='check_short_story_status'
+        ),
+        CheckConstraint(
+            "cover_status IN ('none', 'generating', 'ready', 'failed')",
+            name='check_short_story_cover_status'
+        ),
+    )
 
     def __repr__(self):
         return f"<ShortStory(id={self.id}, title={self.title})>"

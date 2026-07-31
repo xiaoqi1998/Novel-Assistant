@@ -232,7 +232,7 @@ export default function Content() {
       setRevisionHistory(Array.isArray(history) ? history : []);
     } catch (error: any) {
       if (error?.response?.status === 404) {
-        // 后端未实现，从 story.revision_history 字段解析
+        // 后端端点不可用时，从 story.revision_history 字段解析（兼容降级）
         try {
           const parsed = story.revision_history ? JSON.parse(story.revision_history) : [];
           setRevisionHistory(Array.isArray(parsed) ? parsed : []);

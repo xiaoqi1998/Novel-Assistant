@@ -242,7 +242,7 @@ export interface ShortStory {
   target_platform?: string;
   target_words?: number;
   current_words: number;
-  status: 'planning' | 'writing' | 'polishing' | 'completed';
+  status: 'planning' | 'writing' | 'generating' | 'generated' | 'polishing' | 'completed';
   emotion_goal?: string;
   emotion_goal_desc?: string;
   twist_type?: string;
