@@ -15,9 +15,12 @@ import {
   CheckCircleOutlined,
   LineChartOutlined,
   BulbOutlined,
-  ArrowRightOutlined
+  ArrowRightOutlined,
+  ExperimentOutlined
 } from '@ant-design/icons';
 import type { Chapter } from '../types';
+import { polishApi, chapterApi } from '../services/api';
+import { showErrorToast } from '../utils/errorHandler';
 
 // 阅读器设置接口
 interface ReaderSettings {
@@ -122,6 +125,11 @@ export default function ChapterReader({
   };
   const [impactLoading, setImpactLoading] = useState(false);
   const [impactData, setImpactData] = useState<ImpactData | null>(null);
+
+  // AI去味状态
+  const [polishing, setPolishing] = useState(false);
+  const [polishModalVisible, setPolishModalVisible] = useState(false);
+  const [polishedText, setPolishedText] = useState('');
 
   // 响应式检测
   useEffect(() => {
@@ -369,6 +377,40 @@ export default function ChapterReader({
   };
   const currentTheme = themeStyles[settings.theme];
 
+  // AI去味：调用后端去味API，返回预览
+  const handlePolish = useCallback(async () => {
+    if (!chapter?.content) {
+      message.warning('章节内容为空，无法去味');
+      return;
+    }
+    setPolishing(true);
+    try {
+      const result = await polishApi.polishText({ text: chapter.content });
+      setPolishedText(result.polished_text);
+      setPolishModalVisible(true);
+    } catch (err) {
+      showErrorToast(err, 'AI去味失败');
+    } finally {
+      setPolishing(false);
+    }
+  }, [chapter]);
+
+  // 确认去味结果：保存到后端
+  const handleConfirmPolish = useCallback(async () => {
+    if (!chapter?.id) return;
+    try {
+      await chapterApi.updateChapter(chapter.id, { content: polishedText });
+      message.success('AI去味结果已保存');
+      setPolishModalVisible(false);
+      // 刷新页面数据（重新加载章节内容）
+      if (onChapterChange) {
+        onChapterChange(chapter.id);
+      }
+    } catch (err) {
+      showErrorToast(err, '保存去味结果失败');
+    }
+  }, [chapter, polishedText, onChapterChange]);
+
   // 更新设置的便捷函数
   const updateSettings = (key: keyof ReaderSettings, value: number | string) => {
     setSettings(prev => ({ ...prev, [key]: value }));
@@ -447,6 +489,17 @@ export default function ChapterReader({
           第{chapter.chapter_number}章：{chapter.title}
         </Typography.Title>
         
+        <Button
+          type="text"
+          icon={<ExperimentOutlined />}
+          onClick={handlePolish}
+          loading={polishing}
+          style={{ color: currentTheme.text }}
+          title="AI去味"
+        >
+          {!isMobile && 'AI去味'}
+        </Button>
+
         <Button
           type={showSettings ? 'primary' : 'text'}
           icon={<SettingOutlined />}
@@ -799,6 +852,37 @@ export default function ChapterReader({
           <RightOutlined />
         </Button>
       </div>
+
+      {/* AI去味预览 Modal */}
+      <Modal
+        open={polishModalVisible}
+        title="AI去味预览"
+        onCancel={() => setPolishModalVisible(false)}
+        onOk={handleConfirmPolish}
+        okText="确认保存"
+        cancelText="取消"
+        width={isMobile ? '95%' : '80%'}
+        centered
+      >
+        <div style={{ marginBottom: 12 }}>
+          <Typography.Text type="secondary">
+            去味后的文本将替换当前章节内容，确认后生效。
+          </Typography.Text>
+        </div>
+        <div style={{
+          maxHeight: '60vh',
+          overflow: 'auto',
+          padding: 16,
+          background: token.colorBgContainer,
+          borderRadius: 8,
+          border: `1px solid ${token.colorBorder}`,
+          whiteSpace: 'pre-wrap',
+          fontSize: 14,
+          lineHeight: 1.8,
+        }}>
+          {polishedText}
+        </div>
+      </Modal>
     </Modal>
   );
 }

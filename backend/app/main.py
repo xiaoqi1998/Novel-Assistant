@@ -1,4 +1,5 @@
 """FastAPI应用主入口"""
+import sys
 from fastapi import FastAPI, Request, status, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -208,8 +209,14 @@ app.include_router(announcements.router, prefix="/api")  # 公告API
 app.include_router(newapi.router, prefix="/api")  # New API 额度中心
 app.include_router(full_review.router)  # 全文审查API（已包含/api前缀）
 
-static_dir = Path(__file__).parent.parent / "static"
-generated_assets_root_dir = Path(__file__).parent.parent / "storage"
+# 静态资源目录：PyInstaller 打包后位于 _MEIPASS，开发模式位于 backend/
+if getattr(sys, 'frozen', False):
+    static_dir = Path(sys._MEIPASS) / "static"
+else:
+    static_dir = Path(__file__).parent.parent / "static"
+# 生成的封面目录（可写数据，位于 exe 同级 = PROJECT_ROOT）
+from app.config import PROJECT_ROOT
+generated_assets_root_dir = PROJECT_ROOT / "storage"
 generated_covers_dir = generated_assets_root_dir / "generated_covers"
 generated_covers_dir.mkdir(parents=True, exist_ok=True)
 if static_dir.exists():

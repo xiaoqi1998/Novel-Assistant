@@ -5,7 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, delete
 from typing import List
 import json
-from urllib.parse import quote
+import os
+from urllib.parse import quote, unquote
 from app.database import get_db
 from app.models.project import Project
 from app.models.character import Character
@@ -18,6 +19,8 @@ from app.models.foreshadow import Foreshadow
 from app.models.career import Career, CharacterCareer
 from app.models.analysis_task import AnalysisTask
 from app.models.batch_generation_task import BatchGenerationTask
+from app.models.character_arc import CharacterArc
+from app.models.background_task import BackgroundTask
 from app.schemas.project import (
     ProjectCreate,
     ProjectUpdate,
@@ -332,7 +335,32 @@ async def delete_project(
             delete(Foreshadow).where(Foreshadow.project_id == project_id)
         )
         logger.debug(f"删除伏笔数: {foreshadows_result.rowcount}")
-        
+
+        # 13. 删除角色弧光（SQLite 默认不启用外键级联，需显式删除）
+        arcs_result = await db.execute(
+            delete(CharacterArc).where(CharacterArc.project_id == project_id)
+        )
+        logger.debug(f"删除角色弧光数: {arcs_result.rowcount}")
+
+        # 14. 删除关联的后台任务记录
+        bg_tasks_result = await db.execute(
+            delete(BackgroundTask).where(BackgroundTask.project_id == project_id)
+        )
+        logger.debug(f"删除后台任务数: {bg_tasks_result.rowcount}")
+
+        # 15. 清理磁盘上的封面文件
+        if project.cover_image_url:
+            try:
+                from app.config import PROJECT_ROOT
+                cover_storage_dir = PROJECT_ROOT / "storage" / "generated_covers"
+                old_filename = unquote(project.cover_image_url.rsplit("/", 1)[-1])
+                old_file_path = cover_storage_dir / user_id / old_filename
+                if os.path.exists(old_file_path):
+                    os.remove(old_file_path)
+                    logger.debug(f"已清理封面文件: {old_filename}")
+            except Exception as cleanup_err:
+                logger.warning(f"清理封面文件失败(忽略): {cleanup_err}")
+
         # 最后删除项目本身
         await db.delete(project)
         await db.commit()

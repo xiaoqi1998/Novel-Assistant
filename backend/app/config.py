@@ -4,10 +4,19 @@ from typing import Optional
 from pathlib import Path
 import logging
 import os
+import sys
 import uuid
 
-# 获取项目根目录(从backend/app/config.py向上两级)
-PROJECT_ROOT = Path(__file__).parent.parent
+# 获取项目根目录
+# - PyInstaller 打包后：使用 exe 同级目录（可写，存放 data/logs/.env）
+# - 通过环境变量 MOBI_APP_ROOT 指定（由 launcher.py 设置）
+# - 开发模式：从 backend/app/config.py 向上两级
+if getattr(sys, 'frozen', False):
+    PROJECT_ROOT = Path(sys.executable).parent
+elif os.environ.get("MOBI_APP_ROOT"):
+    PROJECT_ROOT = Path(os.environ["MOBI_APP_ROOT"])
+else:
+    PROJECT_ROOT = Path(__file__).parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 DATA_DIR.mkdir(exist_ok=True)
 

@@ -123,7 +123,8 @@ def _build_default_emotion_curve(emotion_goal: str = "") -> str:
 def _recalc_segments_from_content(content: str, target_words: int, existing_segments: str | None) -> tuple[str, int]:
     """根据正文内容重新计算分段字数和状态
 
-    有正文时：按目标比例分配实际字数到各段，并标记为 completed
+    有正文时：优先尝试按段落标记（---/###/【钩子】等）分割内容，
+    匹配不到标记时按段落边界就近分配各段字数，比纯比例近似更准确。
     无正文时：只重置 target_words，状态保持 pending
     """
     total_words = _count_chinese_and_punctuation(content)
@@ -138,13 +139,59 @@ def _recalc_segments_from_content(content: str, target_words: int, existing_segm
     has_content = total_words > 0
     for seg in segments:
         seg["target_words"] = int(target_words * seg["target_ratio"])
-        if has_content:
-            # 按目标比例分配实际字数（近似），并标记已完成
-            seg["actual_words"] = int(total_words * seg["target_ratio"])
-            seg["status"] = "completed"
-        else:
+
+    if not has_content:
+        for seg in segments:
             seg["actual_words"] = 0
             seg["status"] = "pending"
+        return json.dumps(segments, ensure_ascii=False), total_words
+
+    # 尝试按段落标记分割内容
+    # 常见分段标记：---、###、===、【钩子/冲突/高潮/收尾】等
+    marker_pattern = re.compile(r'^[\s]*(?:---+|===+|###+|【(?:钩子|冲突|激化|高潮|反击|反转|收尾|结局|开头|铺垫|发展|高潮部分|结尾))', re.MULTILINE)
+    markers = list(marker_pattern.finditer(content))
+
+    if len(markers) >= len(segments) - 1:
+        # 找到足够的标记，按标记位置分割
+        split_positions = [m.start() for m in markers[:len(segments) - 1]]
+        split_positions.append(len(content))  # 最后一段的结束位置
+        prev_pos = 0
+        for i, seg in enumerate(segments):
+            end_pos = split_positions[i]
+            seg_text = content[prev_pos:end_pos]
+            seg["actual_words"] = _count_chinese_and_punctuation(seg_text)
+            seg["status"] = "completed"
+            prev_pos = end_pos
+    else:
+        # 无标记：按段落边界就近分配
+        paragraphs = content.split('\n\n')
+        # 计算各段目标字数的累计分割点
+        cumulative_ratios = []
+        cumsum = 0
+        for seg in segments:
+            cumsum += seg["target_ratio"]
+            cumulative_ratios.append(cumsum)
+
+        # 将段落分配到各段
+        seg_word_counts = [0] * len(segments)
+        current_pos = 0  # 当前在 content 中的字符位置
+        current_seg = 0
+        for para in paragraphs:
+            para_words = _count_chinese_and_punctuation(para)
+            # 判断当前段落属于哪个分段
+            current_pos_in_content = content.find(para, current_pos)
+            if current_pos_in_content < 0:
+                current_pos_in_content = current_pos
+            ratio_position = current_pos_in_content / max(len(content), 1)
+            # 找到 ratio_position 对应的分段
+            while current_seg < len(segments) - 1 and ratio_position >= cumulative_ratios[current_seg]:
+                current_seg += 1
+            seg_word_counts[current_seg] += para_words
+            current_pos = current_pos_in_content + len(para)
+
+        for i, seg in enumerate(segments):
+            seg["actual_words"] = seg_word_counts[i]
+            seg["status"] = "completed"
 
     return json.dumps(segments, ensure_ascii=False), total_words
 
@@ -303,16 +350,11 @@ async def update_short_story(
                     new_content, target_words, story.segments
                 )
             elif has_content:
-                # 仅 content 变更：重算 actual_words，保留原 target_words
-                total_words = _count_chinese_and_punctuation(new_content)
-                for seg in segments:
-                    if total_words > 0:
-                        seg["actual_words"] = int(total_words * seg["target_ratio"])
-                        seg["status"] = "completed"
-                    else:
-                        seg["actual_words"] = 0
-                        seg["status"] = "pending"
-                update_data['segments'] = json.dumps(segments, ensure_ascii=False)
+                # 仅 content 变更：用改进后的统计算法重算 actual_words，保留原 target_words
+                original_target_words = story.target_words or 12000
+                update_data['segments'], _ = _recalc_segments_from_content(
+                    new_content, original_target_words, story.segments
+                )
             else:
                 # 仅 target_words 变更：重算 target_words，保留原 actual_words 和 status
                 for seg in segments:
@@ -361,6 +403,19 @@ async def delete_short_story(
         await db.execute(
             delete(BackgroundTask).where(BackgroundTask.project_id == story_id)
         )
+
+        # 清理磁盘上的封面文件
+        if story.cover_image_url:
+            try:
+                from app.config import PROJECT_ROOT
+                cover_storage_dir = PROJECT_ROOT / "storage" / "generated_covers"
+                old_filename = unquote(story.cover_image_url.rsplit("/", 1)[-1])
+                old_file_path = cover_storage_dir / user_id / old_filename
+                if os.path.exists(old_file_path):
+                    os.remove(old_file_path)
+                    logger.debug(f"已清理短故事封面文件: {old_filename}")
+            except Exception as cleanup_err:
+                logger.warning(f"清理短故事封面文件失败(忽略): {cleanup_err}")
 
         await db.delete(story)
         await db.commit()
@@ -641,8 +696,89 @@ async def export_markdown(
 **题材标签**: {story.genre or '未设定'}
 
 **目标平台**: {story.target_platform or '未设定'}
+"""
 
----
+        # 反转线索
+        if story.twist_clues:
+            try:
+                clues = json.loads(story.twist_clues)
+                if isinstance(clues, list) and clues:
+                    md += "\n**反转线索**:\n"
+                    for i, clue in enumerate(clues, 1):
+                        md += f"{i}. {clue}\n"
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # 人物设定
+        if story.characters:
+            try:
+                chars = json.loads(story.characters)
+                if isinstance(chars, list) and chars:
+                    md += "\n## 人物设定\n\n"
+                    for c in chars:
+                        name = c.get('name', '未知')
+                        role = c.get('role', '')
+                        desc = c.get('desc', '')
+                        rel = c.get('relationship', '')
+                        md += f"- **{name}**（{role}）"
+                        if desc:
+                            md += f": {desc}"
+                        if rel:
+                            md += f"（关系：{rel}）"
+                        md += "\n"
+                    md += "\n"
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # 情绪曲线
+        if story.emotion_curve:
+            try:
+                curve = json.loads(story.emotion_curve)
+                if isinstance(curve, list) and curve:
+                    md += "## 情绪曲线\n\n"
+                    md += "| 阶段 | 情绪 | 强度 |\n|------|------|------|\n"
+                    for point in curve:
+                        stage = point.get('stage', '')
+                        emotion = point.get('emotion', '')
+                        intensity = point.get('intensity', '')
+                        md += f"| {stage} | {emotion} | {intensity} |\n"
+                    md += "\n"
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # 精修笔记
+        if story.polish_notes:
+            md += f"## 精修笔记\n\n{story.polish_notes}\n\n"
+
+        # AI评分
+        if story.score_data:
+            try:
+                score = json.loads(story.score_data)
+                if isinstance(score, dict) and score:
+                    md += "## AI评分\n\n"
+                    total = score.get('total_score')
+                    level = score.get('level')
+                    if total is not None:
+                        md += f"**总分**: {total}"
+                        if level:
+                            md += f"（{level}）"
+                        md += "\n"
+                    overall_eval = score.get('overall_evaluation')
+                    if overall_eval:
+                        md += f"\n**总评**: {overall_eval}\n"
+                    dimensions = score.get('dimensions')
+                    if isinstance(dimensions, list) and dimensions:
+                        md += "\n| 维度 | 得分 | 评价 |\n|------|------|------|\n"
+                        for dim in dimensions:
+                            d_name = dim.get('name', '')
+                            d_score = dim.get('score', '')
+                            d_comment = dim.get('comment', '')
+                            md += f"| {d_name} | {d_score} | {d_comment} |\n"
+                    md += "\n"
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        md += f"""---
 
 ## 正文
 
@@ -686,6 +822,91 @@ async def export_txt(
         safe_title = safe_title.replace(' ', '_')
 
         txt = f"""{story.title}
+
+{'=' * 40}
+
+类型: 短故事
+字数: {story.current_words} 字
+情绪目标: {story.emotion_goal or '未设定'}
+题材: {story.genre or '未设定'}
+目标平台: {story.target_platform or '未设定'}
+
+{'=' * 40}
+
+【一句话梗概】
+{story.logline or '未设定'}
+
+【核心反转】
+{story.twist_content or '未设定'}（类型：{story.twist_type or '未设定'}）
+"""
+
+        # 反转线索
+        if story.twist_clues:
+            try:
+                clues = json.loads(story.twist_clues)
+                if isinstance(clues, list) and clues:
+                    txt += "\n【反转线索】\n"
+                    for i, clue in enumerate(clues, 1):
+                        txt += f"  {i}. {clue}\n"
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # 人物设定
+        if story.characters:
+            try:
+                chars = json.loads(story.characters)
+                if isinstance(chars, list) and chars:
+                    txt += "\n【人物设定】\n"
+                    for c in chars:
+                        name = c.get('name', '未知')
+                        role = c.get('role', '')
+                        desc = c.get('desc', '')
+                        txt += f"  · {name}（{role}）"
+                        if desc:
+                            txt += f": {desc}"
+                        txt += "\n"
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # 情绪曲线
+        if story.emotion_curve:
+            try:
+                curve = json.loads(story.emotion_curve)
+                if isinstance(curve, list) and curve:
+                    txt += "\n【情绪曲线】\n"
+                    for point in curve:
+                        stage = point.get('stage', '')
+                        emotion = point.get('emotion', '')
+                        intensity = point.get('intensity', '')
+                        txt += f"  {stage}: {emotion}（强度{intensity}）\n"
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # 精修笔记
+        if story.polish_notes:
+            txt += f"\n【精修笔记】\n{story.polish_notes}\n"
+
+        # AI评分
+        if story.score_data:
+            try:
+                score = json.loads(story.score_data)
+                if isinstance(score, dict) and score:
+                    txt += "\n【AI评分】\n"
+                    total = score.get('total_score')
+                    level = score.get('level')
+                    if total is not None:
+                        txt += f"  总分: {total}"
+                        if level:
+                            txt += f"（{level}）"
+                        txt += "\n"
+                    overall_eval = score.get('overall_evaluation')
+                    if overall_eval:
+                        txt += f"  总评: {overall_eval}\n"
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        txt += f"""
+{'=' * 40}
 
 {story.content or '（暂无正文）'}
 """
@@ -2109,6 +2330,44 @@ async def confirm_regenerate(
             pass
         logger.error(f"确认AI重新生成失败(已回滚): story_id={story_id}, error={str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"确认失败: {str(e)}")
+
+
+@router.get("/{story_id}/revision-history", summary="获取短故事版本历史")
+async def get_revision_history(
+    story_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """获取短故事的正文版本历史列表（重生成/精修确认时备份的原文）"""
+    try:
+        user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="未登录")
+
+        result = await db.execute(
+            select(ShortStory).where(
+                ShortStory.id == story_id,
+                ShortStory.user_id == user_id
+            )
+        )
+        story = result.scalar_one_or_none()
+        if not story:
+            raise HTTPException(status_code=404, detail="短故事不存在")
+
+        try:
+            revisions = json.loads(story.revision_history) if story.revision_history else []
+            if not isinstance(revisions, list):
+                revisions = []
+        except (json.JSONDecodeError, TypeError):
+            revisions = []
+
+        logger.info(f"获取版本历史: story_id={story_id}, count={len(revisions)}")
+        return revisions
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取版本历史失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取版本历史失败: {str(e)}")
 
 
 # ============ 后台任务端点（复用长篇小说 BackgroundTask 机制） ============

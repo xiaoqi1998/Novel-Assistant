@@ -23,6 +23,7 @@ from app.models.background_task import BackgroundTask
 from app.models.announcement import Announcement
 from app.models.user_skill import UserSkill
 from app.models.short_story import ShortStory
+from app.models.character_arc import CharacterArc
 
 __all__ = [
     "Project",
