@@ -212,21 +212,41 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
   useEffect(() => {
     const prevStatuses = prevTaskStatusRef.current;
     const newCompletions: string[] = [];
+    const newTerminals: Array<{ id: string; status: string }> = [];
 
     taskList.forEach((task) => {
       const prevStatus = prevStatuses.get(task.id);
-      if (
-        task.status === 'completed' &&
-        prevStatus &&
-        (prevStatus === 'running' || prevStatus === 'pending')
-      ) {
+      const wasActive = prevStatus === 'running' || prevStatus === 'pending';
+      if (task.status === 'completed' && wasActive) {
         newCompletions.push(task.id);
+      }
+      // 任意终态（completed/failed/cancelled）：用于清理 AI 操作互斥锁
+      // 失败/取消也需解除锁，避免按钮永久禁用
+      const isTerminal =
+        task.status === 'completed' ||
+        task.status === 'failed' ||
+        task.status === 'cancelled';
+      if (isTerminal && wasActive) {
+        newTerminals.push({ id: task.id, status: task.status });
       }
     });
 
     // 更新前一次状态快照
     taskList.forEach((task) => {
       prevStatuses.set(task.id, task.status);
+    });
+
+    // 通知其他组件：任务进入终态（completed/failed/cancelled，携带 status）
+    newTerminals.forEach((t) => {
+      const task = taskList.find((x) => x.id === t.id);
+      if (task) {
+        eventBus.emit('task:finished', {
+          taskId: task.id,
+          taskType: task.task_type,
+          projectId: task.project_id,
+          status: task.status,
+        });
+      }
     });
 
     if (newCompletions.length === 0) return;

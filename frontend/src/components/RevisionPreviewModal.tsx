@@ -4,6 +4,7 @@ import { CheckOutlined, CloseOutlined, SwapOutlined } from '@ant-design/icons';
 import ReactDiffViewer from 'react-diff-viewer-continued';
 import { shortStoryApi } from '../services/api';
 import { showErrorToast } from '../utils/errorHandler';
+import useIsMobile from '../utils/useIsMobile';
 import type { RevisionPreview } from '../types';
 import { formatWordCount } from '../utils/format';
 
@@ -30,6 +31,7 @@ export default function RevisionPreviewModal({
 }: RevisionPreviewModalProps) {
   const [confirming, setConfirming] = useState(false);
   const { token } = theme.useToken();
+  const isMobile = useIsMobile();
 
   // 不再提前 return null：始终渲染 Modal，由 open 控制，保留关闭动画
   const isImprove = preview?.revision_type === 'improve';
@@ -90,11 +92,11 @@ export default function RevisionPreviewModal({
           </Tag>
         </div>
       }
-      width="90%"
-      style={{ maxWidth: 1200, top: 20 }}
-      styles={{ body: { maxHeight: '70vh', overflow: 'auto' } }}
+      width={isMobile ? '95%' : '90%'}
+      style={{ maxWidth: 1200, top: isMobile ? 10 : 20 }}
+      styles={{ body: { maxHeight: isMobile ? '65vh' : '70vh', overflow: 'auto' } }}
       footer={[
-        <Button key="cancel" icon={<CloseOutlined />} onClick={onCancel}>
+        <Button key="cancel" icon={<CloseOutlined />} onClick={onCancel} block={isMobile}>
           取消（放弃修改）
         </Button>,
         <Button
@@ -103,6 +105,7 @@ export default function RevisionPreviewModal({
           icon={<CheckOutlined />}
           loading={confirming}
           onClick={handleConfirm}
+          block={isMobile}
         >
           确认采用修改后版本
         </Button>,
@@ -110,7 +113,7 @@ export default function RevisionPreviewModal({
     >
       {/* 字数对比信息 */}
       <div style={{ marginBottom: 16, padding: 12, background: token.colorFillQuaternary, borderRadius: 8 }}>
-        <Row gutter={16} align="middle">
+        <Row gutter={isMobile ? [8, 8] : 16} align="middle" style={isMobile ? { rowGap: 8 } : undefined}>
           <Col>
             <Text type="secondary">原文字数：</Text>
             <Text strong>{formatWordCount(preview?.original_words ?? 0)}</Text>
@@ -161,7 +164,7 @@ export default function RevisionPreviewModal({
         <ReactDiffViewer
           oldValue={preview?.original_content ?? ''}
           newValue={preview?.new_content ?? ''}
-          splitView={true}
+          splitView={!isMobile}
           leftTitle="原文（修改前）"
           rightTitle={`修改后（AI ${isRegenerate ? '重新生成' : isImprove ? '改进' : '精修'}）`}
           useDarkTheme={false}

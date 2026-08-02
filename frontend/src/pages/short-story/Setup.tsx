@@ -421,9 +421,18 @@ export default function Setup() {
 
   return (
     <div style={{ padding: isMobile ? 12 : 24, maxWidth: 900, margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: isMobile ? 'stretch' : 'center',
+          flexDirection: isMobile ? 'column' : 'row',
+          gap: isMobile ? 8 : 0,
+          marginBottom: 16,
+        }}
+      >
         <Title level={4} style={{ margin: 0 }}>故事设定</Title>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: isMobile ? 'flex-start' : 'flex-end' }}>
           {lastDraftSaveTime && (
             <Tooltip title="本地草稿已自动保存，网络恢复后可手动点保存或刷新页面恢复">
               <Text type="warning" style={{ fontSize: 12 }}>
@@ -677,6 +686,8 @@ export default function Setup() {
         open={loglineModalOpen}
         onCancel={() => setLoglineModalOpen(false)}
         footer={null}
+        centered
+        width={isMobile ? '92%' : 520}
       >
         {loglineOptions.map((opt, idx) => (
           <div
@@ -707,6 +718,8 @@ export default function Setup() {
         open={twistModalOpen}
         onCancel={() => setTwistModalOpen(false)}
         footer={null}
+        centered
+        width={isMobile ? '92%' : 520}
       >
         {twistOptions.map((opt, idx) => (
           <div

@@ -23,6 +23,7 @@ import { shortStoryApi } from '../../services/api';
 import { getTaskStatus, getProjectTasks, deleteTask } from '../../services/backgroundTaskService';
 import { showErrorToast } from '../../utils/errorHandler';
 import { useShortStoryStore } from '../../store/shortStoryStore';
+import useIsMobile from '../../utils/useIsMobile';
 import RevisionPreviewModal from '../../components/RevisionPreviewModal';
 import {
   CHECKLIST_CATEGORIES,
@@ -42,6 +43,7 @@ interface ContextType {
 export default function Polish() {
   const { story, reload } = useOutletContext<ContextType>();
   const { token } = theme.useToken();
+  const isMobile = useIsMobile();
   const { updateCurrentStory } = useShortStoryStore();
   const [checklist, setChecklist] = useState<PolishChecklistItem[]>([]);
   // Task 39.4: 自定义检查项草稿（按类别分组）
@@ -57,7 +59,9 @@ export default function Polish() {
 
   // AI评分相关
   const [scoreResult, setScoreResult] = useState<StoryScoreResult | null>(null);
-  // 基于评分改进相关
+  // 后台评分任务运行中（用于 AI 操作互斥）
+  const [scoring, setScoring] = useState(false);
+  // 基于评分改进相关（改进为后台任务，running 期间保持 true 直到任务完成/失败）
   const [improving, setImproving] = useState(false);
   // AI自动检查相关
   const [autoChecking, setAutoChecking] = useState(false);
@@ -171,16 +175,19 @@ export default function Polish() {
       return;
     }
     try {
+      setScoring(true);
       await shortStoryApi.scoreBackground(story.id);
       message.success(`已创建后台评分任务，可关闭页面，完成后右下角浮窗会提示`);
       // 通知 FloatingTaskPanel 立即刷新
       eventBus.emit('background-task-created');
     } catch (error) {
+      setScoring(false);
       showErrorToast(error, '创建后台评分任务失败');
     }
   };
 
   // 基于评分改进：改为后台任务（关闭页面不影响），完成后自动弹出对比预览
+  // improving 标志在任务完成/失败时由 task:completed 监听器清除，此处不在 finally 清除
   const handleImprove = async () => {
     if (!scoreResult) {
       message.warning('请先进行AI评分，才能基于评分改进点修订正文');
@@ -193,57 +200,77 @@ export default function Polish() {
       // 通知 FloatingTaskPanel 立即刷新
       eventBus.emit('background-task-created');
     } catch (error) {
-      showErrorToast(error, '创建后台改进任务失败');
-    } finally {
       setImproving(false);
+      showErrorToast(error, '创建后台改进任务失败');
     }
   };
 
-  // 监听后台改进任务完成：读取 task_result 弹出对比预览供用户确认
+  // 监听后台任务终态（completed/failed/cancelled）：清理 AI 操作互斥锁
+  // 改进任务 completed 时读取 task_result 弹出对比预览供用户确认；failed 时提示错误
   // （任务在后台跑，切页面不丢失；回到本页且任务完成时自动弹预览）
+  // 注意：监听 task:finished（覆盖失败/取消），避免任务失败时 scoring/improving 锁卡死、按钮永久禁用
   useEffect(() => {
     if (!story.id) return;
-    const handleTaskCompleted = async (data: unknown) => {
-      const payload = data as { taskId?: string; taskType?: string; projectId?: string };
-      if (
-        payload?.taskType === 'short_story_improve' &&
-        payload.projectId === story.id &&
-        payload.taskId
-      ) {
+    const handleTaskFinished = async (data: unknown) => {
+      const payload = data as { taskId?: string; taskType?: string; projectId?: string; status?: string };
+      if (payload?.projectId !== story.id) return;
+      // 评分任务终态：清除 scoring 锁，AI 操作互斥解除
+      if (payload.taskType === 'short_story_score') {
+        setScoring(false);
+      }
+      // 改进任务终态：清除 improving 锁，completed 时弹出对比预览，failed 时提示
+      if (payload.taskType === 'short_story_improve' && payload.taskId) {
+        setImproving(false);
         try {
           const taskStatus = await getTaskStatus(payload.taskId);
           if (taskStatus.status === 'completed' && taskStatus.task_result) {
             setRevisionPreview(taskStatus.task_result as unknown as RevisionPreview);
             setPendingTaskId(payload.taskId);
             message.success('AI改进完成，请预览确认');
+          } else if (taskStatus.status === 'failed') {
+            message.error('AI改进失败：' + (taskStatus.error_message || '请稍后重试'));
           }
         } catch {
           // 查询任务结果失败，忽略（用户可手动重试）
         }
       }
     };
-    eventBus.on('task:completed', handleTaskCompleted);
+    eventBus.on('task:finished', handleTaskFinished);
     return () => {
-      eventBus.off('task:completed', handleTaskCompleted);
+      eventBus.off('task:finished', handleTaskFinished);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [story.id]);
 
   // mount 时查询是否有已完成的 improve 任务待确认（处理从别的页面跳转来的情况）
+  // 注意：列表接口 getProjectTasks 不返回 task_result，需用 getTaskStatus 取详情
   useEffect(() => {
     if (!story.id) return;
     let cancelled = false;
     (async () => {
       try {
         const tasks = await getProjectTasks(story.id);
+        // 同步后台任务运行态：若有 running/pending 的评分/改进任务，标记 aiBusy
+        const hasActiveScore = tasks.items.some(
+          (t) => t.task_type === 'short_story_score' && (t.status === 'running' || t.status === 'pending')
+        );
+        const hasActiveImprove = tasks.items.some(
+          (t) => t.task_type === 'short_story_improve' && (t.status === 'running' || t.status === 'pending')
+        );
+        if (!cancelled) {
+          if (hasActiveScore) setScoring(true);
+          if (hasActiveImprove) setImproving(true);
+        }
+        // 查找已完成的 improve 任务（不依赖列表的 task_result，改用详情接口取）
         const pendingImprove = tasks.items.find(
-          (t) =>
-            t.task_type === 'short_story_improve' &&
-            t.status === 'completed' &&
-            t.task_result
+          (t) => t.task_type === 'short_story_improve' && t.status === 'completed'
         );
         if (!cancelled && pendingImprove) {
-          setRevisionPreview(pendingImprove.task_result as unknown as RevisionPreview);
-          setPendingTaskId(pendingImprove.id);
+          const detail = await getTaskStatus(pendingImprove.id);
+          if (!cancelled && detail.status === 'completed' && detail.task_result) {
+            setRevisionPreview(detail.task_result as unknown as RevisionPreview);
+            setPendingTaskId(pendingImprove.id);
+          }
         }
       } catch {
         // 查询失败忽略
@@ -252,6 +279,7 @@ export default function Polish() {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [story.id]);
 
   const handlePolish = async () => {
@@ -307,21 +335,32 @@ export default function Polish() {
   }, [checklist]);
 
   const checkedCount = checklist.filter((i) => i.checked).length;
+  // AI 操作互斥：任一 AI 操作运行中时，禁用其他 AI 操作按钮，避免并发触发
+  const aiBusy = polishing || scoring || improving || autoChecking || autoScoring;
   const totalCount = checklist.length;
   const allChecked = totalCount > 0 && checkedCount === totalCount;
 
   return (
-    <div style={{ padding: 24, maxWidth: 900, margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+    <div style={{ padding: isMobile ? 12 : 24, maxWidth: 900, margin: '0 auto' }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: isMobile ? 'stretch' : 'center',
+          flexDirection: isMobile ? 'column' : 'row',
+          gap: isMobile ? 8 : 0,
+          marginBottom: 16,
+        }}
+      >
         <Title level={4} style={{ margin: 0 }}>精修笔记</Title>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <Button loading={polishing} onClick={handlePolish}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: isMobile ? 'flex-start' : 'flex-end' }}>
+          <Button loading={polishing} disabled={aiBusy} onClick={handlePolish}>
             AI润色全文
           </Button>
           <Button
             type="primary"
-            loading={improving || autoScoring}
-            disabled={improving || autoScoring}
+            loading={scoring}
+            disabled={aiBusy}
             onClick={handleScoreBackground}
           >
             <TrophyOutlined /> AI评分
@@ -332,12 +371,17 @@ export default function Polish() {
         </div>
       </div>
 
-      {(polishing || improving) && (
+      {(polishing || scoring || improving) && (
         <Alert
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
-          message={<span><Spin size="small" style={{ marginRight: 8 }} />{polishing ? polishHint : '正在创建后台改进任务...'}</span>}
+          message={
+            <span>
+              <Spin size="small" style={{ marginRight: 8 }} />
+              {polishing ? polishHint : scoring ? 'AI后台评分中，完成后自动显示结果…' : 'AI后台改进中，完成后自动弹出对比预览…'}
+            </span>
+          }
         />
       )}
 
@@ -398,6 +442,7 @@ export default function Polish() {
             onRescore={handleScoreBackground}
             onImprove={handleImprove}
             improving={improving}
+            aiBusy={aiBusy}
           />
         ) : (
           <Empty
@@ -412,7 +457,7 @@ export default function Polish() {
               </span>
             }
           >
-            <Button type="primary" ghost icon={<TrophyOutlined />} onClick={handleScoreBackground}>
+            <Button type="primary" ghost icon={<TrophyOutlined />} onClick={handleScoreBackground} disabled={aiBusy}>
               开始AI评分
             </Button>
           </Empty>
@@ -432,6 +477,7 @@ export default function Polish() {
                 ghost
                 icon={<AuditOutlined />}
                 loading={autoChecking}
+                disabled={aiBusy}
                 onClick={handleAutoCheck}
               >
                 AI自动检查
@@ -655,13 +701,16 @@ function ScoreResultView({
   onRescore,
   onImprove,
   improving,
+  aiBusy,
 }: {
   result: StoryScoreResult;
   onRescore: () => void;
   onImprove: () => void;
   improving: boolean;
+  aiBusy: boolean;
 }) {
   const { token } = theme.useToken();
+  const isMobile = useIsMobile();
   const levelColorMap: Record<string, string> = {
     '优秀': token.colorSuccess,
     '良好': token.colorPrimary,
@@ -673,7 +722,7 @@ function ScoreResultView({
   return (
     <div>
       {/* 总分头部 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 24, marginBottom: 16, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 12 : 24, marginBottom: 16, flexWrap: 'wrap' }}>
         <div style={{ textAlign: 'center', minWidth: 120 }}>
           <div
             style={{
@@ -695,19 +744,21 @@ function ScoreResultView({
             {result.overall_evaluation}
           </div>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: isMobile ? 'stretch' : 'flex-end', width: isMobile ? '100%' : 'auto' }}>
           <Tooltip title="把评分给出的改进点（最严重问题/优先级建议/各维度问题与建议）喂给AI，让其针对性修订正文。改进后旧评分清空，需重新评分验证效果。">
             <Button
               type="primary"
               icon={<CheckCircleOutlined />}
               loading={improving}
+              disabled={aiBusy}
               onClick={onImprove}
               size="small"
+              block={isMobile}
             >
               基于评分改进正文
             </Button>
           </Tooltip>
-          <Button icon={<ReloadOutlined />} onClick={onRescore} size="small" disabled={improving}>
+          <Button icon={<ReloadOutlined />} onClick={onRescore} size="small" disabled={aiBusy} block={isMobile}>
             重新评分
           </Button>
         </div>

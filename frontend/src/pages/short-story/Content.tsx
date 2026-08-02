@@ -28,7 +28,7 @@ import RevisionPreviewModal from '../../components/RevisionPreviewModal';
 import { SSELoadingOverlay } from '../../components/SSELoadingOverlay';
 import { SSEPostClient } from '../../utils/sseClient';
 import { eventBus } from '../../store/eventBus';
-import { getProjectTasks, deleteTask } from '../../services/backgroundTaskService';
+import { getProjectTasks, getTaskStatus, deleteTask } from '../../services/backgroundTaskService';
 import {
   loadStoryContentDraft,
   saveStoryContentDraft,
@@ -106,7 +106,6 @@ export default function Content() {
   // （regenerate-background 完成后预览存于 task_result，需主动读取；不直接写库）
   const handleRegenerateTaskCompleted = async (taskId: string) => {
     try {
-      const { getTaskStatus } = await import('../../services/backgroundTaskService');
       const taskStatus = await getTaskStatus(taskId);
       if (taskStatus.status === 'completed' && taskStatus.task_result) {
         const tr = taskStatus.task_result as Record<string, unknown>;
@@ -123,6 +122,7 @@ export default function Content() {
   };
 
   // mount 时查询是否有已完成的 regenerate 任务待确认（处理从别的页面跳转来的情况）
+  // 注意：列表接口 getProjectTasks 不返回 task_result，需用 getTaskStatus 取详情
   useEffect(() => {
     if (!story.id) return;
     let cancelled = false;
@@ -132,16 +132,18 @@ export default function Content() {
         const pendingRegen = tasks.items.find(
           (t) =>
             t.task_type === 'short_story_regenerate' &&
-            t.status === 'completed' &&
-            t.task_result
+            t.status === 'completed'
         );
         if (!cancelled && pendingRegen) {
-          const tr = pendingRegen.task_result as Record<string, unknown>;
-          setRevisionPreview({
-            ...(tr as unknown as RevisionPreview),
-            new_content: (tr.new_content as string) || (tr.content as string) || '',
-          });
-          setPendingTaskId(pendingRegen.id);
+          const detail = await getTaskStatus(pendingRegen.id);
+          if (!cancelled && detail.status === 'completed' && detail.task_result) {
+            const tr = detail.task_result as Record<string, unknown>;
+            setRevisionPreview({
+              ...(tr as unknown as RevisionPreview),
+              new_content: (tr.new_content as string) || (tr.content as string) || '',
+            });
+            setPendingTaskId(pendingRegen.id);
+          }
         }
       } catch {
         // 查询失败忽略
@@ -458,6 +460,8 @@ export default function Content() {
   };
 
   const hasGeneratedContent = currentWords > 100;
+  // AI 操作互斥：SSE 流式操作（润色/分段生成）共享同一 sseClientRef，并发会互相覆盖且取消逻辑失效
+  const aiBusy = polishing || !!generatingSegment;
 
   // 后台重写：创建后台任务后立即返回，关闭浏览器不影响生成
   // 任务进度通过 FloatingTaskPanel 查看，完成后自动保存
@@ -482,10 +486,19 @@ export default function Content() {
   };
 
   return (
-    <div style={{ padding: 24, maxWidth: 1200, margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+    <div style={{ padding: isMobile ? 12 : 24, maxWidth: 1200, margin: '0 auto' }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: isMobile ? 'stretch' : 'center',
+          flexDirection: isMobile ? 'column' : 'row',
+          gap: isMobile ? 8 : 0,
+          marginBottom: 16,
+        }}
+      >
         <Title level={4} style={{ margin: 0 }}>正文创作</Title>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: isMobile ? 'flex-start' : 'flex-end' }}>
           {lastSaved && (
             <Text type="secondary" style={{ fontSize: 12 }}>
               {saving ? '保存中...' : `已保存 ${lastSaved.toLocaleTimeString('zh-CN')}`}
@@ -505,13 +518,14 @@ export default function Content() {
             <Button
               icon={<ReloadOutlined />}
               loading={regenerating}
+              disabled={aiBusy}
               danger
               onClick={handleRegenerateBackground}
             >
               AI一键重写全文
             </Button>
           )}
-          <Button loading={polishing} onClick={handlePolish}>
+          <Button loading={polishing} disabled={aiBusy} onClick={handlePolish}>
             AI润色全文
           </Button>
         </div>
@@ -626,6 +640,7 @@ export default function Content() {
                   size="small"
                   type="link"
                   loading={generatingSegment === seg.stage}
+                  disabled={aiBusy}
                   onClick={() => handleGenerateSegment(seg.stage)}
                   style={{ padding: 0, marginTop: 4, fontSize: 12 }}
                 >
