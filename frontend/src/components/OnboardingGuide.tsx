@@ -8,6 +8,8 @@ import {
   RightOutlined,
   CheckOutlined,
   LeftOutlined,
+  CompassOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons';
 import { alphaColor } from '../utils/color';
 
@@ -59,46 +61,76 @@ const COACH_STEPS: CoachStep[] = [
     selector: '.onboarding-create-btn',
     icon: <FolderAddOutlined />,
     title: '第一步：创建项目',
-    description: '点击「创建项目」开始你的第一部小说。填写书名、题材、目标字数，系统会根据题材自动适配提示词与情绪曲线。',
+    description: '点击「创建项目」开始你的第一部小说。填写书名、题材、目标字数，系统会根据题材自动适配提示词与情绪曲线，并初始化项目向导。',
     highlights: [
-      '题材决定 AI 写作的风格与节奏',
+      '题材决定 AI 写作的风格、节奏与情绪曲线',
       '目标字数影响章节拆分与节奏控制',
-      '创建后仍可随时修改设定',
+      '可选「一对一」或「一对多」大纲章节模式',
+      '创建后仍可在世界设定中随时修改',
     ],
   },
   {
     selector: '.onboarding-world-menu',
     icon: <GlobalOutlined />,
-    title: '第二步：构建世界观',
-    description: '进入项目后，在侧边栏点击「世界设定」，完善时代背景、势力格局、核心规则。AI 会读取这些设定来生成符合你世界规则的内容。',
+    title: '第二步：构建创作设定',
+    description: '进入项目后，在侧边栏「创作管理」分组下完善设定数据。这些设定会被 AI 读取，作为后续生成章节、校验一致性的依据。',
     highlights: [
-      '世界观：时代背景、势力格局、核心规则',
-      '至少填写 3-5 条核心规则',
-      '越完整，AI 越不会写出"出戏"的内容',
+      '世界设定：时代背景、势力格局、核心规则（越完整，AI 越不会"出戏"）',
+      '角色管理：主角、配角的性格、外貌、关系；角色卡片可一键跳转',
+      '组织 / 职业 / 关系：势力归属、职业阶段、人际网络，供章节生成引用',
+      '大纲管理：展开大纲后自动设计章末钩子、场景节拍',
     ],
     fallbackNote: '进入任意项目后可查看此菜单',
   },
   {
     selector: '.onboarding-chapters-menu',
     icon: <BookOutlined />,
-    title: '第三步：章节管理',
-    description: '在「章节管理」页面，你可以规划大纲、AI 生成章节、流式查看写作过程。每章会自动设计章末钩子、场景节拍与情绪曲线。',
+    title: '第三步：章节生成与剧情工具',
+    description: '在「章节管理」页面 AI 生成章节、流式查看写作过程；每章生成时会自动写入章节快照。配合「剧情分析」「伏笔管理」可追踪剧情节奏与悬念。',
     highlights: [
-      '大纲展开会自动设计章末追读钩子',
-      '场景节拍让章节内部结构紧凑',
-      '信息节奏控制悬念的释放与保留',
+      '章节管理：AI 流式生成、自动设计钩子/节拍/情绪曲线',
+      '生成时自动创建 15 维事实快照与 12 类 CHANGES 声明',
+      '剧情分析：按章节回顾冲突进度、节奏曲线',
+      '伏笔管理：埋设/回收伏笔，AI 生成时自动引用',
+    ],
+    fallbackNote: '进入任意项目后可查看此菜单',
+  },
+  {
+    selector: '.onboarding-tianming-menu',
+    icon: <CompassOutlined />,
+    title: '第四步：天命状态校验与修正',
+    description: '「天命状态」是质检中心。章节生成后自动跑前 4 道规则门（毫秒级）；发现问题可手动触发后 2 道 AI 门，再一键应用 AI 修正。',
+    highlights: [
+      '六道门：协议/引用/一致性/未知实体（规则门）+ 描写一致性/蓝图存在（AI门）',
+      '修正循环：AI 生成建议 → 用户确认 → SSE 流式重写 → 自动重新校验',
+      '物品/秘密/誓约/位置：章节生成时自动写入，也可手动维护',
+      '章节快照：每章保留 15 维事实快照，供前后对比与一致性检查',
+    ],
+    fallbackNote: '进入任意项目后可查看此菜单',
+  },
+  {
+    selector: '.onboarding-help-btn',
+    icon: <ThunderboltOutlined />,
+    title: '第五步：创作工具箱',
+    description: '侧边栏「创作工具」分组提供进阶能力：调风格、调提示词、扩展 Skill、全文审查。这些都是可选的高阶工具，按需使用。',
+    highlights: [
+      '写作风格：保存/应用作者风格样本，统一全文语感',
+      '提示词工坊：可视化调试与版本管理提示词',
+      'Skill 工具箱 / Skill 管理：扩展 AI 能力的插件体系',
+      '全文审查：完成后统一审查敏感词、设定冲突、伏笔回收',
     ],
     fallbackNote: '进入任意项目后可查看此菜单',
   },
   {
     selector: '.onboarding-help-btn',
     icon: <QuestionCircleOutlined />,
-    title: '第四步：随时查看帮助',
-    description: '点击侧边栏的「使用说明」随时查看完整指南、核心功能介绍和常见问题。遇到任何问题都可以在这里找到答案。',
+    title: '第六步：随时查看帮助',
+    description: '点击侧边栏的「使用说明」随时查看完整指南、核心功能介绍和常见问题；也可在此重新触发本引导。',
     highlights: [
-      '快速开始：6 步上手指南',
-      '核心功能：钩子、节拍、情绪曲线',
-      '常见问题：风格、对话、悬念',
+      '快速开始：本引导可随时重新查看',
+      '核心功能：钩子、节拍、情绪曲线、六道门',
+      '常见问题：风格、对话、悬念、修正循环',
+      '工作流推荐：设定 → 大纲 → 章节 → 天命校验 → 工具润色',
     ],
   },
 ];
@@ -106,7 +138,7 @@ const COACH_STEPS: CoachStep[] = [
 // 计算说明卡片位置（根据目标元素位置智能放置）
 const computePopoverPosition = (rect: DOMRect): CSSProperties => {
   const popoverWidth = 340;
-  const popoverHeight = 260; // 估算高度
+  const popoverHeight = 380; // 估算高度（6步引导含4条highlights）
   const gap = 16;
   const margin = 16;
 
@@ -314,11 +346,14 @@ export default function OnboardingGuide() {
         style={{
           position: 'fixed',
           width: 340,
+          maxHeight: 'calc(100vh - 32px)',
           background: token.colorBgContainer,
           borderRadius: 12,
           boxShadow: token.boxShadowSecondary,
           zIndex: 2001,
           overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
           transition: hasTarget ? 'top 0.3s ease, left 0.3s ease' : 'none',
           ...popoverStyle,
         }}
@@ -329,6 +364,7 @@ export default function OnboardingGuide() {
             padding: '18px 20px 12px',
             background: `linear-gradient(135deg, ${token.colorPrimary} 0%, ${token.colorPrimaryBg} 100%)`,
             position: 'relative',
+            flexShrink: 0,
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -370,7 +406,7 @@ export default function OnboardingGuide() {
         </div>
 
         {/* 内容区 */}
-        <div style={{ padding: '14px 20px 12px' }}>
+        <div style={{ padding: '14px 20px 12px', overflowY: 'auto', flex: 1, minHeight: 0 }}>
           <Paragraph style={{ fontSize: 13, color: token.colorText, marginBottom: 10, lineHeight: 1.6 }}>
             {step.description}
           </Paragraph>
@@ -421,6 +457,7 @@ export default function OnboardingGuide() {
             justifyContent: 'space-between',
             alignItems: 'center',
             borderTop: `1px solid ${token.colorBorderSecondary}`,
+            flexShrink: 0,
           }}
         >
           <Button type="text" size="small" onClick={handleSkipClick} style={{ color: token.colorTextSecondary }}>

@@ -108,7 +108,7 @@ export default function ProjectDetail() {
           { key: 'chapters', icon: <BookOutlined />, label: <Link to={`/project/${projectId}/chapters`} className="onboarding-chapters-menu">章节管理</Link> },
           { key: 'chapter-analysis', icon: <FundOutlined />, label: <Link to={`/project/${projectId}/chapter-analysis`}>剧情分析</Link> },
           { key: 'foreshadows', icon: <BulbOutlined />, label: <Link to={`/project/${projectId}/foreshadows`}>伏笔管理</Link> },
-          { key: 'tianming', icon: <CompassOutlined />, label: <Link to={`/project/${projectId}/tianming`}>天命状态</Link> },
+          { key: 'tianming', icon: <CompassOutlined />, label: <Link to={`/project/${projectId}/tianming`} className="onboarding-tianming-menu">天命状态</Link> },
         ],
       },
       {
@@ -137,7 +137,7 @@ export default function ProjectDetail() {
       { key: 'chapters', icon: <BookOutlined />, label: <Link to={`/project/${projectId}/chapters`} className="onboarding-chapters-menu">章节管理</Link> },
       { key: 'chapter-analysis', icon: <FundOutlined />, label: <Link to={`/project/${projectId}/chapter-analysis`}>剧情分析</Link> },
       { key: 'foreshadows', icon: <BulbOutlined />, label: <Link to={`/project/${projectId}/foreshadows`}>伏笔管理</Link> },
-      { key: 'tianming', icon: <CompassOutlined />, label: <Link to={`/project/${projectId}/tianming`}>天命状态</Link> },
+      { key: 'tianming', icon: <CompassOutlined />, label: <Link to={`/project/${projectId}/tianming`} className="onboarding-tianming-menu">天命状态</Link> },
       { key: 'writing-styles', icon: <EditOutlined />, label: <Link to={`/project/${projectId}/writing-styles`}>写作风格</Link> },
       { key: 'prompt-workshop', icon: <CloudOutlined />, label: <Link to={`/project/${projectId}/prompt-workshop`}>提示词工坊</Link> },
       { key: 'skill-chat', icon: <ThunderboltOutlined />, label: <Link to={`/project/${projectId}/skill-chat`}>Skill 工具箱</Link> },
