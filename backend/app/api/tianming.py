@@ -1,4 +1,4 @@
-"""天命状态管理API - 物品/秘密/誓约/位置/快照的CRUD"""
+"""天命状态管理API - 物品/秘密/誓约/位置/快照的CRUD + 六道门校验 + 半自动修正"""
 import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +14,8 @@ from app.models.secret import Secret
 from app.models.vow import Vow
 from app.models.character_location import CharacterLocation
 from app.models.chapter_snapshot import ChapterSnapshot
+from app.models.chapter import Chapter
+from app.models.generation_history import GenerationHistory
 from app.api.common import verify_project_access
 from app.logger import get_logger
 
@@ -548,3 +550,315 @@ async def get_character_tianming_state(
         "secrets": secrets,
         "vows": vows,
     }
+
+
+# ==================== 六道门校验 + 半自动修正循环 ====================
+
+
+@router.post(
+    "/projects/{project_id}/snapshots/{snapshot_id}/validate",
+    summary="手动触发六道门完整校验（含AI门）",
+)
+async def validate_snapshot(
+    project_id: str,
+    snapshot_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """手动触发完整六道门校验（含2门AI门）
+
+    异步触发时仅跑规则门（毫秒级）；此端点跑全部6门（含AI门，2-5秒）。
+    校验结果写入快照的4个字段：validation_status / validation_report /
+    needs_revision / revision_suggestions。
+    """
+    user_id = get_current_user_id(request)
+    await _verify_project(project_id, user_id, db)
+
+    # 验证 snapshot_id 确实属于该 project_id，防止越权
+    snap_result = await db.execute(
+        select(ChapterSnapshot.id).where(
+            and_(ChapterSnapshot.id == snapshot_id,
+                 ChapterSnapshot.project_id == project_id)
+        )
+    )
+    if not snap_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="快照不存在或不属于该项目")
+
+    # 加载章节正文（用于AI门校验）
+    snap_full = await db.execute(
+        select(ChapterSnapshot).where(ChapterSnapshot.id == snapshot_id)
+    )
+    snapshot = snap_full.scalar_one()
+    chapter_result = await db.execute(
+        select(Chapter).where(Chapter.id == snapshot.chapter_id)
+    )
+    chapter = chapter_result.scalar_one_or_none()
+    content = chapter.content if chapter else ""
+
+    # 获取用户AI服务（手动触发时可用）
+    from app.api.settings import get_user_ai_service_from_db
+    try:
+        ai_service = await get_user_ai_service_from_db(user_id, db)
+    except Exception as e:
+        logger.warning(f"获取AI服务失败，仅执行规则门: {e}")
+        ai_service = None
+
+    # 执行六道门校验
+    from app.services.validation_service import ValidationService
+    result = await ValidationService.run_six_gates_and_update(
+        db=db,
+        snapshot_id=snapshot_id,
+        content=content,
+        run_ai_gates=True,
+        ai_service=ai_service,
+    )
+    return result
+
+
+@router.post(
+    "/projects/{project_id}/snapshots/{snapshot_id}/revise",
+    summary="根据修正建议触发AI针对性重写（SSE流式）",
+)
+async def revise_snapshot(
+    project_id: str,
+    snapshot_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """半自动修正循环：根据 revision_suggestions 触发AI针对性重写
+
+    流程：
+    1. 读取快照的 revision_suggestions 作为AI重写指令
+    2. SSE流式返回重写内容（前端实时显示）
+    3. 用户预览满意后调用 /revise/confirm 落库
+
+    设计要点（防止token浪费）：
+    - 针对性修正：只针对 revision_suggestions 指出的段落，不全篇重写
+    - 半自动确认：用户预览满意才确认，避免无效重写
+    """
+    from fastapi.responses import StreamingResponse
+    from app.utils.sse_response import SSEResponse, create_sse_response, wrap_stream_with_heartbeat, HEARTBEAT
+    from app.api.settings import get_user_ai_service_from_db
+
+    user_id = get_current_user_id(request)
+    await _verify_project(project_id, user_id, db)
+
+    # 验证 snapshot 归属
+    snap_result = await db.execute(
+        select(ChapterSnapshot).where(
+            and_(ChapterSnapshot.id == snapshot_id,
+                 ChapterSnapshot.project_id == project_id)
+        )
+    )
+    snapshot = snap_result.scalar_one_or_none()
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="快照不存在或不属于该项目")
+
+    # 检查是否有修正建议
+    suggestions = snapshot.revision_suggestions or []
+    if not suggestions:
+        raise HTTPException(status_code=400, detail="该快照无修正建议（revision_suggestions为空），请先触发校验")
+
+    # 加载章节
+    chapter_result = await db.execute(
+        select(Chapter).where(Chapter.id == snapshot.chapter_id)
+    )
+    chapter = chapter_result.scalar_one_or_none()
+    if not chapter or not chapter.content:
+        raise HTTPException(status_code=404, detail="章节不存在或无正文内容")
+
+    # 获取AI服务
+    try:
+        ai_service = await get_user_ai_service_from_db(user_id, db)
+    except Exception as e:
+        logger.error(f"创建AI服务失败: {e}")
+        async def error_gen():
+            yield await SSEResponse.send_error(f"AI服务配置错误: {str(e)}")
+        return create_sse_response(error_gen())
+
+    # 构建修正建议清单
+    suggestions_text = "\n".join([
+        f"- [{s.get('gate_label', s.get('gate', ''))}] {s.get('severity', 'major')}: {s.get('issue', '')}"
+        + (f"\n  证据: {s.get('evidence')}" if s.get('evidence') else "")
+        + (f"\n  建议: {s.get('suggestion')}" if s.get('suggestion') else "")
+        for s in suggestions
+    ])
+
+    revise_prompt = f"""基于以下校验问题清单，对章节内容进行针对性修正。
+
+## 校验问题清单
+{suggestions_text}
+
+## 待修正章节：第{chapter.chapter_number}章《{chapter.title}》
+
+{chapter.content}
+
+## 修正要求
+1. 严格按照问题清单逐条修正
+2. 遵循最小修改原则：能改一个词就不改一句，能改一句就不改一段
+3. 保留作者意图和原文风格，只修正问题清单指出的矛盾
+4. 保持原字数大致不变（允许±10%）
+5. 仍然在正文末尾输出 ---CHANGES--- 分隔符 + 修正后的完整12类CHANGES JSON
+6. 直接输出完整修正后的章节正文（含CHANGES），不要添加说明文字"""
+
+    async def generate():
+        try:
+            yield await SSEResponse.send_progress("正在加载修正建议...", 10)
+            yield await SSEResponse.send_chunk(f"检测到 {len(suggestions)} 条修正建议，开始AI重写...\n\n")
+
+            stream = ai_service.generate_text_stream(
+                prompt=revise_prompt,
+                auto_mcp=False,
+            )
+
+            async for item in wrap_stream_with_heartbeat(stream, heartbeat_interval=15.0):
+                if item is HEARTBEAT:
+                    yield await SSEResponse.send_heartbeat()
+                    continue
+                yield await SSEResponse.send_chunk(item)
+
+            yield await SSEResponse.send_progress("AI重写完成，请预览后确认", 100)
+            yield await SSEResponse.send_complete({"snapshot_id": snapshot_id})
+        except Exception as e:
+            logger.error(f"修正重写失败: {e}", exc_info=True)
+            yield await SSEResponse.send_error(f"修正重写失败: {str(e)}")
+
+    return create_sse_response(generate())
+
+
+class ReviseConfirmRequest(BaseModel):
+    """修正确认请求"""
+    revised_content: str
+
+
+@router.post(
+    "/projects/{project_id}/snapshots/{snapshot_id}/revise/confirm",
+    summary="确认修正结果，覆盖原章节内容",
+)
+async def confirm_revise(
+    project_id: str,
+    snapshot_id: str,
+    payload: ReviseConfirmRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """确认修正结果
+
+    流程：
+    1. 备份原内容到 GenerationHistory
+    2. 更新 chapter.content
+    3. 重新触发 create_snapshot_from_generation（解析新CHANGES）
+    4. 重新跑六道门校验（仅规则门，避免重复AI调用）
+    5. 更新 validation_status
+    """
+    user_id = get_current_user_id(request)
+    await _verify_project(project_id, user_id, db)
+
+    # 加载快照和章节
+    snap_result = await db.execute(
+        select(ChapterSnapshot).where(
+            and_(ChapterSnapshot.id == snapshot_id,
+                 ChapterSnapshot.project_id == project_id)
+        )
+    )
+    snapshot = snap_result.scalar_one_or_none()
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="快照不存在")
+
+    chapter_result = await db.execute(
+        select(Chapter).where(Chapter.id == snapshot.chapter_id)
+    )
+    chapter = chapter_result.scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+
+    original_content = chapter.content or ""
+
+    # 1. 备份原内容到 GenerationHistory
+    backup = GenerationHistory(
+        project_id=project_id,
+        chapter_id=chapter.id,
+        prompt=f"天命修正循环：基于 {len(snapshot.revision_suggestions or [])} 条修正建议。原内容备份：\n\n{original_content[:2000]}",
+        generated_content=payload.revised_content,
+        model="tianming-revise",
+    )
+    db.add(backup)
+
+    # 2. 更新章节内容
+    chapter.content = payload.revised_content
+    chapter.word_count = len(payload.revised_content)
+
+    await db.flush()
+    logger.info(f"✅ 第{chapter.chapter_number}章修正完成（备份已存GenerationHistory）")
+
+    # 3. 重新触发快照创建（解析新CHANGES）
+    from app.services.snapshot_service import SnapshotService
+    new_content, new_snapshot = await SnapshotService.create_snapshot_from_generation(
+        db=db,
+        project_id=project_id,
+        chapter_id=chapter.id,
+        chapter_number=chapter.chapter_number,
+        generation_text=payload.revised_content,
+    )
+
+    # 4. 重新跑六道门校验（仅规则门，避免重复AI调用浪费token）
+    from app.services.validation_service import ValidationService
+    if new_snapshot:
+        validation_result = await ValidationService.run_six_gates_and_update(
+            db=db,
+            snapshot_id=new_snapshot.id,
+            content=new_content,
+            run_ai_gates=False,  # 仅规则门，AI门由用户手动触发
+        )
+    else:
+        validation_result = {"validation_status": "not_checked", "message": "无CHANGES，跳过校验"}
+
+    await db.commit()
+
+    return {
+        "message": "修正确认完成",
+        "chapter_id": chapter.id,
+        "chapter_number": chapter.chapter_number,
+        "original_word_count": len(original_content),
+        "revised_word_count": len(payload.revised_content),
+        "backup_id": backup.id,
+        "validation_status": validation_result.get("validation_status", "not_checked"),
+        "needs_revision": validation_result.get("needs_revision", False),
+    }
+
+
+@router.get(
+    "/projects/{project_id}/snapshots/timeline",
+    summary="获取快照时间线数据（章节-校验-修正演进）",
+)
+async def get_snapshots_timeline(
+    project_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """获取所有快照的时间线数据，供前端时间线可视化使用
+
+    返回 [{chapter_number, validation_status, needs_revision, source, ...}]
+    """
+    user_id = get_current_user_id(request)
+    await _verify_project(project_id, user_id, db)
+
+    result = await db.execute(
+        select(ChapterSnapshot)
+        .where(ChapterSnapshot.project_id == project_id)
+        .order_by(ChapterSnapshot.chapter_number.asc())
+    )
+    snapshots = result.scalars().all()
+
+    return [{
+        "id": s.id,
+        "chapter_id": s.chapter_id,
+        "chapter_number": s.chapter_number,
+        "validation_status": s.validation_status or "not_checked",
+        "needs_revision": bool(s.needs_revision),
+        "source": s.source or "analysis",
+        "is_latest": bool(s.is_latest),
+        "suggestions_count": len(s.revision_suggestions or []),
+        "created_at": s.created_at.isoformat() if s.created_at else None,
+        "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+    } for s in snapshots]

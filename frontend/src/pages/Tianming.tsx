@@ -3,19 +3,25 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   Tabs, Table, Button, Tag, Space, Modal, Form, Input, Select,
   InputNumber, message, Tooltip, Popconfirm, Empty, Row, Col,
-  Card, Descriptions, Alert, Spin, theme as antdTheme, Typography, Collapse, Statistic
+  Card, Descriptions, Alert, Spin, theme as antdTheme, Typography, Collapse, Statistic,
+  List,
 } from 'antd';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined,
   EyeOutlined, GiftOutlined, KeyOutlined, LockOutlined,
-  EnvironmentOutlined, CameraOutlined, InfoCircleOutlined
+  EnvironmentOutlined, CameraOutlined, InfoCircleOutlined,
+  CheckCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined,
+  ThunderboltOutlined, SafetyCertificateOutlined, EditFilled,
+  FieldTimeOutlined,
 } from '@ant-design/icons';
+import TianmingTimelineView from './TianmingTimeline';
 import { tianmingApi, characterApi } from '../services/api';
 import type {
   TianmingItem, TianmingItemCreate, TianmingItemUpdate,
   TianmingSecret, TianmingSecretCreate, TianmingSecretUpdate,
   TianmingVow, TianmingVowCreate, TianmingVowUpdate,
   TianmingCharacterLocation, TianmingSnapshotListItem, TianmingSnapshot,
+  TianmingGateResult, TianmingGateIssue, TianmingRevisionSuggestion,
   Character,
 } from '../types';
 import useIsMobile from '../utils/useIsMobile';
@@ -77,6 +83,23 @@ const VALIDATION_STATUS_CONFIG: Record<string, { label: string; color: string }>
   passed: { label: '通过', color: 'green' },
   warnings: { label: '有警告', color: 'orange' },
   failed: { label: '未通过', color: 'red' },
+};
+
+// 六道门配置（key与后端 validation_report 结构对应）
+const GATE_CONFIG: Record<string, { label: string; type: 'rule' | 'ai'; desc: string }> = {
+  protocol_parse: { label: '协议解析', type: 'rule', desc: 'CHANGES JSON是否合法、12类key齐全' },
+  reference_check: { label: '引用检查', type: 'rule', desc: 'CHANGES引用的实体在数据库是否真实存在' },
+  consistency_check: { label: '一致性检查', type: 'rule', desc: '与前一章快照对比，已死角色是否复活等' },
+  unknown_entity_check: { label: '未知实体', type: 'rule', desc: '正文出现的人名是否在角色表登记' },
+  description_consistency: { label: '描写一致性', type: 'ai', desc: '角色外貌/能力描写与档案是否一致（AI门）' },
+  blueprint_presence_check: { label: '蓝图存在性', type: 'ai', desc: '大纲要求的实体/事件是否在本章出现（AI门）' },
+};
+
+// 严重程度配置
+const SEVERITY_CONFIG: Record<string, { label: string; color: string }> = {
+  critical: { label: '严重', color: 'red' },
+  major: { label: '重要', color: 'orange' },
+  minor: { label: '轻微', color: 'gold' },
 };
 
 // 15 维事实快照维度中文标签
@@ -171,6 +194,11 @@ export default function Tianming() {
             key: 'snapshots',
             label: <span><CameraOutlined /> 章节快照</span>,
             children: <SnapshotsTab projectId={projectId} />,
+          },
+          {
+            key: 'timeline',
+            label: <span><FieldTimeOutlined /> 状态时间线</span>,
+            children: <TianmingTimelineView projectId={projectId} />,
           },
         ]}
         style={{ flex: 1, minHeight: 0 }}
@@ -899,6 +927,16 @@ function SnapshotsTab({ projectId }: { projectId: string }) {
   const [detailVisible, setDetailVisible] = useState(false);
   const [detail, setDetail] = useState<TianmingSnapshot | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  // 六道门校验状态
+  const [validatingId, setValidatingId] = useState<string | null>(null);
+  // 修正循环状态
+  const [reviseModalVisible, setReviseModalVisible] = useState(false);
+  const [reviseSnapshot, setReviseSnapshot] = useState<TianmingSnapshot | null>(null);
+  const [reviseContent, setReviseContent] = useState('');
+  const [reviseLoading, setReviseLoading] = useState(false);
+  const [confirmLoading, setConfirmLoading] = useState(false);
+  // 展开查看某道门的问题清单
+  const [expandedGate, setExpandedGate] = useState<string | null>(null);
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -942,6 +980,81 @@ function SnapshotsTab({ projectId }: { projectId: string }) {
     }
   };
 
+  // 手动触发完整六道门校验（含AI门）
+  const handleValidate = async (snapshotId: string) => {
+    setValidatingId(snapshotId);
+    try {
+      const result = await tianmingApi.validateSnapshot(projectId, snapshotId);
+      message.success(`校验完成：${VALIDATION_STATUS_CONFIG[result.validation_status]?.label || result.validation_status}`);
+      // 刷新详情和列表
+      if (detail?.id === snapshotId) {
+        setDetail({ ...detail, ...result });
+      }
+      loadList();
+      loadLatest();
+    } catch (e) {
+      console.error('校验失败:', e);
+      message.error('校验失败');
+    } finally {
+      setValidatingId(null);
+    }
+  };
+
+  // 打开修正循环Modal
+  const openReviseModal = (snapshot: TianmingSnapshot) => {
+    setReviseSnapshot(snapshot);
+    setReviseContent('');
+    setReviseModalVisible(true);
+  };
+
+  // 执行AI针对性重写（SSE流式）
+  const handleRevise = async () => {
+    if (!reviseSnapshot) return;
+    setReviseLoading(true);
+    setReviseContent('');
+    try {
+      await tianmingApi.reviseSnapshotStream(projectId, reviseSnapshot.id, {
+        onChunk: (text: string) => {
+          setReviseContent(prev => prev + text);
+        },
+        onProgress: (_msg: string, _progress: number) => {
+          // 进度信息可选展示
+        },
+        onError: (err: Error) => {
+          message.error(`修正失败: ${err.message}`);
+        },
+        onComplete: () => {
+          message.success('AI重写完成，请预览后确认');
+        },
+      });
+    } catch (e) {
+      console.error('修正失败:', e);
+      message.error('修正失败');
+    } finally {
+      setReviseLoading(false);
+    }
+  };
+
+  // 确认修正结果
+  const handleConfirmRevise = async () => {
+    if (!reviseSnapshot || !reviseContent) return;
+    setConfirmLoading(true);
+    try {
+      const result = await tianmingApi.confirmRevise(projectId, reviseSnapshot.id, reviseContent);
+      message.success(`修正完成：第${result.chapter_number}章已更新（${result.original_word_count}→${result.revised_word_count}字），校验状态：${VALIDATION_STATUS_CONFIG[result.validation_status]?.label || result.validation_status}`);
+      setReviseModalVisible(false);
+      setReviseSnapshot(null);
+      setReviseContent('');
+      loadList();
+      loadLatest();
+    } catch (e) {
+      console.error('确认修正失败:', e);
+      message.error('确认修正失败');
+    } finally {
+      setConfirmLoading(false);
+    }
+  };
+
   const columns = [
     {
       title: '章节', dataIndex: 'chapter_number', key: 'chapter_number', width: 80,
@@ -975,11 +1088,22 @@ function SnapshotsTab({ projectId }: { projectId: string }) {
       render: (t?: string) => t ? new Date(t).toLocaleString('zh-CN') : '-',
     },
     {
-      title: '操作', key: 'actions', width: 100,
+      title: '操作', key: 'actions', width: 140,
       render: (_: unknown, record: TianmingSnapshotListItem) => (
-        <Tooltip title="查看详情">
-          <Button type="text" size="small" icon={<EyeOutlined />} onClick={() => openDetail(record.id)} />
-        </Tooltip>
+        <Space size="small">
+          <Tooltip title="查看详情">
+            <Button type="text" size="small" icon={<EyeOutlined />} onClick={() => openDetail(record.id)} />
+          </Tooltip>
+          <Tooltip title="重新校验（含AI门）">
+            <Button
+              type="text"
+              size="small"
+              icon={<SafetyCertificateOutlined />}
+              loading={validatingId === record.id}
+              onClick={() => handleValidate(record.id)}
+            />
+          </Tooltip>
+        </Space>
       ),
     },
   ];
@@ -1137,18 +1261,309 @@ function SnapshotsTab({ projectId }: { projectId: string }) {
                 label: '门禁校验',
                 children: detail.validation_report ? (
                   <div>
-                    <Alert message="门禁校验报告（JSON格式，展示六道验证门的检查结果）" type="info" showIcon style={{ marginBottom: 8 }} />
-                    <pre style={{ margin: 0, maxHeight: 400, overflow: 'auto', background: token.colorFillAlter, padding: 12, borderRadius: 4, fontSize: 12 }}>
-                      {JSON.stringify(detail.validation_report, null, 2)}
-                    </pre>
+                    <Alert
+                      message="六道门校验"
+                      description="前4道为规则门（毫秒级，章节生成时自动触发）；后2道为AI门（秒级，需手动触发）。点击「重新校验」可执行含AI门的完整校验。"
+                      type="info"
+                      showIcon
+                      style={{ marginBottom: 12 }}
+                    />
+                    {/* 六道门状态卡片网格 */}
+                    <Row gutter={[8, 8]} style={{ marginBottom: 12 }}>
+                      {Object.entries(GATE_CONFIG).map(([key, gateCfg]) => {
+                        const gateResult: TianmingGateResult = (detail.validation_report || {})[key] || { passed: false, skipped: true };
+                        const status: 'passed' | 'failed' | 'not_checked' = gateResult.skipped
+                          ? 'not_checked'
+                          : (gateResult.passed ? 'passed' : 'failed');
+                        const statusCfg = VALIDATION_STATUS_CONFIG[status === 'not_checked' ? 'not_checked' : status === 'passed' ? 'passed' : 'failed'];
+                        const issueCount = gateResult.issues?.length || 0;
+                        return (
+                          <Col span={isMobile ? 12 : 8} key={key}>
+                            <Card
+                              size="small"
+                              title={
+                                <Space size={6}>
+                                  {status === 'passed' ? (
+                                    <CheckCircleOutlined style={{ color: token.colorSuccess }} />
+                                  ) : status === 'failed' ? (
+                                    <CloseCircleOutlined style={{ color: token.colorError }} />
+                                  ) : (
+                                    <ExclamationCircleOutlined style={{ color: token.colorTextSecondary }} />
+                                  )}
+                                  <span>{gateCfg.label}</span>
+                                </Space>
+                              }
+                              extra={gateCfg.type === 'ai' ? <Tag color="purple">AI门</Tag> : <Tag color="blue">规则门</Tag>}
+                              bordered={!gateResult.skipped}
+                              style={{
+                                borderColor: status === 'failed' ? token.colorError : status === 'passed' ? token.colorSuccess : token.colorBorder,
+                                opacity: gateResult.skipped ? 0.55 : 1,
+                              }}
+                            >
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <Tag color={statusCfg.color}>{statusCfg.label}</Tag>
+                                {issueCount > 0 && (
+                                  <Tag color="red">{issueCount} 个问题</Tag>
+                                )}
+                              </div>
+                              <p style={{ fontSize: 12, color: token.colorTextSecondary, marginTop: 8, marginBottom: 0, lineHeight: 1.5 }}>
+                                {gateCfg.desc}
+                              </p>
+                              {!gateResult.passed && !gateResult.skipped && issueCount > 0 && (
+                                <Button
+                                  type="link"
+                                  size="small"
+                                  onClick={() => setExpandedGate(expandedGate === key ? null : key)}
+                                  style={{ padding: 0, marginTop: 8, height: 'auto' }}
+                                >
+                                  {expandedGate === key ? '收起问题清单' : `查看 ${issueCount} 个问题`}
+                                </Button>
+                              )}
+                              {expandedGate === key && gateResult.issues && gateResult.issues.length > 0 && (
+                                <List
+                                  size="small"
+                                  dataSource={gateResult.issues}
+                                  style={{ marginTop: 8 }}
+                                  renderItem={(issue: TianmingGateIssue, idx: number) => (
+                                    <List.Item style={{ padding: '6px 0', borderBottom: idx === gateResult.issues!.length - 1 ? 'none' : undefined }}>
+                                      <div style={{ width: '100%' }}>
+                                        <Space size={4} wrap>
+                                          {issue.severity && (
+                                            <Tag color={SEVERITY_CONFIG[issue.severity]?.color}>
+                                              {SEVERITY_CONFIG[issue.severity]?.label}
+                                            </Tag>
+                                          )}
+                                          {issue.character && <Tag>角色：{issue.character}</Tag>}
+                                          {issue.entity && <Tag>实体：{issue.entity}</Tag>}
+                                          {issue.field && <Tag>字段：{issue.field}</Tag>}
+                                        </Space>
+                                        {issue.issue && (
+                                          <div style={{ fontSize: 12, marginTop: 4, color: token.colorText }}>
+                                            {issue.issue}
+                                          </div>
+                                        )}
+                                        {issue.evidence && (
+                                          <div style={{ fontSize: 11, marginTop: 2, color: token.colorTextSecondary }}>
+                                            证据：{issue.evidence}
+                                          </div>
+                                        )}
+                                        {issue.suggestion && (
+                                          <div style={{ fontSize: 11, marginTop: 2, color: token.colorSuccess }}>
+                                            建议：{issue.suggestion}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </List.Item>
+                                  )}
+                                />
+                              )}
+                            </Card>
+                          </Col>
+                        );
+                      })}
+                    </Row>
+
+                    {/* 修正建议面板 */}
+                    {detail.needs_revision && detail.revision_suggestions && detail.revision_suggestions.length > 0 ? (
+                      <Card
+                        size="small"
+                        title={
+                          <Space>
+                            <SafetyCertificateOutlined style={{ color: token.colorWarning }} />
+                            <span>修正建议（{detail.revision_suggestions.length} 条）</span>
+                          </Space>
+                        }
+                        style={{ marginTop: 16 }}
+                      >
+                        <List
+                          size="small"
+                          dataSource={detail.revision_suggestions}
+                          renderItem={(item: TianmingRevisionSuggestion) => (
+                            <List.Item>
+                              <List.Item.Meta
+                                title={
+                                  <Space size={4} wrap>
+                                    <Tag color={SEVERITY_CONFIG[item.severity]?.color}>
+                                      {SEVERITY_CONFIG[item.severity]?.label}
+                                    </Tag>
+                                    {item.gate_label && <Tag color="blue">{item.gate_label}</Tag>}
+                                    <Text strong>{item.issue}</Text>
+                                  </Space>
+                                }
+                                description={
+                                  <div>
+                                    {item.evidence && (
+                                      <Text type="secondary" style={{ fontSize: 12 }}>证据：{item.evidence}</Text>
+                                    )}
+                                    {item.suggestion && (
+                                      <div style={{ marginTop: 4 }}>
+                                        <Text type="success" style={{ fontSize: 12 }}>建议：{item.suggestion}</Text>
+                                      </div>
+                                    )}
+                                  </div>
+                                }
+                              />
+                            </List.Item>
+                          )}
+                        />
+                        <div style={{ textAlign: 'right', marginTop: 12 }}>
+                          <Button
+                            type="primary"
+                            icon={<ThunderboltOutlined />}
+                            onClick={() => openReviseModal(detail)}
+                            loading={reviseLoading}
+                          >
+                            一键应用修正（AI重写）
+                          </Button>
+                        </div>
+                      </Card>
+                    ) : (
+                      <Alert
+                        message={detail.needs_revision ? '暂无结构化修正建议，可手动重新校验获取' : '本章无需修正，校验通过'}
+                        type={detail.needs_revision ? 'warning' : 'success'}
+                        showIcon
+                        style={{ marginTop: 16 }}
+                      />
+                    )}
+
+                    {/* 原始报告折叠区（供高级用户/调试） */}
+                    <Collapse
+                      size="small"
+                      style={{ marginTop: 12 }}
+                      items={[{
+                        key: 'raw',
+                        label: '查看原始校验报告（JSON）',
+                        children: (
+                          <pre style={{ margin: 0, maxHeight: 400, overflow: 'auto', background: token.colorFillAlter, padding: 12, borderRadius: 4, fontSize: 12 }}>
+                            {JSON.stringify(detail.validation_report, null, 2)}
+                          </pre>
+                        ),
+                      }]}
+                    />
                   </div>
                 ) : (
-                  <Empty description="未执行门禁校验" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                  <Empty description="未执行门禁校验，点击列表行的「重新校验」按钮触发" image={Empty.PRESENTED_IMAGE_SIMPLE} />
                 ),
               },
             ]}
           />
         ) : null}
+      </Modal>
+
+      {/* 修正循环 Modal */}
+      <Modal
+        title={
+          reviseSnapshot ? (
+            <Space>
+              <EditFilled style={{ color: token.colorPrimary }} />
+              <span>AI 修正循环 - 第 {reviseSnapshot.chapter_number} 章</span>
+            </Space>
+          ) : 'AI 修正循环'
+        }
+        open={reviseModalVisible}
+        centered
+        onCancel={() => {
+          if (reviseLoading) {
+            message.warning('AI重写进行中，请等待完成');
+            return;
+          }
+          setReviseModalVisible(false);
+          setReviseSnapshot(null);
+          setReviseContent('');
+        }}
+        width={isMobile ? 'calc(100vw - 16px)' : 920}
+        footer={[
+          <Button key="cancel" onClick={() => {
+            if (reviseLoading) {
+              message.warning('AI重写进行中，请等待完成');
+              return;
+            }
+            setReviseModalVisible(false);
+            setReviseSnapshot(null);
+            setReviseContent('');
+          }}>
+            取消
+          </Button>,
+          <Button
+            key="revise"
+            type="primary"
+            ghost
+            icon={<ThunderboltOutlined />}
+            onClick={handleRevise}
+            loading={reviseLoading}
+            disabled={!!reviseContent}
+          >
+            {reviseContent ? '已重写' : '开始 AI 重写'}
+          </Button>,
+          <Button
+            key="confirm"
+            type="primary"
+            icon={<CheckCircleOutlined />}
+            onClick={handleConfirmRevise}
+            loading={confirmLoading}
+            disabled={!reviseContent || reviseLoading}
+          >
+            确认应用修正
+          </Button>,
+        ]}
+      >
+        {reviseSnapshot && (
+          <div>
+            {/* 修正建议清单回顾 */}
+            {reviseSnapshot.revision_suggestions && reviseSnapshot.revision_suggestions.length > 0 && (
+              <Card size="small" title={`本次修正依据（${reviseSnapshot.revision_suggestions.length} 条建议）`} style={{ marginBottom: 12 }}>
+                <List
+                  size="small"
+                  dataSource={reviseSnapshot.revision_suggestions}
+                  renderItem={(item: TianmingRevisionSuggestion) => (
+                    <List.Item style={{ padding: '4px 0' }}>
+                      <Space size={4} wrap align="start">
+                        <Tag color={SEVERITY_CONFIG[item.severity]?.color}>
+                          {SEVERITY_CONFIG[item.severity]?.label}
+                        </Tag>
+                        {item.gate_label && <Tag color="blue">{item.gate_label}</Tag>}
+                        <Text style={{ fontSize: 12 }}>{item.issue}</Text>
+                      </Space>
+                    </List.Item>
+                  )}
+                />
+              </Card>
+            )}
+
+            {/* 重写内容预览/编辑区 */}
+            <div style={{ marginBottom: 8 }}>
+              <Space>
+                <Text strong>AI 重写结果</Text>
+                {reviseLoading && <Tag color="processing">流式生成中…</Tag>}
+                {reviseContent && !reviseLoading && (
+                  <Tag color="success">{reviseContent.length} 字</Tag>
+                )}
+              </Space>
+            </div>
+            {!reviseContent && !reviseLoading ? (
+              <Alert
+                message="点击底部「开始 AI 重写」按钮"
+                description="AI 将基于上述修正建议对章节进行针对性重写，过程通过 SSE 流式反馈。生成完成后可在此预览并编辑，再点击「确认应用修正」保存到章节并重新校验。"
+                type="info"
+                showIcon
+              />
+            ) : (
+              <TextArea
+                value={reviseContent}
+                onChange={(e) => setReviseContent(e.target.value)}
+                autoSize={{ minRows: 12, maxRows: 24 }}
+                placeholder="AI重写后的内容将在此显示，可手动编辑后确认应用"
+                style={{ fontSize: 13, lineHeight: 1.6 }}
+              />
+            )}
+            <Alert
+              message="确认后将：备份原内容到生成历史 → 用新内容覆盖章节 → 重新生成快照 → 执行规则门校验"
+              type="warning"
+              showIcon
+              style={{ marginTop: 12, fontSize: 12 }}
+            />
+          </div>
+        )}
       </Modal>
     </div>
   );

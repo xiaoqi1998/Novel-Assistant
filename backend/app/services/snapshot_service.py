@@ -179,6 +179,7 @@ class SnapshotService:
         """从生成结果创建章节快照
 
         在章节生成完成后调用，分离正文与 CHANGES，将正文保存并将 CHANGES 持久化。
+        同时同步触发六道门规则门校验（毫秒级，不阻塞生成流），AI门由用户在天命页手动触发。
 
         Args:
             db: 数据库会话
@@ -195,7 +196,7 @@ class SnapshotService:
         if changes:
             snapshot = await SnapshotService._create_or_update_snapshot(
                 db, project_id, chapter_id, chapter_number,
-                changes, source="generation"
+                changes, source="generation", content=content
             )
             return content, snapshot
         else:
@@ -209,6 +210,7 @@ class SnapshotService:
         chapter_number: int,
         changes: Dict[str, Any],
         source: str = "analysis",
+        content: Optional[str] = None,
     ) -> ChapterSnapshot:
         """创建或更新章节快照（核心方法）
 
@@ -216,6 +218,10 @@ class SnapshotService:
         2. 根据 CHANGES 回写4张新表（Item/Secret/Vow/CharacterLocation）
         3. 聚合 15 维快照数据
         4. 创建 ChapterSnapshot 记录
+        5. 同步触发六道门规则门校验（毫秒级，AI门由用户手动触发）
+
+        Args:
+            content: 章节正文（规则门校验需要，为None时从chapter表查询）
         """
         logger.info(f"📸 开始创建第{chapter_number}章快照（来源: {source}）")
 
@@ -270,6 +276,21 @@ class SnapshotService:
 
         await db.flush()
         logger.info(f"✅ 第{chapter_number}章快照创建完成")
+
+        # 同步触发六道门规则门校验（毫秒级，不阻塞生成流）
+        # AI门（描写一致性/蓝图存在性）由用户在天命页手动触发，避免增加2-5秒AI延迟
+        try:
+            from app.services.validation_service import ValidationService
+            await ValidationService.run_six_gates_and_update(
+                db=db,
+                snapshot_id=snapshot.id,
+                content=content or "",
+                run_ai_gates=False,  # 仅规则门，AI门手动触发
+            )
+        except Exception as e:
+            # 校验失败不影响快照创建（best-effort）
+            logger.warning(f"⚠️ 六道门规则门校验失败（不影响快照创建）: {e}")
+
         return snapshot
 
     # ==================== 回写状态表 ====================

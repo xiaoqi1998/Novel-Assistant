@@ -1297,6 +1297,10 @@ export const newApi = {
   createRecharge: (amount: number, payment_method: string = 'waffo_pancake') =>
     api.post('/newapi/topup', { amount, payment_method }),
 
+  // 兑换码兑换额度 —— 代理 New API
+  redeemCode: (code: string) =>
+    api.post('/newapi/redemption', { code }),
+
   // 订阅套餐列表 —— 代理 New API
   getSubscriptionPlans: () => api.get<unknown, {
     success: boolean;
@@ -1711,5 +1715,37 @@ export const tianmingApi = {
   getCharacterState: (projectId: string, characterId: string) =>
     api.get<unknown, import('../types').TianmingCharacterStateResponse>(
       `/tianming/projects/${projectId}/characters/${characterId}/state`
+    ),
+
+  // ---- 六道门校验 + 半自动修正循环 ----
+  // 手动触发完整六道门校验（含2门AI门）
+  validateSnapshot: (projectId: string, snapshotId: string) =>
+    api.post<unknown, import('../types').TianmingValidationResult>(
+      `/tianming/projects/${projectId}/snapshots/${snapshotId}/validate`
+    ),
+
+  // 根据修正建议触发AI针对性重写（SSE流式）
+  reviseSnapshotStream: (
+    projectId: string,
+    snapshotId: string,
+    options: import('../utils/sseClient').SSEClientOptions,
+  ) =>
+    ssePost<string>(
+      `/tianming/projects/${projectId}/snapshots/${snapshotId}/revise`,
+      {},
+      options,
+    ),
+
+  // 确认修正结果，覆盖原章节内容
+  confirmRevise: (projectId: string, snapshotId: string, revisedContent: string) =>
+    api.post<unknown, import('../types').TianmingReviseConfirmResult>(
+      `/tianming/projects/${projectId}/snapshots/${snapshotId}/revise/confirm`,
+      { revised_content: revisedContent },
+    ),
+
+  // 获取快照时间线数据（章节-校验-修正演进）
+  getSnapshotsTimeline: (projectId: string) =>
+    api.get<unknown, import('../types').TianmingSnapshotTimelineItem[]>(
+      `/tianming/projects/${projectId}/snapshots/timeline`
     ),
 };

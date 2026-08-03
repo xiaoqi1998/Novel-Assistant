@@ -1419,7 +1419,73 @@ export interface TianmingSnapshot extends TianmingSnapshotListItem {
   snapshot_data: Record<string, any>;
   changes_data: Record<string, any>;
   validation_report?: Record<string, any>;
-  revision_suggestions?: string[];
+  revision_suggestions?: TianmingRevisionSuggestion[];
+  updated_at?: string;
+}
+
+// 六道门校验结果
+export interface TianmingValidationResult {
+  validation_status: 'not_checked' | 'passed' | 'warnings' | 'failed';
+  validation_report: Record<string, TianmingGateResult>;
+  needs_revision: boolean;
+  revision_suggestions: TianmingRevisionSuggestion[];
+}
+
+// 单道门校验结果
+export interface TianmingGateResult {
+  passed: boolean;
+  issues?: TianmingGateIssue[];
+  skipped?: boolean;
+  message?: string;
+  unknown_count?: number;
+  npc_count?: number;
+  missing_entities?: string[];
+}
+
+// 门禁问题
+export interface TianmingGateIssue {
+  severity?: 'critical' | 'major' | 'minor';
+  issue?: string;
+  evidence?: string;
+  suggestion?: string;
+  character?: string;
+  entity?: string;
+  field?: string;
+}
+
+// 修正建议（结构化）
+export interface TianmingRevisionSuggestion {
+  gate: string;
+  gate_label?: string;
+  severity: 'critical' | 'major' | 'minor';
+  issue: string;
+  evidence?: string;
+  suggestion?: string;
+}
+
+// 修正确认结果
+export interface TianmingReviseConfirmResult {
+  message: string;
+  chapter_id: string;
+  chapter_number: number;
+  original_word_count: number;
+  revised_word_count: number;
+  backup_id: string;
+  validation_status: string;
+  needs_revision: boolean;
+}
+
+// 快照时间线项
+export interface TianmingSnapshotTimelineItem {
+  id: string;
+  chapter_id: string;
+  chapter_number: number;
+  validation_status: 'not_checked' | 'passed' | 'warnings' | 'failed';
+  needs_revision: boolean;
+  source: string;
+  is_latest: boolean;
+  suggestions_count: number;
+  created_at?: string;
   updated_at?: string;
 }
 
