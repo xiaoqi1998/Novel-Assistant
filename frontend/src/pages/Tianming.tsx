@@ -1020,8 +1020,8 @@ function SnapshotsTab({ projectId }: { projectId: string }) {
         onProgress: (_msg: string, _progress: number) => {
           // 进度信息可选展示
         },
-        onError: (err: Error) => {
-          message.error(`修正失败: ${err.message}`);
+        onError: (err: string) => {
+          message.error(`修正失败: ${err}`);
         },
         onComplete: () => {
           message.success('AI重写完成，请预览后确认');
