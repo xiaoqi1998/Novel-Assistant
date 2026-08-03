@@ -694,6 +694,27 @@ class NewAPIClient:
             json_body={"plan_id": plan_id},
         )
 
+    async def redeem_code(
+        self,
+        access_token: str,
+        newapi_user_id: int,
+        redemption_code: str,
+    ) -> Dict[str, Any]:
+        """兑换码兑换额度
+
+        Args:
+            access_token: New API 用户的 access_token
+            newapi_user_id: 用户 ID
+            redemption_code: 兑换码
+
+        Returns:
+            New API 响应 JSON
+        """
+        return await self._proxy_with_access_token(
+            access_token, newapi_user_id, "POST", "/user/redemption",
+            json_body={"key": redemption_code},
+        )
+
     # ==================== 模型列表 ====================
 
     async def list_models(

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Button, Card, Col, List, Modal, Radio, Row, Space, Statistic, Tag, Tooltip, message } from 'antd';
+import { Alert, Button, Card, Col, Input, List, Modal, Radio, Row, Space, Statistic, Tag, Tooltip, message } from 'antd';
 import {
   WalletOutlined,
   ThunderboltOutlined,
@@ -8,6 +8,7 @@ import {
   ReloadOutlined,
   RocketOutlined,
   QuestionCircleOutlined,
+  GiftOutlined,
 } from '@ant-design/icons';
 import { newApi } from '../services/api';
 import useIsMobile from '../utils/useIsMobile';
@@ -101,6 +102,8 @@ export default function AccountCenter() {
   const [rechargeModalOpen, setRechargeModalOpen] = useState(false);
   const [selectedRechargeAmount, setSelectedRechargeAmount] = useState<number | null>(null);
   const [selectedPayMethod, setSelectedPayMethod] = useState<string>('');
+  const [redeemCode, setRedeemCode] = useState('');
+  const [redeeming, setRedeeming] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -211,6 +214,30 @@ export default function AccountCenter() {
       refresh();
     } catch (e) {
       // 错误已处理
+    }
+  };
+
+  // 兑换码兑换额度
+  const handleRedeem = async () => {
+    const code = redeemCode.trim();
+    if (!code) {
+      message.warning('请输入兑换码');
+      return;
+    }
+    setRedeeming(true);
+    try {
+      const res: any = await newApi.redeemCode(code);
+      if (res?.success) {
+        message.success(res?.message || '兑换成功');
+        setRedeemCode('');
+        refresh();
+      } else {
+        message.error(res?.message || '兑换失败');
+      }
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || '兑换请求失败');
+    } finally {
+      setRedeeming(false);
     }
   };
 
@@ -342,6 +369,31 @@ export default function AccountCenter() {
           </div>
         )}
       </Card>
+
+      {/* 兑换码兑换：仅当 New API 启用兑换功能时展示 */}
+      {topupInfo?.enable_redemption && (
+        <Card
+          title={<><GiftOutlined /> 兑换码</>}
+          style={{ marginTop: 16 }}
+        >
+          <Space.Compact style={{ width: '100%' }}>
+            <Input
+              placeholder="请输入兑换码"
+              value={redeemCode}
+              onChange={(e) => setRedeemCode(e.target.value)}
+              onPressEnter={handleRedeem}
+              allowClear
+            />
+            <Button
+              type="primary"
+              onClick={handleRedeem}
+              loading={redeeming}
+            >
+              兑换
+            </Button>
+          </Space.Compact>
+        </Card>
+      )}
 
       {/* 订阅套餐：从 New API 动态获取 */}
       <Card title="订阅套餐" style={{ marginTop: 16 }}>

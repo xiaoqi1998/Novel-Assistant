@@ -376,6 +376,10 @@ class TopupRequest(BaseModel):
     payment_method: str = Field("waffo_pancake", description="支付方式")
 
 
+class RedeemRequest(BaseModel):
+    code: str = Field(..., description="兑换码")
+
+
 @router.post("/topup")
 async def create_topup(
     req: TopupRequest,
@@ -396,6 +400,26 @@ async def create_topup(
         raise HTTPException(status_code=status, detail=str(e))
     except NewAPIDisabledError as e:
         raise HTTPException(status_code=502, detail=f"发起充值失败: {e}")
+
+
+@router.post("/redemption")
+async def redeem_code(
+    req: RedeemRequest,
+    user: User = Depends(require_login),
+    db: AsyncSession = Depends(get_db),
+):
+    """兑换码兑换额度 —— 代理 New API"""
+    if not newapi_client.user_enabled:
+        raise HTTPException(status_code=503, detail="New API 未启用")
+    access_token, newapi_user_id = await _get_user_creds(db, user.user_id)
+    try:
+        resp = await newapi_client.redeem_code(access_token, newapi_user_id, req.code)
+        return resp
+    except NewAPIRequestError as e:
+        status = 401 if e.status_code == 401 else 502
+        raise HTTPException(status_code=status, detail=str(e))
+    except NewAPIDisabledError as e:
+        raise HTTPException(status_code=502, detail=f"兑换失败: {e}")
 
 
 class SubscribeRequest(BaseModel):
