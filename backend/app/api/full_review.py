@@ -18,6 +18,7 @@ from app.models.chapter import Chapter
 from app.models.generation_history import GenerationHistory
 from app.services.skill_loader import get_all_skills_cached
 from app.services.ai_service import AIService
+from app.services.snapshot_service import SnapshotService
 from app.utils.sse_response import SSEResponse, create_sse_response, wrap_stream_with_heartbeat, HEARTBEAT
 from app.logger import get_logger
 
@@ -602,9 +603,9 @@ async def confirm_overwrite(
         )
         db.add(backup)
 
-        # 更新章节内容
-        chapter.content = request.modified_content
-        chapter.word_count = len(request.modified_content)
+        # 更新章节内容（兜底清洗，防止 CHANGES JSON 残留在正文）
+        chapter.content = SnapshotService.strip_changes_marker(request.modified_content)
+        chapter.word_count = len(chapter.content)
 
         await db.commit()
 

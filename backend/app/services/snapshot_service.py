@@ -28,6 +28,9 @@ logger = get_logger(__name__)
 # ---CHANGES--- 分隔符
 CHANGES_SEPARATOR = "---CHANGES---"
 
+# 兜底清洗：匹配 ---CHANGES--- 及之后所有内容（包括前导空格、换行、markdown 代码块等）
+CHANGES_STRIP_RE = re.compile(r"\s*---CHANGES---\s*.*", re.DOTALL)
+
 
 class SnapshotService:
     """天命快照服务 - 管理 15 维事实快照与 12 类 CHANGES 声明"""
@@ -51,6 +54,17 @@ class SnapshotService:
     # ==================== 解析 CHANGES ====================
 
     @staticmethod
+    def strip_changes_marker(text: Optional[str]) -> str:
+        """最终兜底：从章节正文中删除 ---CHANGES--- 及后续 JSON。
+
+        即使 AI 输出格式异常或 parse_changes_from_generation 解析失败，
+        也能保证写入 chapter.content 的正文不含 CHANGES 声明。
+        """
+        if not text:
+            return text or ""
+        return CHANGES_STRIP_RE.sub("", text).rstrip()
+
+    @staticmethod
     def parse_changes_from_generation(text: str) -> Tuple[str, Optional[Dict[str, Any]]]:
         """从章节生成结果中分离正文与 CHANGES 声明
 
@@ -68,12 +82,12 @@ class SnapshotService:
 
         idx = text.find(CHANGES_SEPARATOR)
         if idx == -1:
-            # 未找到分隔符，整个文本作为正文
+            # 未找到分隔符，整个文本作为正文处理
             logger.debug("未找到 ---CHANGES--- 分隔符，整段作为正文处理")
             return text, None
 
-        # 分离正文和 CHANGES JSON
-        content = text[:idx].rstrip()
+        # 分离正文和 CHANGES JSON；同步用正则兜底，确保 content 不含 ---CHANGES--- 及后续
+        content = SnapshotService.strip_changes_marker(text[:idx])
         changes_raw = text[idx + len(CHANGES_SEPARATOR):].strip()
 
         if not changes_raw:

@@ -772,6 +772,8 @@ async def confirm_revise(
     if not chapter:
         raise HTTPException(status_code=404, detail="章节不存在")
 
+    from app.services.snapshot_service import SnapshotService
+
     original_content = chapter.content or ""
 
     # 1. 备份原内容到 GenerationHistory
@@ -784,9 +786,9 @@ async def confirm_revise(
     )
     db.add(backup)
 
-    # 2. 更新章节内容
-    chapter.content = payload.revised_content
-    chapter.word_count = len(payload.revised_content)
+    # 2. 更新章节内容（兜底清洗，防止 CHANGES JSON 残留在正文）
+    chapter.content = SnapshotService.strip_changes_marker(payload.revised_content)
+    chapter.word_count = len(chapter.content)
 
     await db.flush()
     logger.info(f"✅ 第{chapter.chapter_number}章修正完成（备份已存GenerationHistory）")

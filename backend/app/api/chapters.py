@@ -1928,7 +1928,7 @@ async def generate_chapter_content_stream(
                 except Exception as snap_err:
                     logger.warning(f"⚠️ 快照创建失败，使用原始内容: {snap_err}")
                     clean_content = full_content
-                current_chapter.content = clean_content
+                current_chapter.content = snapshot_service.strip_changes_marker(clean_content)
                 new_word_count = len(full_content)
                 current_chapter.word_count = new_word_count
                 current_chapter.status = "completed"
@@ -2471,7 +2471,7 @@ async def _run_chapter_generation_bg(
         except Exception as snap_err:
             logger.warning(f"⚠️ 快照创建失败，使用原始内容: {snap_err}")
             clean_content = full_content
-        current_chapter.content = clean_content
+        current_chapter.content = snapshot_service.strip_changes_marker(clean_content)
         new_word_count = len(full_content)
         current_chapter.word_count = new_word_count
         current_chapter.status = "completed"
@@ -3038,7 +3038,7 @@ async def _run_chapter_generation_bg(
         except Exception as snap_err:
             logger.warning(f"⚠️ 快照创建失败，使用原始内容: {snap_err}")
             clean_content = full_content
-        current_chapter.content = clean_content
+        current_chapter.content = snapshot_service.strip_changes_marker(clean_content)
         new_word_count = len(full_content)
         current_chapter.word_count = new_word_count
         current_chapter.status = "completed"
@@ -4669,7 +4669,7 @@ async def generate_single_chapter_for_batch(
         except Exception as snap_err:
             logger.warning(f"⚠️ 快照创建失败，使用原始内容: {snap_err}")
             clean_content = full_content
-        chapter.content = clean_content
+        chapter.content = snapshot_service.strip_changes_marker(clean_content)
         new_word_count = len(full_content)
         chapter.word_count = new_word_count
         chapter.status = "completed"
@@ -5500,6 +5500,8 @@ async def apply_partial_regenerate(
     # 构建新内容
     old_word_count = chapter.word_count or 0
     new_content = chapter.content[:start_position] + new_text + chapter.content[end_position:]
+    # 兜底清洗：局部重写可能引入 ---CHANGES--- JSON
+    new_content = snapshot_service.strip_changes_marker(new_content)
     new_word_count = len(new_content)
     
     # 更新章节
