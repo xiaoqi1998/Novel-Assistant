@@ -36,7 +36,7 @@ except ImportError:
 from app.services.plot_expansion_service import PlotExpansionService
 from app.services.foreshadow_service import foreshadow_service
 from app.logger import get_logger
-from app.api.settings import get_user_ai_service
+from app.api.settings import get_ai_service_for_usage
 from app.utils.sse_response import SSEResponse, create_sse_response, WizardProgressTracker
 
 router = APIRouter(prefix="/outlines", tags=["大纲管理"])
@@ -1802,7 +1802,7 @@ async def generate_outline_task(
     data: Dict[str, Any],
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_ai_service_for_usage("outline"))
 ):
     """
     使用后台任务生成或续写小说大纲（不怕断连，关闭浏览器也继续运行）
@@ -1858,8 +1858,8 @@ async def generate_outline_task(
                 await tracker.start()
                 
                 # 获取AI服务（需要在后台创建新实例）
-                from app.api.settings import get_user_ai_service_from_db
-                bg_ai_service = await get_user_ai_service_from_db(user_id, bg_db)
+                from app.api.settings import get_user_ai_service_from_db_by_usage
+                bg_ai_service = await get_user_ai_service_from_db_by_usage(user_id, bg_db, usage="outline")
                 
                 if mode == "new":
                     await _run_new_outline_bg(data, bg_db, bg_ai_service, tracker)
@@ -2262,7 +2262,7 @@ async def generate_outline_stream(
     data: Dict[str, Any],
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_ai_service_for_usage("outline"))
 ):
     """
     使用SSE流式生成或续写小说大纲，实时推送批次进度
@@ -2493,7 +2493,7 @@ async def _run_outline_expansion_background(
 ):
     """后台执行单个大纲展开并可直接创建章节。"""
     from app.database import get_engine
-    from app.api.settings import get_user_ai_service_from_db
+    from app.api.settings import get_user_ai_service_from_db_by_usage
     from app.services.background_task_service import TaskProgressTracker
     from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession as BgAsyncSession
 
@@ -2528,7 +2528,7 @@ async def _run_outline_expansion_background(
 
             await tracker.preparing(f"准备展开《{outline.title}》为 {target_chapter_count} 章...")
 
-            bg_ai_service = await get_user_ai_service_from_db(user_id, bg_db)
+            bg_ai_service = await get_user_ai_service_from_db_by_usage(user_id, bg_db, usage="outline")
             expansion_service = PlotExpansionService(bg_ai_service)
 
             await tracker.generating(
@@ -2608,7 +2608,7 @@ async def _run_batch_outline_expansion_background(
 ):
     """后台执行批量大纲展开并可直接创建章节。"""
     from app.database import get_engine
-    from app.api.settings import get_user_ai_service_from_db
+    from app.api.settings import get_user_ai_service_from_db_by_usage
     from app.services.background_task_service import TaskProgressTracker
     from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession as BgAsyncSession
 
@@ -2652,7 +2652,7 @@ async def _run_batch_outline_expansion_background(
             total_outlines = len(outlines)
             await tracker.preparing(f"共找到 {total_outlines} 个大纲，准备批量展开...")
 
-            bg_ai_service = await get_user_ai_service_from_db(user_id, bg_db)
+            bg_ai_service = await get_user_ai_service_from_db_by_usage(user_id, bg_db, usage="outline")
             expansion_service = PlotExpansionService(bg_ai_service)
 
             expansion_results = []
@@ -2898,7 +2898,7 @@ async def expand_outline_to_chapters_stream(
     data: Dict[str, Any],
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_ai_service_for_usage("outline"))
 ):
     """
     使用SSE流式展开单个大纲，实时推送进度
@@ -3284,7 +3284,7 @@ async def batch_expand_outlines_stream(
     data: Dict[str, Any],
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_ai_service_for_usage("outline"))
 ):
     """
     使用SSE流式批量展开大纲，实时推送每个大纲的处理进度
@@ -3314,7 +3314,7 @@ async def create_chapters_from_existing_plans(
     plans_request: CreateChaptersFromPlansRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_ai_service_for_usage("outline"))
 ):
     """
     根据前端缓存的章节规划直接创建章节记录，避免重复调用AI

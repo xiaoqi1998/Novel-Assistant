@@ -21,12 +21,13 @@ from app.schemas.settings import (
     SettingsCreate, SettingsUpdate, SettingsResponse,
     APIKeyPreset, APIKeyPresetConfig, PresetCreateRequest,
     PresetUpdateRequest, PresetResponse, PresetListResponse,
-    ChapterAnalysisPresetSelectionRequest,
+    ChapterAnalysisPresetSelectionRequest, ActionPresetSelectionRequest,
     SystemSMTPSettingsResponse, SystemSMTPSettingsUpdate, SMTPTestRequest
 )
 from app.user_manager import User
 from app.logger import get_logger, safe_preview
 from app.config import settings as app_settings, PROJECT_ROOT
+from app.constants.ai_usages import AI_USAGES, configurable_usage_keys
 from app.services.ai_service import AIService, create_user_ai_service, create_user_ai_service_with_mcp, normalize_provider
 from app.services.email_service import email_service
 from app.security import validate_public_http_url
@@ -135,6 +136,24 @@ def _get_chapter_analysis_preset_id(prefs: Dict[str, Any]) -> Optional[str]:
     """读取章节内容分析专用API预设ID。"""
     preset_id = prefs.get('chapter_analysis_preset_id')
     return preset_id if isinstance(preset_id, str) and preset_id.strip() else None
+
+
+def _resolve_action_preset_id(prefs: Dict[str, Any], usage: str) -> Optional[str]:
+    """按动作解析用户配置的预设ID。
+
+    优先读 preferences.action_preset_ids[usage]（通用映射）；
+    对 chapter_analysis 兼容旧字段 chapter_analysis_preset_id。
+    返回 None 表示该动作未配置预设（回退默认）。
+    """
+    action_map = prefs.get('action_preset_ids')
+    if not isinstance(action_map, dict):
+        action_map = {}
+    preset_id = action_map.get(usage)
+    if not (isinstance(preset_id, str) and preset_id.strip()):
+        # 兼容旧字段
+        if usage == "chapter_analysis":
+            preset_id = _get_chapter_analysis_preset_id(prefs)
+    return preset_id if (isinstance(preset_id, str) and preset_id.strip()) else None
 
 
 def _build_ai_service_from_config(
@@ -280,6 +299,22 @@ async def get_user_ai_service_from_db(user_id: str, db: AsyncSession) -> AIServi
     return await get_user_ai_service_from_db_by_usage(user_id, db, usage="default")
 
 
+def get_ai_service_for_usage(usage: str = "default"):
+    """FastAPI 依赖工厂：按动作获取 AI 服务实例。
+
+    用法：在路由参数中声明
+        ai_service: AIService = Depends(get_ai_service_for_usage("outline"))
+
+    即可让该端点按动作分流到用户配置的预设；未配置则回退默认。
+    """
+    async def _dependency(
+        user: User = Depends(require_login),
+        db: AsyncSession = Depends(get_db),
+    ) -> AIService:
+        return await get_user_ai_service_from_db_by_usage(user.user_id, db, usage=usage)
+    return _dependency
+
+
 async def _is_user_subscribed(db: AsyncSession, user_id: str) -> bool:
     """判断用户是否为有效订阅用户"""
     now = datetime.now()
@@ -299,7 +334,15 @@ async def get_user_ai_service_from_db_by_usage(
     db: AsyncSession,
     usage: str = "default"
 ) -> AIService:
-    """按用途创建用户AI服务实例。"""
+    """按用途创建用户AI服务实例。
+
+    支持按「动作」分配不同 API 预设：
+    - 用户在 preferences.action_preset_ids 中为每个动作指定预设 ID；
+    - 兼容旧字段 chapter_analysis_preset_id（仅 chapter_analysis 动作）；
+    - 未配置 / 配置不存在时回退主配置；
+    - NewAPI 启用且非订阅用户：所有动作整组回退主配置渠道 + 默认模型，
+      防止借预设绕过到高价渠道。
+    """
     from app.models.mcp_plugin import MCPPlugin
 
     result = await db.execute(
@@ -322,30 +365,42 @@ async def get_user_ai_service_from_db_by_usage(
 
     # New API 启用时，模型访问受订阅状态控制
     is_subscribed = await _is_user_subscribed(db, user_id)
-    if app_settings.NEW_API_ENABLED and not is_subscribed:
-        effective_model = app_settings.NEW_API_DEFAULT_MODEL
-    else:
-        effective_model = settings.llm_model
+    force_default_model = app_settings.NEW_API_ENABLED and not is_subscribed
+    effective_model = app_settings.NEW_API_DEFAULT_MODEL if force_default_model else settings.llm_model
 
-    if usage == "chapter_analysis":
+    # 非默认动作：尝试按动作查找用户配置的预设
+    if usage != "default":
         prefs = _safe_load_preferences(settings.preferences)
-        api_presets = _get_api_presets_payload(prefs)
-        presets = api_presets.get('presets', [])
-        preset_id = _get_chapter_analysis_preset_id(prefs)
+        preset_id = _resolve_action_preset_id(prefs, usage)
         if preset_id:
+            api_presets = _get_api_presets_payload(prefs)
+            presets = api_presets.get('presets', [])
             target_preset = next((p for p in presets if p.get('id') == preset_id), None)
             if target_preset and isinstance(target_preset.get('config'), dict):
-                logger.info(f"用户 {user_id} 使用章节内容分析专用API预设: {target_preset.get('name')}")
                 config = target_preset['config']
-                if app_settings.NEW_API_ENABLED and not is_subscribed:
-                    config = {**config, 'llm_model': effective_model}
+                if force_default_model:
+                    # 非订阅用户：整组回退主配置渠道 + 默认模型，
+                    # 避免 borrow 预设的高价渠道/Key 绕过订阅限制。
+                    config = {
+                        **config,
+                        "api_provider": settings.api_provider,
+                        "api_key": settings.api_key,
+                        "api_base_url": settings.api_base_url,
+                        "llm_model": app_settings.NEW_API_DEFAULT_MODEL,
+                    }
+                logger.info(
+                    f"用户 {user_id} 动作 '{usage}' 使用预设: {target_preset.get('name')}"
+                    + ("（非订阅，已回退默认模型）" if force_default_model else "")
+                )
                 return _build_ai_service_from_config(
                     config=config,
                     user_id=user_id,
                     db=db,
                     enable_mcp=enable_mcp,
                 )
-            logger.warning(f"用户 {user_id} 配置的章节内容分析预设不存在，回退默认API配置: {preset_id}")
+            logger.warning(
+                f"用户 {user_id} 动作 '{usage}' 配置的预设不存在: {preset_id}，回退默认API配置"
+            )
 
     resolved_settings = resolve_runtime_ai_config(settings.api_provider, settings.api_key, settings.api_base_url)
     return create_user_ai_service_with_mcp(
@@ -1289,10 +1344,24 @@ async def get_presets(
     
     api_presets = _get_api_presets_payload(prefs)
     presets = api_presets.get('presets', [])
+    valid_preset_ids = {p.get('id') for p in presets}
+
     chapter_analysis_preset_id = _get_chapter_analysis_preset_id(prefs)
-    if chapter_analysis_preset_id and not any(p.get('id') == chapter_analysis_preset_id for p in presets):
+    if chapter_analysis_preset_id and chapter_analysis_preset_id not in valid_preset_ids:
         chapter_analysis_preset_id = None
-    
+
+    # 按动作分配的预设映射（清理指向已删除预设的引用）
+    raw_action_map = prefs.get('action_preset_ids')
+    if not isinstance(raw_action_map, dict):
+        raw_action_map = {}
+    # 兼容旧字段 chapter_analysis_preset_id
+    if chapter_analysis_preset_id:
+        raw_action_map.setdefault('chapter_analysis', chapter_analysis_preset_id)
+    action_preset_ids = {
+        k: v for k, v in raw_action_map.items()
+        if isinstance(v, str) and v in valid_preset_ids
+    }
+
     # 找到激活的预设
     active_preset_id = next(
         (p['id'] for p in presets if p.get('is_active')),
@@ -1305,7 +1374,8 @@ async def get_presets(
         "presets": presets,
         "total": len(presets),
         "active_preset_id": active_preset_id,
-        "chapter_analysis_preset_id": chapter_analysis_preset_id
+        "chapter_analysis_preset_id": chapter_analysis_preset_id,
+        "action_preset_ids": action_preset_ids,
     }
 
 
@@ -1441,6 +1511,11 @@ async def delete_preset(
     presets = [p for p in presets if p['id'] != preset_id]
     if prefs.get('chapter_analysis_preset_id') == preset_id:
         prefs.pop('chapter_analysis_preset_id', None)
+    # 清理 action_preset_ids 中指向该预设的映射
+    action_map = prefs.get('action_preset_ids')
+    if isinstance(action_map, dict):
+        cleaned = {k: v for k, v in action_map.items() if v != preset_id}
+        prefs['action_preset_ids'] = cleaned
     
     # 保存回preferences
     api_presets['presets'] = presets
@@ -1509,38 +1584,80 @@ async def activate_preset(
     }
 
 
+def _set_action_preset_mapping(prefs: Dict[str, Any], usage: str, preset_id: Optional[str]) -> None:
+    """统一写入 action_preset_ids 映射；对 chapter_analysis 同时维护旧字段兼容。"""
+    action_map = prefs.get('action_preset_ids')
+    if not isinstance(action_map, dict):
+        action_map = {}
+    if preset_id:
+        action_map[usage] = preset_id
+    else:
+        action_map.pop(usage, None)
+    prefs['action_preset_ids'] = action_map
+    # 兼容旧字段 chapter_analysis_preset_id
+    if usage == "chapter_analysis":
+        if preset_id:
+            prefs['chapter_analysis_preset_id'] = preset_id
+        else:
+            prefs.pop('chapter_analysis_preset_id', None)
+
+
 @router.put("/presets/usage/chapter-analysis")
 async def set_chapter_analysis_preset_selection(
     data: ChapterAnalysisPresetSelectionRequest,
     user: User = Depends(require_login),
     db: AsyncSession = Depends(get_db)
 ):
-    """设置章节内容分析专用API预设；为空则使用默认API配置。"""
+    """设置章节内容分析专用API预设；为空则使用默认API配置。（兼容旧端点，推荐使用 /presets/usage/{action}）"""
+    return await _set_action_preset_selection_impl(user, db, "chapter_analysis", data.preset_id)
+
+
+@router.put("/presets/usage/{action}")
+async def set_action_preset_selection(
+    action: str,
+    data: ActionPresetSelectionRequest,
+    user: User = Depends(require_login),
+    db: AsyncSession = Depends(get_db)
+):
+    """为指定动作设置专用API预设；preset_id 为空则回退默认API配置。
+
+    action 取值见 app.constants.ai_usages.AI_USAGES。
+    """
+    if action not in AI_USAGES:
+        raise HTTPException(status_code=400, detail=f"未知的动作类型: {action}")
+    return await _set_action_preset_selection_impl(user, db, action, data.preset_id)
+
+
+async def _set_action_preset_selection_impl(
+    user: User, db: AsyncSession, usage: str, preset_id: Optional[str]
+) -> Dict[str, Any]:
+    """设置动作→预设映射的内部实现。"""
     settings = await get_user_settings(user.user_id, db)
     prefs = _safe_load_preferences(settings.preferences)
     api_presets = _get_api_presets_payload(prefs)
     presets = api_presets.get('presets', [])
 
-    preset_id = data.preset_id.strip() if data.preset_id else None
+    clean_id = preset_id.strip() if preset_id else None
     preset_name = None
-    if preset_id:
-        target_preset = next((p for p in presets if p.get('id') == preset_id), None)
+    if clean_id:
+        target_preset = next((p for p in presets if p.get('id') == clean_id), None)
         if not target_preset:
             raise HTTPException(status_code=404, detail="预设不存在")
-        prefs['chapter_analysis_preset_id'] = preset_id
         preset_name = target_preset.get('name')
-    else:
-        prefs.pop('chapter_analysis_preset_id', None)
 
+    _set_action_preset_mapping(prefs, usage, clean_id)
     prefs['api_presets'] = api_presets
     settings.preferences = json.dumps(prefs, ensure_ascii=False)
     await db.commit()
 
-    logger.info(f"用户 {user.user_id} 设置章节内容分析API预设: {preset_id or '默认配置'}")
+    logger.info(f"用户 {user.user_id} 设置动作 '{usage}' 预设: {clean_id or '默认配置'}")
     return {
-        "message": "章节内容分析API配置已更新",
-        "chapter_analysis_preset_id": preset_id,
-        "preset_name": preset_name
+        "message": f"动作 '{usage}' 的API配置已更新",
+        "action": usage,
+        "preset_id": clean_id,
+        "preset_name": preset_name,
+        # 兼容旧字段
+        "chapter_analysis_preset_id": clean_id if usage == "chapter_analysis" else _get_chapter_analysis_preset_id(prefs),
     }
 
 

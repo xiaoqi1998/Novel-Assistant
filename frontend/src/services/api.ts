@@ -337,6 +337,18 @@ export const settingsApi = {
       preset_id: presetId || null,
     }),
 
+  /** 通用：为指定动作设置专用预设（presetId 为空则回退默认） */
+  setActionPreset: (action: string, presetId?: string) =>
+    api.put<unknown, {
+      message: string;
+      action: string;
+      preset_id?: string;
+      preset_name?: string;
+      chapter_analysis_preset_id?: string;
+    }>(`/settings/presets/usage/${action}`, {
+      preset_id: presetId || null,
+    }),
+
   createPresetFromCurrent: (name: string, description?: string) =>
     api.post<unknown, APIKeyPreset>('/settings/presets/from-current', null, {
       params: { name, description }

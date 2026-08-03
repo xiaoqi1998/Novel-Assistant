@@ -22,7 +22,7 @@ from ..schemas.writing_style import (
 )
 from ..services.prompt_service import PromptService
 from ..services.ai_service import AIService
-from ..api.settings import get_user_ai_service
+from ..api.settings import get_ai_service_for_usage
 from ..logger import get_logger
 
 router = APIRouter(prefix="/writing-styles", tags=["writing-styles"])
@@ -521,7 +521,7 @@ async def extract_writing_style(
     request_data: StyleExtractRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_ai_service_for_usage("writing_style"))
 ):
     """
     文风学习 - 从用户已有章节中提取结构化文风档案

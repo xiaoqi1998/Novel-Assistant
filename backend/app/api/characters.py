@@ -26,7 +26,7 @@ from app.services.prompt_service import prompt_service, PromptService
 from app.services.import_export_service import ImportExportService
 from app.schemas.import_export import CharactersExportRequest, CharactersImportResult
 from app.logger import get_logger, safe_preview
-from app.api.settings import get_user_ai_service
+from app.api.settings import get_ai_service_for_usage
 from app.api.common import verify_project_access
 
 router = APIRouter(prefix="/characters", tags=["角色管理"])
@@ -816,7 +816,7 @@ async def generate_character_stream(
     request: CharacterGenerateRequest,
     http_request: Request,
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_ai_service_for_usage("character"))
 ):
     """
     使用AI生成角色卡（支持SSE流式进度显示）

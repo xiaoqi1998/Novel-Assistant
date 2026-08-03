@@ -64,7 +64,7 @@ from app.services.snapshot_service import snapshot_service
 from app.services.chapter_regenerator import ChapterRegenerator
 from app.services.newapi_errors import QuotaExhaustedError
 from app.logger import get_logger
-from app.api.settings import get_user_ai_service, get_user_ai_service_from_db_by_usage
+from app.api.settings import get_ai_service_for_usage, get_user_ai_service_from_db_by_usage
 from app.utils.sse_response import SSEResponse, create_sse_response
 
 router = APIRouter(prefix="/chapters", tags=["章节管理"])
@@ -1451,7 +1451,7 @@ async def generate_chapter_content_stream(
     request: Request,
     background_tasks: BackgroundTasks,
     generate_request: ChapterGenerateRequest = ChapterGenerateRequest(),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_ai_service_for_usage("chapter_generation"))
 ):
     """
     根据大纲、前置章节内容和项目信息AI创作章节完整内容（流式返回）
@@ -2133,8 +2133,8 @@ async def generate_chapter_content_background(
                 await tracker.start()
 
                 # 获取AI服务
-                from app.api.settings import get_user_ai_service_from_db
-                bg_ai_service = await get_user_ai_service_from_db(bg_user_id, bg_db)
+                from app.api.settings import get_user_ai_service_from_db_by_usage
+                bg_ai_service = await get_user_ai_service_from_db_by_usage(bg_user_id, bg_db, usage="chapter_generation")
 
                 await _run_chapter_generation_bg(
                     task_input={
@@ -2647,8 +2647,8 @@ async def generate_chapter_content_background_legacy(
                 await tracker.start()
 
                 # 获取AI服务
-                from app.api.settings import get_user_ai_service_from_db
-                bg_ai_service = await get_user_ai_service_from_db(bg_user_id, bg_db)
+                from app.api.settings import get_user_ai_service_from_db_by_usage
+                bg_ai_service = await get_user_ai_service_from_db_by_usage(bg_user_id, bg_db, usage="chapter_generation")
 
                 await _run_chapter_generation_bg(
                     task_input={
@@ -3788,7 +3788,7 @@ async def batch_generate_chapters_in_order(
     request: Request,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_ai_service_for_usage("chapter_generation"))
 ):
     """
     从指定章节开始，按顺序批量生成指定数量的章节
@@ -4725,7 +4725,7 @@ async def regenerate_chapter_stream(
     regenerate_request: ChapterRegenerateRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_ai_service_for_usage("chapter_regeneration"))
 ):
     """
     根据分析建议或自定义指令重新生成章节内容（流式返回）
@@ -5200,7 +5200,7 @@ async def partial_regenerate_stream(
     request: Request,
     partial_request: PartialRegenerateRequest,
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_ai_service_for_usage("partial_rewrite"))
 ):
     """
     对章节中选中的部分内容进行流式重写

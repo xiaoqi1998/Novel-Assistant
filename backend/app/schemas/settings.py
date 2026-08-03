@@ -1,6 +1,6 @@
 """设置相关的Pydantic模型"""
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, List
+from typing import Optional, List, Dict
 from datetime import datetime
 
 
@@ -142,6 +142,10 @@ class PresetListResponse(BaseModel):
     total: int = Field(..., description="总数")
     active_preset_id: Optional[str] = Field(None, description="当前激活的预设ID")
     chapter_analysis_preset_id: Optional[str] = Field(None, description="章节内容分析使用的预设ID，为空则使用默认API配置")
+    action_preset_ids: Dict[str, Optional[str]] = Field(
+        default_factory=dict,
+        description="按动作分配的预设ID映射，key 为动作 usage 值，value 为预设ID或空（回退默认）",
+    )
 
 
 class ChapterAnalysisPresetSelectionRequest(BaseModel):
@@ -149,3 +153,10 @@ class ChapterAnalysisPresetSelectionRequest(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
     preset_id: Optional[str] = Field(None, description="章节内容分析使用的预设ID；为空则使用默认API配置")
+
+
+class ActionPresetSelectionRequest(BaseModel):
+    """通用：为指定动作设置预设选择请求"""
+    model_config = ConfigDict(protected_namespaces=())
+
+    preset_id: Optional[str] = Field(None, description="该动作使用的预设ID；为空则回退默认API配置")

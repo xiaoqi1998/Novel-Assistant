@@ -22,7 +22,7 @@ from app.services.prompt_service import prompt_service, PromptService
 from app.services.plot_expansion_service import PlotExpansionService
 from app.logger import get_logger, safe_preview
 from app.utils.sse_response import SSEResponse, create_sse_response, WizardProgressTracker
-from app.api.settings import get_user_ai_service
+from app.api.settings import get_ai_service_for_usage
 
 router = APIRouter(prefix="/wizard-stream", tags=["项目创建向导(流式)"])
 logger = get_logger(__name__)
@@ -307,7 +307,7 @@ async def generate_world_building_stream(
     request: Request,
     data: Dict[str, Any],
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_ai_service_for_usage("wizard"))
 ):
     """
     使用SSE流式生成世界构建，避免超时
@@ -581,7 +581,7 @@ async def generate_career_system_stream(
     request: Request,
     data: Dict[str, Any],
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_ai_service_for_usage("wizard"))
 ):
     """
     使用SSE流式生成职业体系，避免超时
@@ -1254,7 +1254,7 @@ async def generate_characters_stream(
     request: Request,
     data: Dict[str, Any],
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_ai_service_for_usage("wizard"))
 ):
     """
     使用SSE流式批量生成角色，避免超时
@@ -1558,7 +1558,7 @@ async def generate_outline_stream(
     request: Request,
     data: Dict[str, Any],
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_ai_service_for_usage("wizard"))
 ):
     """
     使用SSE流式生成完整大纲，避免超时
@@ -1762,7 +1762,7 @@ async def regenerate_world_building_stream(
     request: Request,
     data: Dict[str, Any],
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_ai_service_for_usage("wizard"))
 ):
     """
     使用SSE流式重新生成世界观，避免超时

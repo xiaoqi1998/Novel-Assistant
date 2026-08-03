@@ -13,7 +13,7 @@ from typing import Optional, List, Union
 
 from app.database import get_db
 from app.user_manager import User
-from app.api.settings import require_login, get_user_ai_service
+from app.api.settings import require_login, get_user_ai_service_from_db_by_usage
 from app.models.chapter import Chapter
 from app.models.generation_history import GenerationHistory
 from app.services.skill_loader import get_all_skills_cached
@@ -304,7 +304,7 @@ async def start_review(
 
     # 获取用户 AI 服务
     try:
-        ai_service = await get_user_ai_service(user=user, db=db)
+        ai_service = await get_user_ai_service_from_db_by_usage(user.user_id, db, usage="full_review")
         ai_service.default_system_prompt = skill_content
     except Exception as e:
         logger.error(f"创建 AI 服务失败: {e}")
@@ -473,7 +473,7 @@ async def apply_modifications(
 
     # 获取用户 AI 服务
     try:
-        ai_service = await get_user_ai_service(user=user, db=db)
+        ai_service = await get_user_ai_service_from_db_by_usage(user.user_id, db, usage="full_review")
         ai_service.default_system_prompt = skill_content
     except Exception as e:
         logger.error(f"创建 AI 服务失败: {e}")
@@ -698,7 +698,7 @@ async def start_review_background(
         from app.database import get_engine
         from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession as BgAsyncSession
         from app.services.background_task_service import TaskProgressTracker
-        from app.api.settings import get_user_ai_service_from_db
+        from app.api.settings import get_user_ai_service_from_db_by_usage
         from app.models.background_task import BackgroundTask
         from sqlalchemy import update as sql_update
         import asyncio
@@ -739,7 +739,7 @@ async def start_review_background(
                     await tracker.error("未找到全文审查 Skill")
                     return
 
-                bg_ai_service = await get_user_ai_service_from_db(bg_user_id, bg_db)
+                bg_ai_service = await get_user_ai_service_from_db_by_usage(bg_user_id, bg_db, usage="full_review")
                 bg_ai_service.default_system_prompt = bg_skill_content
 
                 total_text = _build_review_prompt(bg_chapters)

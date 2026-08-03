@@ -179,9 +179,9 @@ async def skill_chat(
         full_prompt = f"以下是之前的对话历史：{history_text}\n\n用户最新消息: {request.message}"
 
     # 获取用户 AI 配置
-    from app.api.settings import get_user_ai_service
+    from app.api.settings import get_user_ai_service_from_db_by_usage
     try:
-        ai_service = await get_user_ai_service(user=user, db=db)
+        ai_service = await get_user_ai_service_from_db_by_usage(user.user_id, db, usage="default")
         # 覆盖系统提示词为 Skill 内容
         ai_service.default_system_prompt = system_prompt
     except Exception as e:

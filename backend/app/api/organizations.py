@@ -27,7 +27,7 @@ from app.services.ai_service import AIService
 from app.services.json_helper import loads_json
 from app.services.prompt_service import prompt_service, PromptService
 from app.logger import get_logger, safe_preview
-from app.api.settings import get_user_ai_service
+from app.api.settings import get_ai_service_for_usage
 from app.api.common import verify_project_access
 
 router = APIRouter(prefix="/organizations", tags=["组织管理"])
@@ -416,7 +416,7 @@ async def generate_organization_stream(
     gen_request: OrganizationGenerateRequest,
     http_request: Request,
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_ai_service_for_usage("organization"))
 ):
     """
     使用AI生成组织设定（支持SSE流式进度显示）

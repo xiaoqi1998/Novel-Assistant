@@ -27,7 +27,7 @@ from app.schemas.career import (
 from app.services.ai_service import AIService
 from app.services.json_helper import loads_json
 from app.logger import get_logger, safe_preview
-from app.api.settings import get_user_ai_service
+from app.api.settings import get_ai_service_for_usage
 from app.api.common import verify_project_access
 
 router = APIRouter(prefix="/careers", tags=["职业管理"])
@@ -161,7 +161,7 @@ async def generate_career_system(
     request_data: CareerGenerateRequest,
     http_request: Request,
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service)
+    user_ai_service: AIService = Depends(get_ai_service_for_usage("career"))
 ):
     """
     使用AI生成新职业（增量式，基于已有职业补充，支持SSE流式进度显示）

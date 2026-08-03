@@ -596,9 +596,9 @@ async def validate_snapshot(
     content = chapter.content if chapter else ""
 
     # 获取用户AI服务（手动触发时可用）
-    from app.api.settings import get_user_ai_service_from_db
+    from app.api.settings import get_user_ai_service_from_db_by_usage
     try:
-        ai_service = await get_user_ai_service_from_db(user_id, db)
+        ai_service = await get_user_ai_service_from_db_by_usage(user_id, db, usage="tianming")
     except Exception as e:
         logger.warning(f"获取AI服务失败，仅执行规则门: {e}")
         ai_service = None
@@ -638,7 +638,7 @@ async def revise_snapshot(
     """
     from fastapi.responses import StreamingResponse
     from app.utils.sse_response import SSEResponse, create_sse_response, wrap_stream_with_heartbeat, HEARTBEAT
-    from app.api.settings import get_user_ai_service_from_db
+    from app.api.settings import get_user_ai_service_from_db_by_usage
 
     user_id = get_current_user_id(request)
     await _verify_project(project_id, user_id, db)
@@ -669,7 +669,7 @@ async def revise_snapshot(
 
     # 获取AI服务
     try:
-        ai_service = await get_user_ai_service_from_db(user_id, db)
+        ai_service = await get_user_ai_service_from_db_by_usage(user_id, db, usage="tianming")
     except Exception as e:
         logger.error(f"创建AI服务失败: {e}")
         async def error_gen():

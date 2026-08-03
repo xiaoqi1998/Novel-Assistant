@@ -3,6 +3,7 @@ import { Card, Form, Input, Button, Select, Slider, InputNumber, message, Space,
 import { SaveOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, ThunderboltOutlined, PlusOutlined, EditOutlined, CopyOutlined, WarningOutlined, PictureOutlined } from '@ant-design/icons';
 import { settingsApi, mcpPluginApi, newApi } from '../services/api';
 import type { SettingsUpdate, APIKeyPreset, PresetCreateRequest, APIKeyPresetConfig } from '../types';
+import { usageListForFrontend, AI_USAGES } from '../constants/aiUsages';
 import { useNavigate } from 'react-router-dom';
 
 const { Title, Text } = Typography;
@@ -57,6 +58,8 @@ export default function SettingsPage() {
   const [activePresetId, setActivePresetId] = useState<string | undefined>();
   const [chapterAnalysisPresetId, setChapterAnalysisPresetId] = useState<string | undefined>();
   const [savingChapterAnalysisPreset, setSavingChapterAnalysisPreset] = useState(false);
+  const [actionPresetIds, setActionPresetIds] = useState<Record<string, string | null>>({});
+  const [savingActionUsage, setSavingActionUsage] = useState<string | null>(null);
   const [editingPreset, setEditingPreset] = useState<APIKeyPreset | null>(null);
   const [isPresetModalVisible, setIsPresetModalVisible] = useState(false);
   const [testingPresetId, setTestingPresetId] = useState<string | null>(null);
@@ -569,6 +572,7 @@ export default function SettingsPage() {
       setPresets(response.presets);
       setActivePresetId(response.active_preset_id);
       setChapterAnalysisPresetId(response.chapter_analysis_preset_id);
+      setActionPresetIds(response.action_preset_ids || {});
     } catch (error) {
       message.error('加载预设失败');
       console.error(error);
@@ -731,6 +735,26 @@ export default function SettingsPage() {
       console.error(error);
     } finally {
       setSavingChapterAnalysisPreset(false);
+    }
+  };
+
+  /** 通用：为指定动作设置预设（presetId 为空则回退默认） */
+  const handleActionPresetChange = async (usage: string, presetId?: string) => {
+    setSavingActionUsage(usage);
+    try {
+      const normalizedPresetId = presetId || undefined;
+      await settingsApi.setActionPreset(usage, normalizedPresetId);
+      setActionPresetIds((prev) => ({ ...prev, [usage]: normalizedPresetId || null }));
+      if (usage === 'chapter_analysis') {
+        setChapterAnalysisPresetId(normalizedPresetId);
+      }
+      message.success(normalizedPresetId ? `已为该动作设置专用预设` : '已恢复使用默认API配置');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '设置动作API配置失败');
+      console.error(error);
+    } finally {
+      setSavingActionUsage(null);
     }
   };
 
@@ -1004,34 +1028,64 @@ export default function SettingsPage() {
         </div>
 
         <Card size="small" style={{ background: token.colorFillAlter, borderColor: token.colorBorderSecondary }}>
-          <Space direction="vertical" size={8} style={{ width: '100%' }}>
-            <Space wrap align="center" style={{ width: '100%', justifyContent: 'space-between' }}>
-              <Space direction="vertical" size={2}>
-                <Text strong>章节内容分析 API 配置</Text>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  指定章节内容分析使用的预设；未选择时使用默认的文本模型配置。
-                </Text>
-              </Space>
-              <Select
-                allowClear
-                placeholder="默认API配置"
-                value={chapterAnalysisPresetId}
-                loading={savingChapterAnalysisPreset}
-                disabled={presetsLoading || savingChapterAnalysisPreset}
-                style={{ minWidth: isMobile ? '100%' : 280 }}
-                onChange={(value) => handleChapterAnalysisPresetChange(value)}
-                options={presets.map((preset) => ({
-                  value: preset.id,
-                  label: `${preset.name} (${preset.config.llm_model})`,
-                }))}
-              />
+          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+            <Space direction="vertical" size={2}>
+              <Text strong>按行为动作分配模型</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                为不同动作指定专用 API 预设；未指定的动作使用默认配置。
+              </Text>
             </Space>
-            <Alert
-              showIcon
-              type="info"
-              message={chapterAnalysisPresetId ? '章节内容分析将优先使用所选预设。' : '当前未指定章节内容分析预设，将使用默认API配置。'}
-              style={{ padding: '6px 10px' }}
-            />
+            {!newApiSubscribed && (
+              <Alert
+                showIcon
+                type="warning"
+                message="非订阅用户所有动作均使用默认模型"
+                description="订阅后可为各动作自定义不同模型与渠道。"
+                style={{ padding: '6px 10px' }}
+              />
+            )}
+            {usageListForFrontend().map((group) => (
+              <div key={group.group}>
+                <Text type="secondary" style={{ fontSize: 12, fontWeight: 600 }}>
+                  {group.groupLabel}
+                </Text>
+                <Space direction="vertical" size={6} style={{ width: '100%', marginTop: 4 }}>
+                  {group.actions
+                    .filter((a) => a.usage !== 'default')
+                    .map((action) => (
+                      <Row key={action.usage} gutter={[8, 4]} align="middle">
+                        <Col xs={24} sm={14} md={13}>
+                          <Space direction="vertical" size={0}>
+                            <Text style={{ fontSize: 13 }}>{action.label}</Text>
+                            <Text type="secondary" style={{ fontSize: 11 }}>
+                              {action.description}
+                            </Text>
+                          </Space>
+                        </Col>
+                        <Col xs={24} sm={10} md={11}>
+                          <Select
+                            allowClear
+                            placeholder="默认配置"
+                            value={actionPresetIds[action.usage] || undefined}
+                            loading={savingActionUsage === action.usage}
+                            disabled={
+                              presetsLoading ||
+                              savingActionUsage === action.usage ||
+                              !newApiSubscribed
+                            }
+                            style={{ width: '100%' }}
+                            onChange={(value) => handleActionPresetChange(action.usage, value)}
+                            options={presets.map((preset) => ({
+                              value: preset.id,
+                              label: `${preset.name} (${preset.config.llm_model})`,
+                            }))}
+                          />
+                        </Col>
+                      </Row>
+                    ))}
+                </Space>
+              </div>
+            ))}
           </Space>
         </Card>
 
@@ -1115,7 +1169,15 @@ export default function SettingsPage() {
                       <Space>
                         <span style={{ fontWeight: 'bold' }}>{preset.name}</span>
                         {isActive && <Tag color="success">激活中</Tag>}
-                        {preset.id === chapterAnalysisPresetId && <Tag color="processing">章节分析</Tag>}
+                        {Object.entries(actionPresetIds)
+                          .filter(([, pid]) => pid === preset.id)
+                          .map(([usage]) => AI_USAGES[usage]?.label)
+                          .filter(Boolean)
+                          .map((label) => (
+                            <Tag key={label as string} color="processing">
+                              {label}
+                            </Tag>
+                          ))}
                       </Space>
                     }
                     description={

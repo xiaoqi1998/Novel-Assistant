@@ -25,7 +25,7 @@ from app.schemas.short_story import (
 )
 from app.services.ai_service import AIService
 from app.services.short_story_ai_service import ShortStoryAIService, FullStoryGenerator, StoryScorer, StoryImprover, ChecklistChecker
-from app.api.settings import get_user_ai_service
+from app.api.settings import get_ai_service_for_usage
 from app.logger import get_logger
 from app.utils.sse_response import SSEResponse, create_sse_response, HEARTBEAT
 
@@ -443,7 +443,7 @@ async def generate_loglines(
     req: GenerateLoglinesRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    ai_service: AIService = Depends(get_user_ai_service),
+    ai_service: AIService = Depends(get_ai_service_for_usage("short_story")),
 ):
     try:
         user_id = getattr(request.state, 'user_id', None)
@@ -478,7 +478,7 @@ async def generate_twists(
     story_id: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    ai_service: AIService = Depends(get_user_ai_service),
+    ai_service: AIService = Depends(get_ai_service_for_usage("short_story")),
 ):
     try:
         user_id = getattr(request.state, 'user_id', None)
@@ -517,7 +517,7 @@ async def generate_segment(
     req: GenerateSegmentRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    ai_service: AIService = Depends(get_user_ai_service),
+    ai_service: AIService = Depends(get_ai_service_for_usage("short_story")),
 ):
     try:
         user_id = getattr(request.state, 'user_id', None)
@@ -584,7 +584,7 @@ async def polish_story(
     story_id: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    ai_service: AIService = Depends(get_user_ai_service),
+    ai_service: AIService = Depends(get_ai_service_for_usage("short_story")),
 ):
     try:
         user_id = getattr(request.state, 'user_id', None)
@@ -952,7 +952,7 @@ async def generate_cover(
             GENERATED_COVER_PUBLIC_PREFIX, COVER_WIDTH, COVER_HEIGHT
         )
         from app.services.prompt_service import PromptService
-        from app.api.settings import get_user_ai_service_from_db
+        from app.api.settings import get_user_ai_service_from_db_by_usage
         from sqlalchemy import select as sa_select
         from app.models.settings import Settings
 
@@ -1064,7 +1064,7 @@ async def generate_full_story(
     req: GenerateFullStoryRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    ai_service: AIService = Depends(get_user_ai_service),
+    ai_service: AIService = Depends(get_ai_service_for_usage("short_story")),
 ):
     """输入想法，AI一次性生成完整短故事（设定+全文），自动创建记录"""
     try:
@@ -1174,7 +1174,7 @@ async def regenerate_story(
     story_id: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    ai_service: AIService = Depends(get_user_ai_service),
+    ai_service: AIService = Depends(get_ai_service_for_usage("short_story")),
 ):
     """对已有短故事重新AI生成正文，返回预览数据（不写库）。
 
@@ -1272,7 +1272,7 @@ async def regenerate_story(
 async def generate_full_story_stream(
     req: GenerateFullStoryRequest,
     request: Request,
-    ai_service: AIService = Depends(get_user_ai_service),
+    ai_service: AIService = Depends(get_ai_service_for_usage("short_story")),
 ):
     """输入想法，AI流式生成完整短故事（设定+全文），自动创建记录。
 
@@ -1401,7 +1401,7 @@ async def generate_full_story_stream(
 async def regenerate_story_stream(
     story_id: str,
     request: Request,
-    ai_service: AIService = Depends(get_user_ai_service),
+    ai_service: AIService = Depends(get_ai_service_for_usage("short_story")),
 ):
     """对已有短故事流式重新AI生成正文，更新当前记录。
 
@@ -1544,7 +1544,7 @@ async def generate_segment_stream(
     story_id: str,
     req: GenerateSegmentRequest,
     request: Request,
-    ai_service: AIService = Depends(get_user_ai_service),
+    ai_service: AIService = Depends(get_ai_service_for_usage("short_story")),
 ):
     """流式生成指定段落正文。
 
@@ -1639,7 +1639,7 @@ async def generate_segment_stream(
 async def polish_story_stream(
     story_id: str,
     request: Request,
-    ai_service: AIService = Depends(get_user_ai_service),
+    ai_service: AIService = Depends(get_ai_service_for_usage("short_story")),
 ):
     """流式精修润色正文，返回对比预览数据（不直接写DB，需用户确认）。
 
@@ -1733,7 +1733,7 @@ async def score_story(
     story_id: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    ai_service: AIService = Depends(get_user_ai_service),
+    ai_service: AIService = Depends(get_ai_service_for_usage("short_story")),
 ):
     """对短故事进行5维AI评分，依据爆款方法论"""
     try:
@@ -1836,7 +1836,7 @@ async def improve_from_score(
     story_id: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    ai_service: AIService = Depends(get_user_ai_service),
+    ai_service: AIService = Depends(get_ai_service_for_usage("short_story")),
 ):
     """根据AI评分给出的改进点（issues/suggestions/top_issues/improvement_priority）
     自动修订正文，形成"评分→改进→再评分"的质量闭环。
@@ -1938,7 +1938,7 @@ async def improve_from_score(
 async def improve_from_score_stream(
     story_id: str,
     request: Request,
-    ai_service: AIService = Depends(get_user_ai_service),
+    ai_service: AIService = Depends(get_ai_service_for_usage("short_story")),
 ):
     """流式基于评分改进正文，返回对比预览数据（不直接写DB，需用户确认）。
 
@@ -2066,7 +2066,7 @@ async def auto_check_checklist(
     story_id: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    ai_service: AIService = Depends(get_user_ai_service),
+    ai_service: AIService = Depends(get_ai_service_for_usage("short_story")),
 ):
     """AI逐项检查自查清单，自动标记每项是否通过，并给出检查依据"""
     try:
@@ -2427,8 +2427,8 @@ async def regenerate_story_background(
                 await tracker.start("开始重新生成短故事...")
 
                 # 获取AI服务
-                from app.api.settings import get_user_ai_service_from_db
-                bg_ai_service = await get_user_ai_service_from_db(bg_user_id, bg_db)
+                from app.api.settings import get_user_ai_service_from_db_by_usage
+                bg_ai_service = await get_user_ai_service_from_db_by_usage(bg_user_id, bg_db, usage="short_story")
 
                 # 重新加载故事
                 bg_result = await bg_db.execute(
@@ -2573,8 +2573,8 @@ async def score_story_background(
                 await tracker.start("开始AI评分...")
 
                 # 获取AI服务
-                from app.api.settings import get_user_ai_service_from_db
-                bg_ai_service = await get_user_ai_service_from_db(bg_user_id, bg_db)
+                from app.api.settings import get_user_ai_service_from_db_by_usage
+                bg_ai_service = await get_user_ai_service_from_db_by_usage(bg_user_id, bg_db, usage="short_story")
 
                 # 重新加载故事
                 bg_result = await bg_db.execute(
@@ -2704,8 +2704,8 @@ async def improve_from_score_background(
                 await tracker.start("开始AI基于评分改进正文...")
 
                 # 获取AI服务
-                from app.api.settings import get_user_ai_service_from_db
-                bg_ai_service = await get_user_ai_service_from_db(bg_user_id, bg_db)
+                from app.api.settings import get_user_ai_service_from_db_by_usage
+                bg_ai_service = await get_user_ai_service_from_db_by_usage(bg_user_id, bg_db, usage="short_story")
 
                 # 重新加载故事
                 bg_result = await bg_db.execute(
@@ -2898,8 +2898,8 @@ async def generate_full_story_background(
                 await tracker.start("开始AI生成完整短故事...")
 
                 # 获取AI服务
-                from app.api.settings import get_user_ai_service_from_db
-                bg_ai_service = await get_user_ai_service_from_db(bg_user_id, bg_db)
+                from app.api.settings import get_user_ai_service_from_db_by_usage
+                bg_ai_service = await get_user_ai_service_from_db_by_usage(bg_user_id, bg_db, usage="short_story")
 
                 await tracker.loading("AI正在构思选题与设定...", 0.5)
 

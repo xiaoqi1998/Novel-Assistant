@@ -19,7 +19,7 @@ from app.services.ai_service import AIService
 from app.services.character_arc_service import CharacterArcService
 from app.services.json_helper import loads_json
 from app.logger import get_logger
-from app.api.settings import get_user_ai_service
+from app.api.settings import get_ai_service_for_usage
 from app.api.common import verify_project_access
 
 router = APIRouter(prefix="/character-arcs", tags=["角色弧光管理"])
@@ -193,7 +193,7 @@ async def generate_arc(
     request_data: CharacterArcGenerateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user_ai_service: AIService = Depends(get_user_ai_service),
+    user_ai_service: AIService = Depends(get_ai_service_for_usage("character_arc")),
 ):
     """根据角色信息和项目上下文，AI生成角色弧光建议并保存。
 

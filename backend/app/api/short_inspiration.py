@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from typing import Optional
 from app.services.ai_service import AIService
 from app.services.short_story_ai_service import ShortStoryAIService
-from app.api.settings import get_user_ai_service
+from app.api.settings import get_ai_service_for_usage
 from app.logger import get_logger
 
 logger = get_logger(__name__)
@@ -34,7 +34,7 @@ STEP_GUIDE = {
 async def generate_options(
     req: GenerateOptionsRequest,
     request: Request,
-    ai_service: AIService = Depends(get_user_ai_service),
+    ai_service: AIService = Depends(get_ai_service_for_usage("inspiration")),
 ):
     try:
         # 显式鉴权：对齐 short_stories.py 风格，从 request.state 取用户身份
