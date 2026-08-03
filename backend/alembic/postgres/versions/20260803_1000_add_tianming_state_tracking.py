@@ -1,7 +1,7 @@
 """添加天命状态追踪五张表（PostgreSQL）
 
 Revision ID: add_tianming_state_pg
-Revises: add_status_generated_and_index_pg
+Revises: add_status_gen_and_idx_pg
 Create Date: 2026-08-03 10:00:00
 
 新增五张表，对齐天命 15 维事实快照机制：
@@ -22,7 +22,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'add_tianming_state_pg'
-down_revision: Union[str, None] = 'add_status_generated_and_index_pg'
+down_revision: Union[str, None] = 'add_status_gen_and_idx_pg'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
