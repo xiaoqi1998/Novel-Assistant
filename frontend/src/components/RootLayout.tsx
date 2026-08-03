@@ -19,6 +19,7 @@ import AppTopBar from './AppTopBar';
 import AppFooter from './AppFooter';
 import GlobalQuotaModal from './GlobalQuotaModal';
 import OnboardingGuide from './OnboardingGuide';
+import AnnouncementModal from './AnnouncementModal';
 import { getStoredSidebarCollapsed, setStoredSidebarCollapsed } from '../utils/sidebarState';
 import useIsMobile from '../utils/useIsMobile';
 import { alphaColor } from '../utils/color';
@@ -382,6 +383,9 @@ export default function RootLayout() {
 
       {/* 全局额度不足 / 需要订阅 Modal */}
       <GlobalQuotaModal />
+
+      {/* 系统公告弹窗 */}
+      <AnnouncementModal />
 
       {/* 首次访问新人引导（透明蒙版多步骤浮窗） */}
       <OnboardingGuide />
