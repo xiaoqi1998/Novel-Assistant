@@ -2056,6 +2056,32 @@ export default function SettingsPage() {
                   rules={[{ required: true, message: '请选择或输入模型名称' }]}
                   style={{ marginBottom: 16 }}
                 >
+                  {hideNewApiFields ? (
+                    <Select
+                      size={isMobile ? 'middle' : 'large'}
+                      showSearch
+                      placeholder="选择模型"
+                      optionFilterProp="label"
+                      loading={fetchingNewApiModels}
+                      disabled={!newApiSubscribed}
+                      options={newApiModels.map((m) => ({
+                        value: m.id,
+                        label: m.id === presetForm.getFieldValue('llm_model') ? `${m.id}（当前）` : m.id,
+                        pricing: m.pricing,
+                      }))}
+                      optionRender={(option: any) => (
+                        <div>
+                          <div style={{ fontWeight: 500 }}>{option.data.value}</div>
+                          {option.data.pricing && (
+                            <div style={{ fontSize: 12, color: token.colorTextSecondary }}>
+                              价格：输入 ${option.data.pricing.input}/百万tokens · 输出 ${option.data.pricing.output}/百万tokens
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      notFoundContent={fetchingNewApiModels ? <div style={{ padding: 8, textAlign: 'center' }}><Spin size="small" /> 加载中...</div> : null}
+                    />
+                  ) : (
                   <Select
                     showSearch
                     placeholder="输入模型名称或点击获取"
@@ -2170,6 +2196,7 @@ export default function SettingsPage() {
                       </div>
                     )}
                   />
+                  )}
                 </Form.Item>
               </Col>
               <Col xs={12} sm={6}>
