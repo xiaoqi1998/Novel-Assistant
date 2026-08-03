@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import {
   Card, Table, Button, Tag, Space, Modal, Form, Input, Select,
   InputNumber, Switch, message, Tooltip, Popconfirm, Statistic,
-  Row, Col, Empty, Divider, Badge, Alert, Pagination, Dropdown, theme
+  Row, Col, Empty, Divider, Badge, Alert, Pagination, Dropdown, theme, Typography
 } from 'antd';
 import type { MenuProps } from 'antd';
 import {
@@ -20,6 +20,7 @@ import type {
 import useIsMobile from '../utils/useIsMobile';
 
 const { TextArea } = Input;
+const { Text } = Typography;
 const { Option } = Select;
 
 // 状态配置
@@ -309,10 +310,22 @@ export default function Foreshadows() {
     setEditModalVisible(true);
   };
 
-  // 打开详情模态框
-  const openDetailModal = (foreshadow: Foreshadow) => {
+  // 打开详情模态框（拉取完整详情，含关联的天命状态条目）
+  // 使用请求序列号防止竞态：快速点击两个伏笔时，只显示最后点击的
+  const detailReqRef = useRef(0);
+  const openDetailModal = async (foreshadow: Foreshadow) => {
+    const reqId = ++detailReqRef.current;
     setCurrentForeshadow(foreshadow);
     setDetailModalVisible(true);
+    try {
+      const full = await foreshadowApi.getForeshadow(foreshadow.id);
+      // 只接受最后一次请求的结果，避免竞态
+      if (reqId !== detailReqRef.current) return;
+      setCurrentForeshadow(full);
+    } catch (e) {
+      if (reqId !== detailReqRef.current) return;
+      console.error('加载伏笔详情失败:', e);
+    }
   };
 
   // 打开埋入模态框
@@ -939,6 +952,47 @@ export default function Foreshadows() {
                 <strong>来源：</strong> {currentForeshadow.source_type === 'analysis' ? '章节分析提取' : '手动添加'}
               </Col>
             </Row>
+
+            {/* 天命状态关联（物品/秘密/誓约） */}
+            {(() => {
+              const items = currentForeshadow.related_items || [];
+              const secrets = currentForeshadow.related_secrets || [];
+              const vows = currentForeshadow.related_vows || [];
+              if (items.length === 0 && secrets.length === 0 && vows.length === 0) {
+                return null;
+              }
+              return (
+                <div style={{ marginTop: 16, paddingTop: 12, borderTop: `1px solid ${token.colorBorderSecondary}` }}>
+                  <div style={{ marginBottom: 8, color: token.colorTextSecondary, fontSize: 13 }}>
+                    关联天命状态
+                  </div>
+                  {items.length > 0 && (
+                    <div style={{ marginBottom: 8 }}>
+                      <Text type="secondary" style={{ fontSize: 12 }}>物品：</Text>
+                      {items.map(it => (
+                        <Tag key={it.id} color="green" style={{ marginBottom: 4 }}>{it.name}</Tag>
+                      ))}
+                    </div>
+                  )}
+                  {secrets.length > 0 && (
+                    <div style={{ marginBottom: 8 }}>
+                      <Text type="secondary" style={{ fontSize: 12 }}>秘密：</Text>
+                      {secrets.map(s => (
+                        <Tag key={s.id} color="orange" style={{ marginBottom: 4 }}>{s.title}</Tag>
+                      ))}
+                    </div>
+                  )}
+                  {vows.length > 0 && (
+                    <div>
+                      <Text type="secondary" style={{ fontSize: 12 }}>誓约：</Text>
+                      {vows.map(v => (
+                        <Tag key={v.id} color="red" style={{ marginBottom: 4 }}>{v.title}</Tag>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
       </Modal>

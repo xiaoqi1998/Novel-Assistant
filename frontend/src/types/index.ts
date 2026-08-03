@@ -484,6 +484,8 @@ export interface Character {
   status_changed_chapter?: number;
   current_state?: string;
   state_updated_chapter?: number;
+  // 天命位置冗余字段（由章节生成/分析自动同步）
+  current_location?: string;
   // 职业相关字段
   main_career_id?: string;
   main_career_stage?: number;
@@ -1134,6 +1136,11 @@ export interface Foreshadow {
   updated_at?: string;
   planted_at?: string;
   resolved_at?: string;
+
+  // 天命状态反查关联（GET /{foreshadow_id} 附带返回）
+  related_items?: TianmingItem[];
+  related_secrets?: TianmingSecret[];
+  related_vows?: TianmingVow[];
 }
 
 export interface ForeshadowCreate {
@@ -1232,6 +1239,203 @@ export interface ForeshadowContextResponse {
   pending_resolve: Foreshadow[];
   overdue: Foreshadow[];
   recently_planted: Foreshadow[];
+}
+
+// ==================== 天命状态管理类型定义 ====================
+// 物品状态: active(使用中)/destroyed(已摧毁)/lost(已遗失)/sealed(已封印)/consumed(已消耗)/transferred(已转交)
+export type TianmingItemStatus = 'active' | 'destroyed' | 'lost' | 'sealed' | 'consumed' | 'transferred';
+export type TianmingItemType = 'weapon' | 'artifact' | 'consumable' | 'key' | 'material' | 'other';
+export type TianmingRarity = 'common' | 'rare' | 'epic' | 'legendary' | 'mythic';
+
+export interface TianmingItem {
+  id: string;
+  project_id: string;
+  name: string;
+  description: string;
+  item_type: TianmingItemType | string;
+  rarity: TianmingRarity | string;
+  current_holder_id?: string;
+  current_holder_name?: string;
+  status: TianmingItemStatus | string;
+  status_changed_chapter?: number;
+  abilities?: any[];
+  origin?: string;
+  appearance?: string;
+  related_characters?: any[];
+  related_foreshadow_id?: string;
+  tags?: string[];
+  importance: number;
+  notes?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface TianmingItemCreate {
+  name: string;
+  description: string;
+  item_type?: string;
+  rarity?: string;
+  current_holder_id?: string;
+  current_holder_name?: string;
+  status?: string;
+  abilities?: any[];
+  origin?: string;
+  appearance?: string;
+  tags?: string[];
+  importance?: number;
+  notes?: string;
+}
+
+export interface TianmingItemUpdate extends Partial<TianmingItemCreate> {}
+
+// 秘密揭露状态: hidden(完全隐藏)/partially_revealed(部分揭露)/revealed(已揭露给关键角色)/public(公开知晓)
+export type TianmingSecretStatus = 'hidden' | 'partially_revealed' | 'revealed' | 'public';
+export type TianmingSecretType = 'identity' | 'past_conspiracy' | 'true_purpose' | 'hidden_relationship' | 'hidden_power' | 'other';
+
+export interface TianmingSecretKnower {
+  character_id?: string;
+  character_name?: string;
+  revealed_at_chapter?: number;
+  reveal_method?: string;
+}
+
+export interface TianmingSecret {
+  id: string;
+  project_id: string;
+  title: string;
+  content: string;
+  secret_type: TianmingSecretType | string;
+  status: TianmingSecretStatus | string;
+  status_changed_chapter?: number;
+  knowers?: TianmingSecretKnower[];
+  related_characters?: string[];
+  related_foreshadow_id?: string;
+  tags?: string[];
+  importance: number;
+  notes?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface TianmingSecretCreate {
+  title: string;
+  content: string;
+  secret_type?: string;
+  status?: string;
+  knowers?: TianmingSecretKnower[];
+  related_characters?: string[];
+  tags?: string[];
+  importance?: number;
+  notes?: string;
+}
+
+export interface TianmingSecretUpdate extends Partial<TianmingSecretCreate> {}
+
+// 誓约约束状态: active(生效中)/broken(已违约)/fulfilled(已履行)/expired(已过期)/suspended(已暂停)
+export type TianmingVowStatus = 'active' | 'broken' | 'fulfilled' | 'expired' | 'suspended';
+export type TianmingVowType = 'oath' | 'pact' | 'contract' | 'curse' | 'geas' | 'other';
+
+export interface TianmingVowParticipant {
+  character_id?: string;
+  character_name?: string;
+  role?: string;
+}
+
+export interface TianmingVowCondition {
+  condition: string;
+  consequence?: string;
+  is_fulfilled?: boolean;
+}
+
+export interface TianmingVow {
+  id: string;
+  project_id: string;
+  title: string;
+  content: string;
+  vow_type: TianmingVowType | string;
+  status: TianmingVowStatus | string;
+  status_changed_chapter?: number;
+  participants?: TianmingVowParticipant[];
+  conditions?: TianmingVowCondition[];
+  breach_consequences?: string;
+  deadline_chapter?: number;
+  is_overdue?: 'no' | 'yes' | 'n_a';
+  related_characters?: string[];
+  related_foreshadow_id?: string;
+  tags?: string[];
+  importance: number;
+  notes?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface TianmingVowCreate {
+  title: string;
+  content: string;
+  vow_type?: string;
+  status?: string;
+  participants?: TianmingVowParticipant[];
+  conditions?: TianmingVowCondition[];
+  breach_consequences?: string;
+  deadline_chapter?: number;
+  related_characters?: string[];
+  tags?: string[];
+  importance?: number;
+  notes?: string;
+}
+
+export interface TianmingVowUpdate extends Partial<TianmingVowCreate> {}
+
+// 角色位置
+export interface TianmingCharacterLocation {
+  id: string;
+  project_id: string;
+  character_id: string;
+  location: string;
+  previous_location?: string;
+  reason?: string;
+  arrival_chapter_number?: number;
+  arrival_chapter_id?: string;
+  is_current: boolean;
+  companions?: any[];
+  notes?: string;
+  created_at?: string;
+}
+
+// 章节快照
+export interface TianmingSnapshotListItem {
+  id: string;
+  chapter_id: string;
+  chapter_number: number;
+  validation_status: string;
+  needs_revision: boolean;
+  source: string;
+  is_latest: boolean;
+  created_at?: string;
+}
+
+export interface TianmingSnapshot extends TianmingSnapshotListItem {
+  project_id: string;
+  snapshot_data: Record<string, any>;
+  changes_data: Record<string, any>;
+  validation_report?: Record<string, any>;
+  revision_suggestions?: string[];
+  updated_at?: string;
+}
+
+export interface TianmingLatestSnapshotResponse {
+  message?: string;
+  snapshot?: TianmingSnapshot | null;
+}
+
+// 角色天命状态聚合（用于角色详情页天命面板）
+export interface TianmingCharacterStateResponse {
+  character_id: string;
+  project_id: string;
+  locations: TianmingCharacterLocation[];
+  items: TianmingItem[];
+  secrets: TianmingSecret[];
+  vows: TianmingVow[];
 }
 
 // ==================== 拆书导入类型定义 ====================

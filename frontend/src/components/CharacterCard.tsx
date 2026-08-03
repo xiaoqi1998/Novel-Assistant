@@ -1,5 +1,5 @@
 import { Card, Space, Tag, Typography, Popconfirm, theme } from 'antd';
-import { EditOutlined, DeleteOutlined, UserOutlined, BankOutlined, ExportOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined, UserOutlined, BankOutlined, ExportOutlined, EnvironmentOutlined } from '@ant-design/icons';
 import { characterCardStyles } from './CardStyles';
 import type { Character } from '../types';
 
@@ -108,6 +108,14 @@ export const CharacterCard: React.FC<CharacterCardProps> = ({ character, onEdit,
         }
         description={
           <div style={characterCardStyles.descriptionBlock}>
+            {/* 天命位置标签（由章节生成/分析自动同步） */}
+            {character.current_location && (
+              <div style={{ marginBottom: 8 }}>
+                <Tag icon={<EnvironmentOutlined />} color="blue">
+                  {character.current_location}
+                </Tag>
+              </div>
+            )}
             {/* 角色特有字段 */}
             {!isOrganization && (
               <>

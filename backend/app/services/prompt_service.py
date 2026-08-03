@@ -806,6 +806,30 @@ class PromptService:
 无需任何前言、后记或解释性文字。
 
 现在开始创作：
+
+【🔴 天命 CHANGES 声明（正文之后必填）】
+写完正文后，必须另起一行输出 `---CHANGES---` 分隔符，随后输出本章 12 类状态变更 JSON。
+格式如下（无变更的类别返回空数组 []）：
+{{
+  "character_state_changes": [{{"character_name":"角色名","field":"current_state","old_value":"旧值","new_value":"新值","reason":"变更原因"}}],
+  "conflict_progress_changes": [{{"character_name":"角色名","arc_type":"growth","new_stage":"turning_point","stage_progress_delta":15,"event":"推动事件"}}],
+  "new_plot_nodes": [{{"keywords":["关键词"],"summary":"情节摘要","involved_characters":["角色名"],"story_line":"主线"}}],
+  "foreshadow_actions": [{{"title":"伏笔标题","action":"setup","reference_foreshadow_id":null}}],
+  "location_state_changes": [{{"location_name":"地点","new_status":"新状态","trigger_event":"触发事件"}}],
+  "faction_state_changes": [{{"name":"组织名","new_status":"新状态","trigger_event":"触发事件"}}],
+  "time_progression": {{"current_time_period":"时段","elapsed_time":"经过时间","key_time_event":"关键时间事件"}},
+  "character_movements": [{{"character_name":"角色名","from_location":"出发地","to_location":"目的地","reason":"原因"}}],
+  "item_transfers": [{{"item_name":"物品名","from_holder":"原持有者","to_holder":"新持有者","new_status":"active"}}],
+  "secret_reveals": [{{"title":"秘密标题","new_knower":"新知情角色","reveal_method":"揭露方式"}}],
+  "vow_changes": [{{"title":"誓约标题","change_action":"broken","related_characters":["角色名"],"conditions":"约束条件"}}],
+  "deadline_changes": [{{"title":"截止标题","change_action":"approaching","trigger_condition":"触发条件","deadline_chapter":100}}]
+}}
+
+规则：
+- 正文与 ---CHANGES--- 之间用空行分隔
+- 无变更的类别返回空数组 []
+- character_name 必须与角色档案一致
+- 仅记录本章实际发生的变化，不要编造
 </output>"""
 
     # 章节生成 - 1-1模式（第1章）
@@ -967,6 +991,30 @@ class PromptService:
 无需任何前言、后记或解释性文字。
 
 现在开始创作：
+
+【🔴 天命 CHANGES 声明（正文之后必填）】
+写完正文后，必须另起一行输出 `---CHANGES---` 分隔符，随后输出本章 12 类状态变更 JSON。
+格式如下（无变更的类别返回空数组 []）：
+{{
+  "character_state_changes": [{{"character_name":"角色名","field":"current_state","old_value":"旧值","new_value":"新值","reason":"变更原因"}}],
+  "conflict_progress_changes": [{{"character_name":"角色名","arc_type":"growth","new_stage":"turning_point","stage_progress_delta":15,"event":"推动事件"}}],
+  "new_plot_nodes": [{{"keywords":["关键词"],"summary":"情节摘要","involved_characters":["角色名"],"story_line":"主线"}}],
+  "foreshadow_actions": [{{"title":"伏笔标题","action":"setup","reference_foreshadow_id":null}}],
+  "location_state_changes": [{{"location_name":"地点","new_status":"新状态","trigger_event":"触发事件"}}],
+  "faction_state_changes": [{{"name":"组织名","new_status":"新状态","trigger_event":"触发事件"}}],
+  "time_progression": {{"current_time_period":"时段","elapsed_time":"经过时间","key_time_event":"关键时间事件"}},
+  "character_movements": [{{"character_name":"角色名","from_location":"出发地","to_location":"目的地","reason":"原因"}}],
+  "item_transfers": [{{"item_name":"物品名","from_holder":"原持有者","to_holder":"新持有者","new_status":"active"}}],
+  "secret_reveals": [{{"title":"秘密标题","new_knower":"新知情角色","reveal_method":"揭露方式"}}],
+  "vow_changes": [{{"title":"誓约标题","change_action":"broken","related_characters":["角色名"],"conditions":"约束条件"}}],
+  "deadline_changes": [{{"title":"截止标题","change_action":"approaching","trigger_condition":"触发条件","deadline_chapter":100}}]
+}}
+
+规则：
+- 正文与 ---CHANGES--- 之间用空行分隔
+- 无变更的类别返回空数组 []
+- character_name 必须与角色档案一致
+- 仅记录本章实际发生的变化，不要编造
 </output>"""
 
     # 章节生成 - 1-1模式（第2章及以后）
@@ -1150,6 +1198,30 @@ class PromptService:
 无需任何前言、后记或解释性文字。
 
 现在开始创作：
+
+【🔴 天命 CHANGES 声明（正文之后必填）】
+写完正文后，必须另起一行输出 `---CHANGES---` 分隔符，随后输出本章 12 类状态变更 JSON。
+格式如下（无变更的类别返回空数组 []）：
+{{
+  "character_state_changes": [{{"character_name":"角色名","field":"current_state","old_value":"旧值","new_value":"新值","reason":"变更原因"}}],
+  "conflict_progress_changes": [{{"character_name":"角色名","arc_type":"growth","new_stage":"turning_point","stage_progress_delta":15,"event":"推动事件"}}],
+  "new_plot_nodes": [{{"keywords":["关键词"],"summary":"情节摘要","involved_characters":["角色名"],"story_line":"主线"}}],
+  "foreshadow_actions": [{{"title":"伏笔标题","action":"setup","reference_foreshadow_id":null}}],
+  "location_state_changes": [{{"location_name":"地点","new_status":"新状态","trigger_event":"触发事件"}}],
+  "faction_state_changes": [{{"name":"组织名","new_status":"新状态","trigger_event":"触发事件"}}],
+  "time_progression": {{"current_time_period":"时段","elapsed_time":"经过时间","key_time_event":"关键时间事件"}},
+  "character_movements": [{{"character_name":"角色名","from_location":"出发地","to_location":"目的地","reason":"原因"}}],
+  "item_transfers": [{{"item_name":"物品名","from_holder":"原持有者","to_holder":"新持有者","new_status":"active"}}],
+  "secret_reveals": [{{"title":"秘密标题","new_knower":"新知情角色","reveal_method":"揭露方式"}}],
+  "vow_changes": [{{"title":"誓约标题","change_action":"broken","related_characters":["角色名"],"conditions":"约束条件"}}],
+  "deadline_changes": [{{"title":"截止标题","change_action":"approaching","trigger_condition":"触发条件","deadline_chapter":100}}]
+}}
+
+规则：
+- 正文与 ---CHANGES--- 之间用空行分隔
+- 无变更的类别返回空数组 []
+- character_name 必须与角色档案一致
+- 仅记录本章实际发生的变化，不要编造
 </output>"""
 
     # 章节生成 - 1-N模式（第2章及以后）
@@ -1362,6 +1434,30 @@ class PromptService:
 无需任何前言、后记或解释性文字。
 
 现在开始创作：
+
+【🔴 天命 CHANGES 声明（正文之后必填）】
+写完正文后，必须另起一行输出 `---CHANGES---` 分隔符，随后输出本章 12 类状态变更 JSON。
+格式如下（无变更的类别返回空数组 []）：
+{{
+  "character_state_changes": [{{"character_name":"角色名","field":"current_state","old_value":"旧值","new_value":"新值","reason":"变更原因"}}],
+  "conflict_progress_changes": [{{"character_name":"角色名","arc_type":"growth","new_stage":"turning_point","stage_progress_delta":15,"event":"推动事件"}}],
+  "new_plot_nodes": [{{"keywords":["关键词"],"summary":"情节摘要","involved_characters":["角色名"],"story_line":"主线"}}],
+  "foreshadow_actions": [{{"title":"伏笔标题","action":"setup","reference_foreshadow_id":null}}],
+  "location_state_changes": [{{"location_name":"地点","new_status":"新状态","trigger_event":"触发事件"}}],
+  "faction_state_changes": [{{"name":"组织名","new_status":"新状态","trigger_event":"触发事件"}}],
+  "time_progression": {{"current_time_period":"时段","elapsed_time":"经过时间","key_time_event":"关键时间事件"}},
+  "character_movements": [{{"character_name":"角色名","from_location":"出发地","to_location":"目的地","reason":"原因"}}],
+  "item_transfers": [{{"item_name":"物品名","from_holder":"原持有者","to_holder":"新持有者","new_status":"active"}}],
+  "secret_reveals": [{{"title":"秘密标题","new_knower":"新知情角色","reveal_method":"揭露方式"}}],
+  "vow_changes": [{{"title":"誓约标题","change_action":"broken","related_characters":["角色名"],"conditions":"约束条件"}}],
+  "deadline_changes": [{{"title":"截止标题","change_action":"approaching","trigger_condition":"触发条件","deadline_chapter":100}}]
+}}
+
+规则：
+- 正文与 ---CHANGES--- 之间用空行分隔
+- 无变更的类别返回空数组 []
+- character_name 必须与角色档案一致
+- 仅记录本章实际发生的变化，不要编造
 </output>"""
 
     # 单个角色生成提示词 V2（RTCO框架）
@@ -1892,7 +1988,100 @@ class PromptService:
   "suggestions": [
     "【节奏问题】第三场景的心理描写过长（约500字），建议精简至200字以内，保留核心情感即可",
     "【吸引力不足】章节中段缺乏有效钩子，建议在主角发现线索后增加一个小悬念"
-  ]
+  ],
+  "changes": {{
+    "character_state_changes": [
+      {{
+        "character_name": "张三",
+        "field": "current_state",
+        "old_value": "犹豫不决",
+        "new_value": "坚定信念",
+        "reason": "得知真相后下定决心"
+      }}
+    ],
+    "conflict_progress_changes": [
+      {{
+        "character_name": "张三",
+        "arc_type": "growth",
+        "new_stage": "turning_point",
+        "stage_progress_delta": 15,
+        "event": "与师父决裂"
+      }}
+    ],
+    "new_plot_nodes": [
+      {{
+        "keywords": ["决裂", "叛出宗门"],
+        "summary": "张三与师父决裂，叛出宗门",
+        "involved_characters": ["张三", "师父"],
+        "story_line": "主线"
+      }}
+    ],
+    "foreshadow_actions": [
+      {{
+        "title": "假死真相",
+        "action": "setup",
+        "reference_foreshadow_id": null
+      }}
+    ],
+    "location_state_changes": [
+      {{
+        "location_name": "烈焰谷",
+        "new_status": "已被封印",
+        "trigger_event": "张三封印了入口"
+      }}
+    ],
+    "faction_state_changes": [
+      {{
+        "name": "天剑宗",
+        "new_status": "内乱中",
+        "trigger_event": "长老叛变"
+      }}
+    ],
+    "time_progression": {{
+      "current_time_period": "深夜",
+      "elapsed_time": "约2小时",
+      "key_time_event": "子时封印仪式"
+    }},
+    "character_movements": [
+      {{
+        "character_name": "张三",
+        "from_location": "天剑宗",
+        "to_location": "烈焰谷",
+        "reason": "追踪叛徒"
+      }}
+    ],
+    "item_transfers": [
+      {{
+        "item_name": "天命剑",
+        "from_holder": "师父",
+        "to_holder": "张三",
+        "new_status": "active"
+      }}
+    ],
+    "secret_reveals": [
+      {{
+        "title": "身世之谜",
+        "new_knower": "张三",
+        "reveal_method": "亲眼目睹"
+      }}
+    ],
+    "vow_changes": [
+      {{
+        "title": "血誓",
+        "change_action": "broken",
+        "related_characters": ["张三"],
+        "conditions": "不可伤害同门"
+      }}
+    ],
+    "deadline_changes": [
+      {{
+        "title": "三年之约",
+        "change_action": "approaching",
+        "trigger_condition": "时间过半",
+        "deadline_chapter": 100
+      }}
+    ]
+  }}
 }}
 </output>
 
@@ -1912,6 +2101,22 @@ class PromptService:
 ✅ suggestions 的正确格式示例："suggestions": ["【节奏问题】...", "【描写不足】..."]
 ✅ suggestions 中禁止返回对象、字典、键值对或嵌套结构，例如禁止 {{"suggestion": "..."}}、{{"content": "..."}}
 ✅ 如果没有改进建议，必须返回空数组 []，不要返回 null，不要省略字段
+✅ 【天命CHANGES声明】changes 字段记录本章发生的 12 类状态变更，用于持久化状态快照：
+   - character_state_changes: 角色心理/处境变化（field=current_state/status等）
+   - conflict_progress_changes: 角色弧光阶段推进（new_stage/stage_progress_delta）
+   - new_plot_nodes: 本章新增的关键剧情节点
+   - foreshadow_actions: 伏笔埋设(setup)/回收(payoff)动作
+   - location_state_changes: 地点状态变化（被封印/被摧毁/被占领等）
+   - faction_state_changes: 势力/组织状态变化（内乱/覆灭/扩张等）
+   - time_progression: 时间推进（时段/经过时间/关键时间事件）
+   - character_movements: 角色位置移动（from_location→to_location）
+   - item_transfers: 物品持有者变更或状态变化
+   - secret_reveals: 秘密被揭露给新角色
+   - vow_changes: 誓约/契约状态变化（立约/违约/履行/过期）
+   - deadline_changes: 截止任务状态变化（临近/触发/逾期）
+✅ changes 中每类变更如本章未发生，必须返回空数组 []，不要省略字段
+✅ changes 中的 character_name 必须与 character_states 中的角色名一致
+✅ foreshadow_actions 的 reference_foreshadow_id 优先从已埋入伏笔列表匹配，无法匹配时填 null
 
 【评分约束 - 严格执行】
 ✅ 严格按评分标准打分，支持小数（如6.5、7.2、8.3）

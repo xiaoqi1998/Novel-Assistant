@@ -1,13 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
 import { Button, Modal, Form, Input, Select, message, Row, Col, Empty, Tabs, Divider, Typography, Space, InputNumber, Checkbox, Skeleton, Card, theme, Tag } from 'antd';
 import { ThunderboltOutlined, UserOutlined, TeamOutlined, PlusOutlined, ExportOutlined, ImportOutlined, DownloadOutlined, SearchOutlined, LinkOutlined } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useStore } from '../store';
 import { useCharacterSync } from '../store/hooks';
 import { charactersPageGridConfig } from '../components/CardStyles';
 import { CharacterCard } from '../components/CharacterCard';
 import { SSELoadingOverlay } from '../components/SSELoadingOverlay';
 import { CharacterArcPanel } from '../components/CharacterArcPanel';
+import { CharacterTianmingPanel } from '../components/CharacterTianmingPanel';
 import type { Character, ApiError } from '../types';
 import { characterApi } from '../services/api';
 import { SSEPostClient } from '../utils/sseClient';
@@ -101,6 +102,22 @@ export default function Characters() {
   const { token } = theme.useToken();
   const { currentProject, characters } = useStore();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // 接收来自天命页面的跳转：自动打开指定名称角色的编辑 Modal
+  // 使用 ref 持有最新的 handleEditCharacter，避免将其放入依赖数组导致无限循环
+  const handleEditRef = useRef<(c: Character) => void>(() => {});
+  useEffect(() => {
+    const openName = (location.state as { openCharacterName?: string } | null)?.openCharacterName;
+    if (!openName) return;
+    // 在已加载的角色列表中查找
+    const target = characters.find(c => c.name === openName);
+    if (target) {
+      handleEditRef.current(target);
+      // 清除 state，避免刷新后重复打开
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location.state, characters, navigate]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isLoadingCharacters, setIsLoadingCharacters] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -353,6 +370,8 @@ export default function Characters() {
     });
     setIsEditModalOpen(true);
   };
+  // 保持 ref 指向最新的 handleEditCharacter，供跳转 useEffect 使用
+  handleEditRef.current = handleEditCharacter;
 
   const handleUpdateCharacter = async (values: CharacterFormValues) => {
     if (!editingCharacter) return;
@@ -1401,6 +1420,9 @@ export default function Characters() {
         </Form>
         {editingCharacter && !editingCharacter.is_organization && currentProject?.id && (
           <CharacterArcPanel characterId={editingCharacter.id} projectId={currentProject.id} />
+        )}
+        {editingCharacter && !editingCharacter.is_organization && currentProject?.id && (
+          <CharacterTianmingPanel characterId={editingCharacter.id} projectId={currentProject.id} />
         )}
       </Modal>
 

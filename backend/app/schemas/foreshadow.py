@@ -124,7 +124,12 @@ class ForeshadowResponse(ForeshadowBase):
     updated_at: Optional[datetime] = None
     planted_at: Optional[datetime] = None
     resolved_at: Optional[datetime] = None
-    
+
+    # 天命状态反查关联（由 GET /{foreshadow_id} 端点附带返回，其他端点为 None）
+    related_items: Optional[List[dict]] = None
+    related_secrets: Optional[List[dict]] = None
+    related_vows: Optional[List[dict]] = None
+
     class Config:
         from_attributes = True
 

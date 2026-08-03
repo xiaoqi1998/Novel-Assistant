@@ -60,6 +60,7 @@ try:
 except ImportError:
     memory_service = None
 from app.services.foreshadow_service import foreshadow_service
+from app.services.snapshot_service import snapshot_service
 from app.services.chapter_regenerator import ChapterRegenerator
 from app.services.newapi_errors import QuotaExhaustedError
 from app.logger import get_logger
@@ -1198,6 +1199,16 @@ async def analyze_chapter_background(
             await db_session.commit()
         await report_progress(80)
         
+        # 天命机制：从分析结果创建状态快照
+        try:
+            async with write_lock:
+                await snapshot_service.create_snapshot_from_analysis(
+                    db_session, project_id, chapter_id, chapter.chapter_number, analysis_result
+                )
+                await db_session.commit()
+        except Exception as snap_err:
+            logger.warning(f"⚠️ 快照创建失败（不影响分析结果）: {snap_err}")
+
         # 5. 清理旧的分析伏笔（重新分析时需要先清理）
         try:
             async with write_lock:
@@ -1908,7 +1919,16 @@ async def generate_chapter_content_stream(
                 
                 # 更新章节内容到数据库
                 old_word_count = current_chapter.word_count or 0
-                current_chapter.content = full_content
+                # 天命机制：分离正文与 CHANGES 声明
+                try:
+                    clean_content, _gen_snapshot = await snapshot_service.create_snapshot_from_generation(
+                        db_session, current_chapter.project_id, current_chapter.id,
+                        current_chapter.chapter_number, full_content
+                    )
+                except Exception as snap_err:
+                    logger.warning(f"⚠️ 快照创建失败，使用原始内容: {snap_err}")
+                    clean_content = full_content
+                current_chapter.content = clean_content
                 new_word_count = len(full_content)
                 current_chapter.word_count = new_word_count
                 current_chapter.status = "completed"
@@ -2442,7 +2462,16 @@ async def _run_chapter_generation_bg(
             return
 
         old_word_count = current_chapter.word_count or 0
-        current_chapter.content = full_content
+        # 天命机制：分离正文与 CHANGES 声明
+        try:
+            clean_content, _gen_snapshot = await snapshot_service.create_snapshot_from_generation(
+                db, current_chapter.project_id, current_chapter.id,
+                current_chapter.chapter_number, full_content
+            )
+        except Exception as snap_err:
+            logger.warning(f"⚠️ 快照创建失败，使用原始内容: {snap_err}")
+            clean_content = full_content
+        current_chapter.content = clean_content
         new_word_count = len(full_content)
         current_chapter.word_count = new_word_count
         current_chapter.status = "completed"
@@ -3000,7 +3029,16 @@ async def _run_chapter_generation_bg(
             return
 
         old_word_count = current_chapter.word_count or 0
-        current_chapter.content = full_content
+        # 天命机制：分离正文与 CHANGES 声明
+        try:
+            clean_content, _gen_snapshot = await snapshot_service.create_snapshot_from_generation(
+                db, current_chapter.project_id, current_chapter.id,
+                current_chapter.chapter_number, full_content
+            )
+        except Exception as snap_err:
+            logger.warning(f"⚠️ 快照创建失败，使用原始内容: {snap_err}")
+            clean_content = full_content
+        current_chapter.content = clean_content
         new_word_count = len(full_content)
         current_chapter.word_count = new_word_count
         current_chapter.status = "completed"
@@ -4622,7 +4660,16 @@ async def generate_single_chapter_for_batch(
     # 更新章节内容到数据库（使用锁保护）
     async with write_lock:
         old_word_count = chapter.word_count or 0
-        chapter.content = full_content
+        # 天命机制：分离正文与 CHANGES 声明
+        try:
+            clean_content, _gen_snapshot = await snapshot_service.create_snapshot_from_generation(
+                db_session, chapter.project_id, chapter.id,
+                chapter.chapter_number, full_content
+            )
+        except Exception as snap_err:
+            logger.warning(f"⚠️ 快照创建失败，使用原始内容: {snap_err}")
+            clean_content = full_content
+        chapter.content = clean_content
         new_word_count = len(full_content)
         chapter.word_count = new_word_count
         chapter.status = "completed"

@@ -23,7 +23,10 @@ from app.models import (
     StoryMemory, PlotAnalysis, AnalysisTask, BatchGenerationTask,
     RegenerationTask, Career, CharacterCareer, User, MCPPlugin, PromptTemplate,
     BackgroundTask, Announcement, UserSubscription,
-    PromptWorkshopItem, PromptSubmission, PromptWorkshopLike, Foreshadow
+    PromptWorkshopItem, PromptSubmission, PromptWorkshopLike, Foreshadow,
+    CharacterArc, ShortStory, UserSkill,
+    # 天命机制：状态追踪四维 + 章节快照
+    Item, Secret, Vow, CharacterLocation, ChapterSnapshot,
 )
 
 # 引擎缓存：每个用户一个引擎

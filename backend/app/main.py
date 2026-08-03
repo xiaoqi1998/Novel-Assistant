@@ -174,7 +174,8 @@ from app.api import (
     mcp_plugins, admin, inspiration, prompt_templates,
     careers, foreshadows, prompt_workshop, book_import,
     project_covers, tasks, skills, announcements, full_review, newapi,
-    polish, character_arcs, short_stories, short_inspiration
+    polish, character_arcs, short_stories, short_inspiration,
+    tianming
 )
 
 app.include_router(auth.router, prefix="/api")
@@ -208,6 +209,7 @@ app.include_router(tasks.router, prefix="/api")  # 后台任务API
 app.include_router(announcements.router, prefix="/api")  # 公告API
 app.include_router(newapi.router, prefix="/api")  # New API 额度中心
 app.include_router(full_review.router)  # 全文审查API（已包含/api前缀）
+app.include_router(tianming.router, prefix="/api")  # 天命状态管理API
 
 # 静态资源目录：PyInstaller 打包后位于 _MEIPASS，开发模式位于 backend/
 if getattr(sys, 'frozen', False):

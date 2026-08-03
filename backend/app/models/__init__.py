@@ -24,6 +24,11 @@ from app.models.announcement import Announcement
 from app.models.user_skill import UserSkill
 from app.models.short_story import ShortStory
 from app.models.character_arc import CharacterArc
+from app.models.item import Item
+from app.models.secret import Secret
+from app.models.vow import Vow
+from app.models.character_location import CharacterLocation
+from app.models.chapter_snapshot import ChapterSnapshot
 
 __all__ = [
     "Project",
@@ -58,5 +63,11 @@ __all__ = [
     "BackgroundTask",
     "Announcement",
     "UserSkill",
-    "ShortStory"
+    "ShortStory",
+    # 天命机制：状态追踪四维 + 章节快照
+    "Item",
+    "Secret",
+    "Vow",
+    "CharacterLocation",
+    "ChapterSnapshot",
 ]

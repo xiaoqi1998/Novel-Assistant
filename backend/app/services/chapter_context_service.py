@@ -16,6 +16,7 @@ from app.models.memory import StoryMemory, PlotAnalysis
 from app.models.foreshadow import Foreshadow
 from app.models.relationship import CharacterRelationship, Organization, OrganizationMember
 from app.logger import get_logger
+from app.services.snapshot_service import snapshot_service
 
 logger = get_logger(__name__)
 
@@ -748,6 +749,20 @@ class OneToManyContextBuilder:
             )
             if context.quality_feedback:
                 logger.info(f"  ✅ 质量反馈: {len(context.quality_feedback)}字符")
+
+        # === P1-天命机制：注入最新状态快照 ===
+        # 快照包含截至上一章的完整状态（角色/伏笔/物品/秘密/誓约等），追加到质量反馈字段以保证渲染到P1层
+        try:
+            latest_snapshot = await snapshot_service.get_latest_snapshot(db, project.id)
+            if latest_snapshot:
+                snapshot_text = snapshot_service.format_snapshot_for_context(latest_snapshot)
+                if context.quality_feedback:
+                    context.quality_feedback = context.quality_feedback + "\n\n" + snapshot_text
+                else:
+                    context.quality_feedback = snapshot_text
+                logger.info(f"  ✅ 状态快照: {len(snapshot_text)}字符（截至第{latest_snapshot.chapter_number}章）")
+        except Exception as e:
+            logger.warning(f"⚠️ 快照读取失败: {e}")
         
         # === P1-重要信息 ===
         # 角色信息（完整版：含年龄、外貌、背景、关系、组织、职业）+ 独立职业详情
@@ -1747,6 +1762,20 @@ class OneToOneContextBuilder:
             )
             if context.quality_feedback:
                 logger.info(f"  ✅ P1-质量反馈: {len(context.quality_feedback)}字符")
+
+        # === P1-天命机制：注入最新状态快照 ===
+        # 快照包含截至上一章的完整状态（角色/伏笔/物品/秘密/誓约等），追加到质量反馈字段以保证渲染到P1层
+        try:
+            latest_snapshot = await snapshot_service.get_latest_snapshot(db, project.id)
+            if latest_snapshot:
+                snapshot_text = snapshot_service.format_snapshot_for_context(latest_snapshot)
+                if context.quality_feedback:
+                    context.quality_feedback = context.quality_feedback + "\n\n" + snapshot_text
+                else:
+                    context.quality_feedback = snapshot_text
+                logger.info(f"  ✅ P1-状态快照: {len(snapshot_text)}字符（截至第{latest_snapshot.chapter_number}章）")
+        except Exception as e:
+            logger.warning(f"⚠️ 快照读取失败: {e}")
 
         # 2. 根据structure中的characters获取角色信息（含职业）
         character_names = []

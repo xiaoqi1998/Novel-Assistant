@@ -1625,3 +1625,91 @@ export const foreshadowApi = {
       data
     ),
 };
+
+// ==================== 天命状态管理 API ====================
+export const tianmingApi = {
+  // ---- 物品管理 ----
+  listItems: (projectId: string) =>
+    api.get<unknown, import('../types').TianmingItem[]>(
+      `/tianming/projects/${projectId}/items`
+    ),
+
+  createItem: (projectId: string, data: import('../types').TianmingItemCreate) =>
+    api.post<unknown, import('../types').TianmingItem>(
+      `/tianming/projects/${projectId}/items`,
+      data
+    ),
+
+  updateItem: (itemId: string, data: import('../types').TianmingItemUpdate) =>
+    api.put<unknown, import('../types').TianmingItem>(`/tianming/items/${itemId}`, data),
+
+  deleteItem: (itemId: string) =>
+    api.delete<unknown, { message: string }>(`/tianming/items/${itemId}`),
+
+  // ---- 秘密管理 ----
+  listSecrets: (projectId: string) =>
+    api.get<unknown, import('../types').TianmingSecret[]>(
+      `/tianming/projects/${projectId}/secrets`
+    ),
+
+  createSecret: (projectId: string, data: import('../types').TianmingSecretCreate) =>
+    api.post<unknown, import('../types').TianmingSecret>(
+      `/tianming/projects/${projectId}/secrets`,
+      data
+    ),
+
+  updateSecret: (secretId: string, data: import('../types').TianmingSecretUpdate) =>
+    api.put<unknown, import('../types').TianmingSecret>(`/tianming/secrets/${secretId}`, data),
+
+  deleteSecret: (secretId: string) =>
+    api.delete<unknown, { message: string }>(`/tianming/secrets/${secretId}`),
+
+  // ---- 誓约管理 ----
+  listVows: (projectId: string) =>
+    api.get<unknown, import('../types').TianmingVow[]>(
+      `/tianming/projects/${projectId}/vows`
+    ),
+
+  createVow: (projectId: string, data: import('../types').TianmingVowCreate) =>
+    api.post<unknown, import('../types').TianmingVow>(
+      `/tianming/projects/${projectId}/vows`,
+      data
+    ),
+
+  updateVow: (vowId: string, data: import('../types').TianmingVowUpdate) =>
+    api.put<unknown, import('../types').TianmingVow>(`/tianming/vows/${vowId}`, data),
+
+  deleteVow: (vowId: string) =>
+    api.delete<unknown, { message: string }>(`/tianming/vows/${vowId}`),
+
+  // ---- 角色位置 ----
+  listLocations: (projectId: string) =>
+    api.get<unknown, import('../types').TianmingCharacterLocation[]>(
+      `/tianming/projects/${projectId}/locations`
+    ),
+
+  getLocationHistory: (projectId: string, characterId: string) =>
+    api.get<unknown, import('../types').TianmingCharacterLocation[]>(
+      `/tianming/projects/${projectId}/locations/history/${characterId}`
+    ),
+
+  // ---- 章节快照 ----
+  getLatestSnapshot: (projectId: string) =>
+    api.get<unknown, import('../types').TianmingLatestSnapshotResponse>(
+      `/tianming/projects/${projectId}/snapshots/latest`
+    ),
+
+  listSnapshots: (projectId: string) =>
+    api.get<unknown, import('../types').TianmingSnapshotListItem[]>(
+      `/tianming/projects/${projectId}/snapshots`
+    ),
+
+  getSnapshotDetail: (snapshotId: string) =>
+    api.get<unknown, import('../types').TianmingSnapshot>(`/tianming/snapshots/${snapshotId}`),
+
+  // ---- 角色维度反查 ----
+  getCharacterState: (projectId: string, characterId: string) =>
+    api.get<unknown, import('../types').TianmingCharacterStateResponse>(
+      `/tianming/projects/${projectId}/characters/${characterId}/state`
+    ),
+};

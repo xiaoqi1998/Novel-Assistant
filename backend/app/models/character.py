@@ -39,7 +39,11 @@ class Character(Base):
     # 心理状态追踪（由章节分析自动更新）
     current_state = Column(Text, comment="角色当前心理状态（由分析自动更新）")
     state_updated_chapter = Column(Integer, comment="心理状态最后更新的章节号")
-    
+
+    # 天命位置冗余字段（由章节生成/分析的 CHANGES.character_movements 自动同步，
+    # 与 CharacterLocation.is_current=True 的记录保持一致，便于角色卡片直接展示）
+    current_location = Column(String(200), comment="角色当前位置（由天命机制自动同步）")
+
     # 职业相关字段（冗余字段，用于提升查询性能）
     main_career_id = Column(String(36), ForeignKey("careers.id", ondelete="SET NULL"), comment="主职业ID")
     main_career_stage = Column(Integer, comment="主职业当前阶段")

@@ -1,11 +1,15 @@
 """伏笔管理API路由"""
 from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from typing import Optional, List
 
 from app.database import get_db
 from app.api.common import verify_project_access
 from app.services.foreshadow_service import foreshadow_service
+from app.models.item import Item
+from app.models.secret import Secret
+from app.models.vow import Vow
 from app.schemas.foreshadow import (
     ForeshadowCreate,
     ForeshadowUpdate,
@@ -163,19 +167,39 @@ async def get_foreshadow(
     request: Request,
     db: AsyncSession = Depends(get_db)
 ):
-    """获取单个伏笔详情"""
+    """获取单个伏笔详情
+
+    响应中额外附带 related_items / related_secrets / related_vows 字段，
+    反查关联该伏笔的天命状态条目（物品/秘密/誓约），用于前端联动展示。
+    """
     try:
         foreshadow = await foreshadow_service.get_foreshadow(db, foreshadow_id)
-        
+
         if not foreshadow:
             raise HTTPException(status_code=404, detail="伏笔不存在")
-        
+
         # 验证权限
         user_id = getattr(request.state, 'user_id', None)
         await verify_project_access(foreshadow.project_id, user_id, db)
-        
-        return foreshadow.to_dict()
-        
+
+        result = foreshadow.to_dict()
+
+        # 反查关联的天命状态条目
+        items_result = await db.execute(
+            select(Item).where(Item.related_foreshadow_id == foreshadow_id)
+        )
+        secrets_result = await db.execute(
+            select(Secret).where(Secret.related_foreshadow_id == foreshadow_id)
+        )
+        vows_result = await db.execute(
+            select(Vow).where(Vow.related_foreshadow_id == foreshadow_id)
+        )
+        result["related_items"] = [i.to_dict() for i in items_result.scalars().all()]
+        result["related_secrets"] = [s.to_dict() for s in secrets_result.scalars().all()]
+        result["related_vows"] = [v.to_dict() for v in vows_result.scalars().all()]
+
+        return result
+
     except HTTPException:
         raise
     except Exception as e:
