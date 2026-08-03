@@ -615,15 +615,9 @@ export default function SettingsPage() {
 
   // 预设编辑窗口：获取模型列表
   const handleFetchPresetModels = async (silent: boolean = false) => {
-    // 优先用预设表单自身的凭据；为空时回退到主「文本模型配置」已保存的凭据，
-    // 这样「默认使用 API 设置」的预设（未单独填 key）也能直接拉取可用模型列表
-    const presetApiKey = presetForm.getFieldValue('api_key');
-    const presetApiBaseUrl = presetForm.getFieldValue('api_base_url');
-    const presetProvider = presetForm.getFieldValue('api_provider');
-
-    const apiKey = presetApiKey || form.getFieldValue('api_key') || '';
-    const apiBaseUrl = presetApiBaseUrl || form.getFieldValue('api_base_url') || '';
-    const provider = presetProvider || form.getFieldValue('api_provider') || 'openai';
+    const apiKey = presetForm.getFieldValue('api_key');
+    const apiBaseUrl = presetForm.getFieldValue('api_base_url');
+    const provider = presetForm.getFieldValue('api_provider');
 
     const isBuiltInKeyProvider = builtInKeyProviders.includes(provider);
 
