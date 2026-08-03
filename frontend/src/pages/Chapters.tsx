@@ -2383,7 +2383,8 @@ export default function Chapters() {
       <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
         {isLoadingChapters && chapters.length === 0 ? (
           <List
-            dataSource={Array.from({ length: 6 })}
+            dataSource={Array.from({ length: 6 }, (_, idx) => idx)}
+            rowKey={(item) => `chapter-skeleton-${item}`}
             renderItem={(_, idx) => (
               <List.Item
                 key={`chapter-skeleton-${idx}`}
