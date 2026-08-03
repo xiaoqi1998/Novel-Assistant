@@ -13,6 +13,8 @@ services:
       - ./logs:/app/logs
       - ./storage/generated_covers:/app/storage/generated_covers
       - ./.env:/app/.env:ro
+      # Embedding 模型目录（bge-small-zh-v1.5，持久化避免重建丢失）
+      - ./embedding:/app/embedding
       # 后端源码挂载：修改后用 hot-deploy.sh backend 秒级更新，无需重构建
       - ./backend/app:/app/app:ro
       - ./backend/alembic:/app/alembic:ro

@@ -110,7 +110,7 @@ class MemoryService:
             # 优先使用本地直接下载的模型目录（避免 snapshot 软链接问题）
             local_model_dir = os.path.join(
                 os.environ.get('SENTENCE_TRANSFORMERS_HOME', 'embedding'),
-                'paraphrase-multilingual-MiniLM-L12-v2'
+                'bge-small-zh-v1.5'
             )
             if os.path.exists(local_model_dir) and os.path.exists(os.path.join(local_model_dir, 'config_sentence_transformers.json')):
                 logger.info(f"✅ 使用本地模型目录: {os.path.abspath(local_model_dir)}")
@@ -123,7 +123,7 @@ class MemoryService:
                 self._initialized = True
                 logger.info("✅ MemoryService初始化成功")
                 logger.info(f"  - ChromaDB目录: {chroma_dir}")
-                logger.info(f"  - Embedding模型: paraphrase-multilingual-MiniLM-L12-v2 (本地)")
+                logger.info(f"  - Embedding模型: bge-small-zh-v1.5 (本地)")
                 return
 
             # 使用环境变量中配置的模型目录
@@ -149,7 +149,7 @@ class MemoryService:
                     logger.info(f"📁 模型目录内容 ({len(items)} 项): {items}")
                     
                     # 检查是否有预期的模型文件夹
-                    expected_model_dir = os.path.join(abs_cache_dir, 'models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2')
+                    expected_model_dir = os.path.join(abs_cache_dir, 'models--BAAI--bge-small-zh-v1.5')
                     logger.info(f"🔍 检查预期路径: {expected_model_dir}")
                     
                     if os.path.exists(expected_model_dir):
@@ -173,13 +173,13 @@ class MemoryService:
                 logger.warning(f"⚠️ 模型目录不存在: {abs_cache_dir}")
             
             try:
-                logger.info("🔄 尝试加载主模型: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+                logger.info("🔄 尝试加载主模型: BAAI/bge-small-zh-v1.5")
                 
                 # 使用绝对路径检查本地模型
                 abs_cache_dir = os.path.abspath(model_cache_dir)
                 local_model_path = os.path.join(
                     abs_cache_dir,
-                    'models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2'
+                    'models--BAAI--bge-small-zh-v1.5'
                 )
                 
                 logger.info(f"🔍 检查本地模型路径: {local_model_path}")
@@ -202,7 +202,7 @@ class MemoryService:
                     logger.info(f"✅ 检测到完整本地模型，使用离线模式加载")
                     try:
                         self.embedding_model = SentenceTransformer(
-                            'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
+                            'BAAI/bge-small-zh-v1.5',
                             cache_folder=abs_cache_dir,
                             device='cpu',
                             trust_remote_code=True,
@@ -217,7 +217,7 @@ class MemoryService:
                     logger.info("📥 本地模型不完整或不存在，将联网下载...")
                     logger.info(f"   下载后将保存到: {abs_cache_dir}")
                     self.embedding_model = SentenceTransformer(
-                        'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
+                        'BAAI/bge-small-zh-v1.5',
                         cache_folder=abs_cache_dir,
                         device='cpu',
                         trust_remote_code=True,
@@ -247,13 +247,13 @@ class MemoryService:
                     logger.error("💡 模型首次使用需要联网下载（约420MB）")
                     logger.error("   或手动下载模型文件到 embedding 目录")
                     logger.error(f"💡 期望的模型目录结构:")
-                    logger.error(f"   {os.path.abspath(model_cache_dir)}/models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2/")
+                    logger.error(f"   {os.path.abspath(model_cache_dir)}/models--BAAI--bge-small-zh-v1.5/")
                     raise RuntimeError("无法加载任何Embedding模型")
             
             self._initialized = True
             logger.info("✅ MemoryService初始化成功")
             logger.info(f"  - ChromaDB目录: {chroma_dir}")
-            logger.info(f"  - Embedding模型: paraphrase-multilingual-MiniLM-L12-v2")
+            logger.info(f"  - Embedding模型: bge-small-zh-v1.5")
             
         except Exception as e:
             logger.error(f"❌ MemoryService初始化失败: {str(e)}")

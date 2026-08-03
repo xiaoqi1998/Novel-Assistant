@@ -50,7 +50,7 @@ class StoryMemory(Base):
     
     # 向量数据库关联
     vector_id = Column(String(100), unique=True, comment="向量数据库中的唯一ID")
-    embedding_model = Column(String(100), default="paraphrase-multilingual-MiniLM-L12-v2", comment="使用的embedding模型")
+    embedding_model = Column(String(100), default="bge-small-zh-v1.5", comment="使用的embedding模型")
     
     created_at = Column(DateTime, server_default=func.now(), comment="创建时间")
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), comment="更新时间")

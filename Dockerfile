@@ -83,8 +83,8 @@ RUN python -c "\
 from sentence_transformers import SentenceTransformer; \
 import os; \
 os.environ['SENTENCE_TRANSFORMERS_HOME'] = '/app/embedding'; \
-print('Downloading sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2...'); \
-model = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'); \
+print('Downloading BAAI/bge-small-zh-v1.5...'); \
+model = SentenceTransformer('BAAI/bge-small-zh-v1.5'); \
 print('Model downloaded successfully!'); \
 "
 
