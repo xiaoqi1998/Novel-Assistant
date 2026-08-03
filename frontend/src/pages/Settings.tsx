@@ -56,8 +56,6 @@ export default function SettingsPage() {
   const [presets, setPresets] = useState<APIKeyPreset[]>([]);
   const [presetsLoading, setPresetsLoading] = useState(false);
   const [activePresetId, setActivePresetId] = useState<string | undefined>();
-  const [chapterAnalysisPresetId, setChapterAnalysisPresetId] = useState<string | undefined>();
-  const [savingChapterAnalysisPreset, setSavingChapterAnalysisPreset] = useState(false);
   const [actionPresetIds, setActionPresetIds] = useState<Record<string, string | null>>({});
   const [savingActionUsage, setSavingActionUsage] = useState<string | null>(null);
   const [editingPreset, setEditingPreset] = useState<APIKeyPreset | null>(null);
@@ -571,7 +569,6 @@ export default function SettingsPage() {
       const response = await settingsApi.getPresets();
       setPresets(response.presets);
       setActivePresetId(response.active_preset_id);
-      setChapterAnalysisPresetId(response.chapter_analysis_preset_id);
       setActionPresetIds(response.action_preset_ids || {});
     } catch (error) {
       message.error('加载预设失败');
@@ -721,23 +718,6 @@ export default function SettingsPage() {
     }
   };
 
-  const handleChapterAnalysisPresetChange = async (presetId?: string) => {
-    setSavingChapterAnalysisPreset(true);
-    try {
-      const normalizedPresetId = presetId || undefined;
-      await settingsApi.setChapterAnalysisPresetSelection(normalizedPresetId);
-      setChapterAnalysisPresetId(normalizedPresetId);
-      message.success(normalizedPresetId ? '已设置章节内容分析专用API配置' : '章节内容分析已恢复使用默认API配置');
-      loadPresets();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (error: any) {
-      message.error(error.response?.data?.detail || '设置章节内容分析API配置失败');
-      console.error(error);
-    } finally {
-      setSavingChapterAnalysisPreset(false);
-    }
-  };
-
   /** 通用：为指定动作设置预设（presetId 为空则回退默认） */
   const handleActionPresetChange = async (usage: string, presetId?: string) => {
     setSavingActionUsage(usage);
@@ -745,9 +725,6 @@ export default function SettingsPage() {
       const normalizedPresetId = presetId || undefined;
       await settingsApi.setActionPreset(usage, normalizedPresetId);
       setActionPresetIds((prev) => ({ ...prev, [usage]: normalizedPresetId || null }));
-      if (usage === 'chapter_analysis') {
-        setChapterAnalysisPresetId(normalizedPresetId);
-      }
       message.success(normalizedPresetId ? `已为该动作设置专用预设` : '已恢复使用默认API配置');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (error: any) {
