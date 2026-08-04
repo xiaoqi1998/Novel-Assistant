@@ -791,6 +791,20 @@ export const chapterApi = {
 
   deleteChapter: (id: string) => api.delete(`/chapters/${id}`),
 
+  // 章节内容历史版本（内容被覆盖前自动快照，支持回滚）
+  getChapterVersions: (chapterId: string) =>
+    api.get<unknown, {
+      items: Array<{ id: string; created_at: string | null; word_count: number; preview: string }>;
+      total: number;
+    }>(`/chapters/${chapterId}/versions`),
+
+  restoreChapterVersion: (chapterId: string, versionId: string) =>
+    api.post<unknown, {
+      message: string;
+      chapter: { id: string; content: string; word_count: number; status: string; updated_at: string | null };
+    }>(`/chapters/${chapterId}/versions/${versionId}/restore`),
+
+
   checkCanGenerate: (chapterId: string) =>
     api.get<unknown, import('../types').ChapterCanGenerateResponse>(`/chapters/${chapterId}/can-generate`),
 

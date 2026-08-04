@@ -93,6 +93,45 @@ def _build_lightweight_chapter_summary(content: str, max_length: int = 300) -> s
     return normalized[:max_length]
 
 
+# ==================== 章节内容版本快照（手动覆盖前自动备份，支持回滚） ====================
+
+# 手动编辑快照的标识（复用 GenerationHistory 表，model 字段作为类型标记）
+MANUAL_SNAPSHOT_MODEL = "manual_edit_snapshot"
+# 每个章节最多保留的手动快照数量（超出后淘汰最早的，避免无限增长）
+MAX_MANUAL_SNAPSHOTS_PER_CHAPTER = 50
+
+
+async def _create_manual_version_snapshot(db: AsyncSession, chapter: Chapter, content: str) -> None:
+    """为章节内容创建手动版本快照，并淘汰超出上限的旧快照。"""
+    snapshot = GenerationHistory(
+        project_id=chapter.project_id,
+        chapter_id=chapter.id,
+        prompt="章节内容被覆盖前的自动备份",
+        generated_content=content,
+        model=MANUAL_SNAPSHOT_MODEL,
+        tokens_used=0,
+        generation_time=0.0,
+    )
+    db.add(snapshot)
+
+    # 淘汰超出上限的旧快照
+    result = await db.execute(
+        select(GenerationHistory.id)
+        .where(
+            GenerationHistory.chapter_id == chapter.id,
+            GenerationHistory.model == MANUAL_SNAPSHOT_MODEL,
+        )
+        .order_by(GenerationHistory.created_at.desc())
+        .offset(MAX_MANUAL_SNAPSHOTS_PER_CHAPTER)
+    )
+    obsolete_ids = [row[0] for row in result.fetchall()]
+    if obsolete_ids:
+        from sqlalchemy import delete as sql_delete
+        await db.execute(
+            sql_delete(GenerationHistory).where(GenerationHistory.id.in_(obsolete_ids))
+        )
+
+
 async def get_db_write_lock(user_id: str) -> Lock:
     """获取或创建用户的数据库写入锁"""
     if user_id not in db_write_locks:
@@ -350,6 +389,17 @@ async def update_chapter(
     
     # 更新字段
     update_data = chapter_update.model_dump(exclude_unset=True)
+
+    # P0修复：内容被覆盖前自动保存可回滚的版本快照（旧内容非空且发生变更时才快照）
+    if "content" in update_data:
+        new_content_value = update_data.get("content") or ""
+        old_content_value = chapter.content or ""
+        if old_content_value.strip() and old_content_value != new_content_value:
+            try:
+                await _create_manual_version_snapshot(db, chapter, old_content_value)
+            except Exception as snapshot_err:
+                logger.warning(f"⚠️ 保存章节版本快照失败（不阻断保存）: {snapshot_err}")
+
     for field, value in update_data.items():
         setattr(chapter, field, value)
     
@@ -514,6 +564,111 @@ async def delete_chapter(
     await db.commit()
     
     return {"message": "章节删除成功"}
+
+
+@router.get("/{chapter_id}/versions", summary="获取章节内容的历史版本列表")
+async def list_chapter_versions(
+    chapter_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """列出章节内容覆盖前自动保存的历史版本（新到旧）"""
+    result = await db.execute(
+        select(Chapter).where(Chapter.id == chapter_id)
+    )
+    chapter = result.scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+
+    user_id = getattr(request.state, 'user_id', None)
+    await verify_project_access(chapter.project_id, user_id, db)
+
+    history_result = await db.execute(
+        select(GenerationHistory)
+        .where(
+            GenerationHistory.chapter_id == chapter_id,
+            GenerationHistory.model == MANUAL_SNAPSHOT_MODEL,
+        )
+        .order_by(GenerationHistory.created_at.desc())
+        .limit(MAX_MANUAL_SNAPSHOTS_PER_CHAPTER)
+    )
+    versions = history_result.scalars().all()
+
+    items = []
+    for v in versions:
+        content = v.generated_content or ""
+        items.append({
+            "id": v.id,
+            "created_at": v.created_at.isoformat() if v.created_at else None,
+            "word_count": len(content),
+            "preview": content[:80],
+        })
+
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/{chapter_id}/versions/{version_id}/restore", summary="回滚章节内容到指定历史版本")
+async def restore_chapter_version(
+    chapter_id: str,
+    version_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """将章节内容恢复为指定历史版本；回滚前会先备份当前内容，因此回滚本身也可撤销。"""
+    result = await db.execute(
+        select(Chapter).where(Chapter.id == chapter_id)
+    )
+    chapter = result.scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+
+    user_id = getattr(request.state, 'user_id', None)
+    await verify_project_access(chapter.project_id, user_id, db)
+
+    version_result = await db.execute(
+        select(GenerationHistory).where(
+            GenerationHistory.id == version_id,
+            GenerationHistory.chapter_id == chapter_id,
+            GenerationHistory.model == MANUAL_SNAPSHOT_MODEL,
+        )
+    )
+    version = version_result.scalar_one_or_none()
+    if not version:
+        raise HTTPException(status_code=404, detail="历史版本不存在")
+
+    # 回滚前先备份当前内容，保证回滚操作本身可撤销
+    if (chapter.content or "").strip():
+        await _create_manual_version_snapshot(db, chapter, chapter.content)
+
+    restored_content = version.generated_content or ""
+    old_word_count = chapter.word_count or 0
+    chapter.content = restored_content
+    chapter.word_count = len(restored_content)
+
+    # 同步项目总字数
+    project_result = await db.execute(
+        select(Project).where(Project.id == chapter.project_id)
+    )
+    project = project_result.scalar_one_or_none()
+    if project:
+        project.current_words = max(
+            0, (project.current_words or 0) - old_word_count + chapter.word_count
+        )
+
+    await db.commit()
+    await db.refresh(chapter)
+
+    logger.info(f"⏪ 章节 {chapter_id[:8]} 已回滚到历史版本 {version_id[:8]}")
+    return {
+        "message": "章节内容已回滚",
+        "chapter": {
+            "id": chapter.id,
+            "content": chapter.content,
+            "word_count": chapter.word_count,
+            "status": chapter.status,
+            "updated_at": chapter.updated_at,
+        },
+    }
 
 
 async def check_prerequisites(db: AsyncSession, chapter: Chapter) -> tuple[bool, str, list[Chapter]]:

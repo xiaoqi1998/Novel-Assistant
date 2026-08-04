@@ -22,7 +22,12 @@ export interface SSEClientOptions {
   onComplete?: () => void;
   onConnectionError?: (error: Event) => void;
   onStage?: (stage: string, message: string, totalSegments: number, segmentIndex?: number) => void;
+  /** 非致命警告（如连接异常结束但已收到部分内容） */
+  onWarning?: (message: string) => void;
 }
+
+// P0：流式响应空闲超时（毫秒）——超过此时长未收到任何消息（含心跳）则判定连接异常
+const STREAM_IDLE_TIMEOUT_MS = 90000;
 
 export class SSEClient {
   private eventSource: EventSource | null = null;
@@ -144,6 +149,10 @@ export class SSEPostClient {
   private abortController: AbortController | null = null;
   private accumulatedContent: string = '';
   private resultData: any = null;
+  // P0：空闲超时定时器与完成标记
+  private idleTimer: ReturnType<typeof setTimeout> | null = null;
+  private receivedDone: boolean = false;
+  private settled: boolean = false;
 
   constructor(url: string, data: any, options: SSEClientOptions = {}) {
     this.url = url;
@@ -172,7 +181,22 @@ export class SSEPostClient {
         });
 
         if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
+          // P0：尝试从错误响应体中提取后端可读错误信息，而非只显示状态码
+          let detail = '';
+          try {
+            const errText = await response.text();
+            const parsed = JSON.parse(errText);
+            if (typeof parsed?.detail === 'string') {
+              detail = parsed.detail;
+            } else if (parsed?.detail && typeof parsed.detail === 'object' && typeof parsed.detail.message === 'string') {
+              detail = parsed.detail.message;
+            } else if (typeof parsed?.message === 'string') {
+              detail = parsed.message;
+            }
+          } catch {
+            // 非 JSON 错误体，忽略
+          }
+          throw new Error(detail || `请求失败（HTTP ${response.status}）`);
         }
 
         const reader = response.body?.getReader();
@@ -182,6 +206,9 @@ export class SSEPostClient {
           throw new Error('无法获取响应流');
         }
 
+        // P0：启动空闲超时保护（收到任何数据都会重置）
+        this.resetIdleTimer(reject);
+
         let buffer = '';
         while (true) {
           const { done, value } = await reader.read();
@@ -189,6 +216,9 @@ export class SSEPostClient {
           if (done) {
             break;
           }
+
+          // 收到数据，重置空闲超时
+          this.resetIdleTimer(reject);
 
           buffer += decoder.decode(value, { stream: true });
 
@@ -201,32 +231,91 @@ export class SSEPostClient {
             }
 
             try {
-              // 解析数据
-              const dataMatch = line.match(/^data: (.+)$/m);
-              if (dataMatch) {
-                const data = JSON.parse(dataMatch[1]);
-
-                // 标准消息处理
-                const message: SSEMessage = data;
-                await this.handleMessage(message, resolve, reject);
+              // P0：支持 SSE 多行 data 字段拼接（规范允许单条消息多个 data: 行）
+              const dataLines = line
+                .split('\n')
+                .filter(l => l.startsWith('data:'))
+                .map(l => l.slice(5).trim());
+              if (dataLines.length === 0) continue;
+              let data: any;
+              try {
+                data = JSON.parse(dataLines.join('\n'));
+              } catch {
+                data = JSON.parse(dataLines[0]);
               }
+
+              // 标准消息处理
+              const message: SSEMessage = data;
+              await this.handleMessage(message, resolve, reject);
             } catch (error) {
               console.error('解析SSE消息失败:', error, line);
             }
           }
         }
 
+        // P0：流结束但未收到 done 信号——不再静默挂起，按已收到的内容兜底处理
+        this.clearIdleTimer();
+        if (!this.receivedDone && !this.settled) {
+          this.settled = true;
+          if (this.resultData) {
+            if (this.options.onWarning) {
+              this.options.onWarning('连接已结束但未收到完成信号，已返回收到的结果');
+            }
+            resolve(this.resultData);
+          } else if (this.accumulatedContent) {
+            if (this.options.onWarning) {
+              this.options.onWarning('连接已结束但未收到完成信号，已返回收到的内容，建议检查章节是否完整');
+            }
+            resolve({ content: this.accumulatedContent });
+          } else {
+            const msg = '连接已结束但未收到任何内容，请重试';
+            if (this.options.onError) {
+              this.options.onError(msg);
+            }
+            reject(new Error(msg));
+          }
+        }
+
       } catch (error: any) {
+        this.clearIdleTimer();
         if (error.name === 'AbortError') {
           console.log('请求已取消');
         } else {
           console.error('SSE POST请求失败:', error);
-          if (this.options.onError) {
-            this.options.onError(error.message || '请求失败');
+          if (!this.settled) {
+            this.settled = true;
+            if (this.options.onError) {
+              this.options.onError(error.message || '请求失败');
+            }
+            reject(error);
           }
-          reject(error);
         }
       }
+  }
+
+  /** P0：重置空闲超时定时器；超时后主动中断并报错，避免永久转圈 */
+  private resetIdleTimer(reject: (reason?: any) => void) {
+    this.clearIdleTimer();
+    this.idleTimer = setTimeout(() => {
+      if (this.receivedDone || this.settled) return;
+      this.settled = true;
+      const msg = `AI 响应超时（${STREAM_IDLE_TIMEOUT_MS / 1000} 秒未收到数据），连接已中断，请重试`;
+      console.error(msg);
+      if (this.options.onError) {
+        this.options.onError(msg);
+      }
+      if (this.abortController) {
+        this.abortController.abort();
+      }
+      reject(new Error(msg));
+    }, STREAM_IDLE_TIMEOUT_MS);
+  }
+
+  private clearIdleTimer() {
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
   }
 
   private async handleMessage(message: SSEMessage, resolve: (value: any) => void, reject: (reason?: any) => void) {
@@ -273,25 +362,34 @@ export class SSEPostClient {
         if (this.options.onError) {
           this.options.onError(message.error || '未知错误', message.code);
         }
-        reject(new Error(message.error || '未知错误'));
+        if (!this.settled) {
+          this.settled = true;
+          reject(new Error(message.error || '未知错误'));
+        }
         break;
 
       case 'done':
+        this.receivedDone = true;
+        this.clearIdleTimer();
         if (this.options.onComplete) {
           this.options.onComplete();
         }
-        if (this.resultData) {
-          resolve(this.resultData);
-        } else if (this.accumulatedContent) {
-          resolve({ content: this.accumulatedContent });
-        } else {
-          resolve(true);
+        if (!this.settled) {
+          this.settled = true;
+          if (this.resultData) {
+            resolve(this.resultData);
+          } else if (this.accumulatedContent) {
+            resolve({ content: this.accumulatedContent });
+          } else {
+            resolve(true);
+          }
         }
         break;
     }
   }
 
   abort() {
+    this.clearIdleTimer();
     if (this.abortController) {
       this.abortController.abort();
     }
