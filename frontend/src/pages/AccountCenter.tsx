@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Button, Card, Col, Input, List, Modal, Radio, Row, Space, Statistic, Tag, Tooltip, message } from 'antd';
+import { Alert, Button, Card, Col, Input, List, Modal, Row, Space, Statistic, Tag, Tooltip, message } from 'antd';
 import {
   WalletOutlined,
   ThunderboltOutlined,
@@ -9,6 +9,7 @@ import {
   RocketOutlined,
   QuestionCircleOutlined,
   GiftOutlined,
+  CopyOutlined,
 } from '@ant-design/icons';
 import { newApi } from '../services/api';
 import useIsMobile from '../utils/useIsMobile';
@@ -67,6 +68,9 @@ interface HistoryItem {
 // amount_options 中的数值直接作为美元额度显示
 const QUOTA_PER_UNIT = 500000;
 
+// 收款渠道暂时不可用，人工充值客服 QQ
+const MANUAL_RECHARGE_QQ = '1223527522';
+
 // 格式化金额（New API price_amount 直接为美元整数）
 function formatPrice(price: number, currency: string): string {
   const symbol = currency === 'USD' ? '$' : currency === 'CNY' ? '¥' : '';
@@ -99,9 +103,7 @@ export default function AccountCenter() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [recharging, setRecharging] = useState(false);
-  const [rechargeModalOpen, setRechargeModalOpen] = useState(false);
-  const [selectedRechargeAmount, setSelectedRechargeAmount] = useState<number | null>(null);
-  const [selectedPayMethod, setSelectedPayMethod] = useState<string>('');
+  const [manualRechargeOpen, setManualRechargeOpen] = useState(false);
   const [redeemCode, setRedeemCode] = useState('');
   const [redeeming, setRedeeming] = useState(false);
 
@@ -149,44 +151,19 @@ export default function AccountCenter() {
     refresh();
   }, [refresh]);
 
-  // 充值：调用 New API 支付接口，返回支付链接后跳转
-  const handleRecharge = async (amount: number, paymentMethod: string) => {
-    setRecharging(true);
+  // 收款渠道暂时不可用，点击充值改为弹出人工充值引导弹窗
+  const openRechargeModal = (_amount: number) => {
+    setManualRechargeOpen(true);
+  };
+
+  // 复制客服 QQ 号
+  const copyQQ = async () => {
     try {
-      const res: any = await newApi.createRecharge(amount, paymentMethod);
-      // New API waffo/stripe/creem 返回 data.checkout_url；epay 返回 data 为支付链接
-      const checkoutUrl = res?.data?.checkout_url || (typeof res?.data === 'string' ? res.data : null);
-      if (checkoutUrl) {
-        message.success('正在跳转到支付页面...');
-        window.open(checkoutUrl, '_blank');
-      } else if (res?.success || res?.message === 'success') {
-        message.success('充值请求已提交');
-        refresh();
-      } else {
-        message.error(res?.message || '充值失败');
-      }
-    } catch (e: any) {
-      message.error(e?.response?.data?.detail || '充值请求失败');
-    } finally {
-      setRecharging(false);
+      await navigator.clipboard.writeText(MANUAL_RECHARGE_QQ);
+      message.success('QQ 号已复制，请添加客服进行人工充值');
+    } catch (e) {
+      message.info(`请手动复制 QQ 号：${MANUAL_RECHARGE_QQ}`);
     }
-  };
-
-  // 打开充值确认弹窗，预置金额与默认支付方式
-  const openRechargeModal = (amount: number) => {
-    setSelectedRechargeAmount(amount);
-    setSelectedPayMethod(topupInfo?.pay_methods[0]?.type || '');
-    setRechargeModalOpen(true);
-  };
-
-  // 确认充值：关闭弹窗后调用 handleRecharge
-  const confirmRecharge = () => {
-    if (selectedRechargeAmount == null || !selectedPayMethod) {
-      message.error('请选择支付方式');
-      return;
-    }
-    setRechargeModalOpen(false);
-    handleRecharge(selectedRechargeAmount, selectedPayMethod);
   };
 
   // 订阅：用余额支付购买订阅套餐
@@ -333,12 +310,19 @@ export default function AccountCenter() {
         </Col>
       </Row>
 
-      {/* 充值：从 New API 动态获取档位 */}
+      {/* 充值：收款渠道暂时不可用，点击后引导加 QQ 人工充值 */}
       <Card
         title="充值"
         style={{ marginTop: 16 }}
         extra={<Button icon={<ReloadOutlined />} onClick={refresh} loading={loading}>刷新</Button>}
       >
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="在线支付渠道暂时不可用"
+          description="收款渠道维护中，暂无法在线充值。请点击充值按钮添加客服 QQ，由人工为您充值。"
+        />
         {topupInfo ? (
           <Space wrap size="middle">
             {topupInfo.amount_options.map((amount) => (
@@ -349,13 +333,12 @@ export default function AccountCenter() {
               >
                 <div style={{ fontSize: 20, fontWeight: 600 }}>+${amount}</div>
                 <div style={{ color: '#888', marginTop: 4, fontSize: 12 }}>
-                  {topupInfo.pay_methods.map((m) => m.name).join(' / ') || '在线支付'}
+                  人工充值
                 </div>
                 <Button
                   type="primary"
                   size="small"
                   style={{ marginTop: 8 }}
-                  loading={recharging}
                   onClick={() => openRechargeModal(amount)}
                 >
                   充值
@@ -365,7 +348,7 @@ export default function AccountCenter() {
           </Space>
         ) : (
           <div style={{ color: '#888' }}>
-            {loading ? '加载中...' : '暂无充值选项，请检查 New API 支付配置'}
+            {loading ? '加载中...' : '在线充值暂不可用，请点击充值按钮联系客服人工充值'}
           </div>
         )}
       </Card>
@@ -473,31 +456,36 @@ export default function AccountCenter() {
         />
       </Card>
 
-      {/* 充值二次确认弹窗 */}
+      {/* 人工充值引导弹窗：收款渠道暂时不可用 */}
       <Modal
-        open={rechargeModalOpen}
-        title={selectedRechargeAmount != null ? `确认充值 $${selectedRechargeAmount}` : '确认充值'}
-        okText="确认充值"
-        cancelText="取消"
-        confirmLoading={recharging}
-        onCancel={() => setRechargeModalOpen(false)}
-        onOk={confirmRecharge}
+        open={manualRechargeOpen}
+        title="在线充值暂时不可用"
+        okText="复制 QQ 号"
+        cancelText="关闭"
+        onOk={copyQQ}
+        onCancel={() => setManualRechargeOpen(false)}
         width={isMobile ? 'calc(100vw - 32px)' : undefined}
       >
-        <div style={{ marginBottom: 12 }}>请选择支付方式：</div>
-        <Radio.Group
-          value={selectedPayMethod}
-          onChange={(e) => setSelectedPayMethod(e.target.value)}
-          style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}
-        >
-          {topupInfo?.pay_methods.map((m) => (
-            <Radio.Button key={m.type} value={m.type}>
-              {m.name}
-            </Radio.Button>
-          ))}
-        </Radio.Group>
-        <div style={{ marginTop: 12, color: '#888', fontSize: 12 }}>
-          点击确认后将跳转支付页面
+        <Alert
+          type="warning"
+          showIcon
+          message="收款渠道暂时不可用"
+          description="由于支付渠道维护，在线充值暂时关闭。请添加客服 QQ，由人工为您充值。"
+          style={{ marginBottom: 16 }}
+        />
+        <div style={{ textAlign: 'center', marginBottom: 8, color: '#888' }}>
+          客服 QQ
+        </div>
+        <div style={{ textAlign: 'center', fontSize: 24, fontWeight: 600, letterSpacing: 1 }}>
+          {MANUAL_RECHARGE_QQ}
+        </div>
+        <div style={{ textAlign: 'center', marginTop: 12 }}>
+          <Button type="primary" icon={<CopyOutlined />} onClick={copyQQ}>
+            复制 QQ 号
+          </Button>
+        </div>
+        <div style={{ marginTop: 12, color: '#888', fontSize: 12, textAlign: 'center' }}>
+          添加 QQ 后请说明需要充值的金额与您的账号
         </div>
       </Modal>
     </div>

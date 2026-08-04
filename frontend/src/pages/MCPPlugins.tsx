@@ -31,6 +31,7 @@ import {
   QuestionCircleOutlined,
   WarningOutlined,
   FormatPainterOutlined,
+  AppstoreAddOutlined,
 } from '@ant-design/icons';
 import { mcpPluginApi, settingsApi } from '../services/api';
 import type { MCPPlugin, MCPTool } from '../types';
@@ -215,7 +216,23 @@ export default function MCPPluginsPage() {
     }
   };
 
-  const handleCreate = () => {
+  const handleRestoreDefaults = async () => {
+      try {
+        const created = await mcpPluginApi.restoreDefaultPlugins();
+        if (created && created.length > 0) {
+          message.success(`已恢复 ${created.length} 个默认插件（需密钥的插件请先编辑地址填入 Key 再启用）`);
+        } else {
+          message.info('默认插件均已存在，无需恢复');
+        }
+        const updated = await mcpPluginApi.getPlugins();
+        setPlugins(updated);
+      } catch (error) {
+        console.error('恢复默认插件失败:', error);
+        message.error('恢复默认插件失败');
+      }
+    };
+  
+    const handleCreate = () => {
     if (modelSupportStatus !== 'supported') {
       modal.confirm({
         title: '模型能力检查',
@@ -704,6 +721,19 @@ export default function MCPPluginsPage() {
               </Col>
               <Col xs={24} sm={12}>
                 <Space size={12} style={{ display: 'flex', justifyContent: isMobile ? 'flex-start' : 'flex-end', width: '100%' }}>
+                  <Button
+                    icon={<AppstoreAddOutlined />}
+                    onClick={handleRestoreDefaults}
+                    style={{
+                      borderRadius: 12,
+                      background: alphaColor(token.colorWhite, 0.15),
+                      border: `1px solid ${alphaColor(token.colorWhite, 0.35)}`,
+                      color: token.colorWhite,
+                      fontWeight: 600
+                    }}
+                  >
+                    恢复默认插件
+                  </Button>
                   <Button
                     type="primary"
                     icon={<PlusOutlined />}
