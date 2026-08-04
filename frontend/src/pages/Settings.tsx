@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Card, Form, Input, Button, Select, Slider, InputNumber, message, Space, Typography, Spin, Modal, Alert, Grid, Tabs, Tag, Row, Col, theme } from 'antd';
-import { SaveOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, ThunderboltOutlined, EditOutlined, WarningOutlined, PictureOutlined } from '@ant-design/icons';
+import { Card, Form, Input, Button, Select, Slider, InputNumber, message, Space, Typography, Spin, Modal, Alert, Grid, Tabs, Tag, Row, Col, theme, List, Popconfirm, Empty } from 'antd';
+import { SaveOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, ThunderboltOutlined, EditOutlined, WarningOutlined, PictureOutlined, CopyOutlined } from '@ant-design/icons';
 import { settingsApi, mcpPluginApi, newApi } from '../services/api';
-import type { SettingsUpdate } from '../types';
+import type { SettingsUpdate, APIKeyPreset, APIKeyPresetConfig } from '../types';
 import { useNavigate } from 'react-router-dom';
+import { usageListForFrontend, AI_USAGES } from '../constants/aiUsages';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -52,6 +53,17 @@ export default function SettingsPage() {
   const [newApiSubscribed, setNewApiSubscribed] = useState(false);
   const [newApiModels, setNewApiModels] = useState<Array<{ id: string; name: string; pricing: { input: number; output: number } }>>([]);
   const [fetchingNewApiModels, setFetchingNewApiModels] = useState(false);
+
+  // 预设相关状态
+  const [presets, setPresets] = useState<APIKeyPreset[]>([]);
+  const [presetsLoading, setPresetsLoading] = useState(false);
+  const [activePresetId, setActivePresetId] = useState<string | undefined>();
+  const [actionPresetIds, setActionPresetIds] = useState<Record<string, string | null>>({});
+  const [editingPreset, setEditingPreset] = useState<APIKeyPreset | null>(null);
+  const [isPresetModalVisible, setIsPresetModalVisible] = useState(false);
+  const [testingPresetId, setTestingPresetId] = useState<string | null>(null);
+  const [savingActionUsage, setSavingActionUsage] = useState<string | null>(null);
+  const [presetForm] = Form.useForm();
 
   const headerBackground = `linear-gradient(135deg, ${token.colorPrimary} 0%, ${token.colorPrimaryHover} 100%)`;
 
@@ -103,9 +115,13 @@ export default function SettingsPage() {
   const hideNewApiFields = newApiEnabled && newApiBound;
 
   useEffect(() => {
-    loadSettings();
-    setTestResult(null);
-    setShowTestResult(false);
+    if (activeTab === 'presets') {
+      loadPresets();
+    } else {
+      loadSettings();
+      setTestResult(null);
+      setShowTestResult(false);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
@@ -523,9 +539,402 @@ export default function SettingsPage() {
 
   // ========== 预设管理函数 ==========
 
+  const loadPresets = async () => {
+    setPresetsLoading(true);
+    try {
+      const response = await settingsApi.getPresets();
+      setPresets(response.presets);
+      setActivePresetId(response.active_preset_id);
+      setActionPresetIds(response.action_preset_ids || {});
+    } catch (error) {
+      message.error('加载预设失败');
+      console.error(error);
+    } finally {
+      setPresetsLoading(false);
+    }
+  };
+
+  const showPresetModal = (preset: APIKeyPreset) => {
+    // 预设仅使用系统提供的 API 渠道，模型列表来自主「文本模型配置」的 NewAPI 模型列表
+    setEditingPreset(preset);
+    // 渠道字段继承主配置（系统 API），只允许在系统模型范围内切换模型
+    presetForm.setFieldsValue({
+      name: preset.name,
+      description: preset.description,
+      api_provider: form.getFieldValue('api_provider'),
+      api_key: form.getFieldValue('api_key'),
+      api_base_url: form.getFieldValue('api_base_url'),
+      llm_model: preset.config.llm_model,
+      temperature: preset.config.temperature,
+      max_tokens: preset.config.max_tokens,
+      system_prompt: preset.config.system_prompt,
+    });
+    setIsPresetModalVisible(true);
+  };
+
+  const handlePresetCancel = () => {
+    setIsPresetModalVisible(false);
+    setEditingPreset(null);
+    presetForm.resetFields();
+  };
+
+  const handlePresetSave = async () => {
+    try {
+      const values = await presetForm.validateFields();
+      // 预设仅使用系统提供的 API 渠道（主配置），不允许单独配置其他厂商
+      const mainValues = form.getFieldsValue();
+      const isBuiltInKeyProvider = builtInKeyProviders.includes(mainValues.api_provider);
+      const config: APIKeyPresetConfig = {
+        api_provider: mainValues.api_provider,
+        api_key: isBuiltInKeyProvider ? '' : mainValues.api_key,
+        api_base_url: mainValues.api_base_url,
+        llm_model: values.llm_model,
+        temperature: values.temperature,
+        max_tokens: values.max_tokens,
+        system_prompt: values.system_prompt,
+      };
+
+      if (editingPreset) {
+        await settingsApi.updatePreset(editingPreset.id, {
+          name: values.name,
+          description: values.description,
+          config,
+        });
+        message.success('预设已更新');
+      }
+
+      handlePresetCancel();
+      loadPresets();
+    } catch (error) {
+      console.error('保存失败:', error);
+    }
+  };
+
+  /** 通用：为指定动作设置预设（presetId 为空则回退默认） */
+  const handleActionPresetChange = async (usage: string, presetId?: string) => {
+    setSavingActionUsage(usage);
+    try {
+      const normalizedPresetId = presetId || undefined;
+      await settingsApi.setActionPreset(usage, normalizedPresetId);
+      setActionPresetIds((prev) => ({ ...prev, [usage]: normalizedPresetId || null }));
+      message.success(normalizedPresetId ? '已为该动作设置专用预设' : '已恢复使用默认API配置');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '设置动作API配置失败');
+      console.error(error);
+    } finally {
+      setSavingActionUsage(null);
+    }
+  };
+
+  const handlePresetDelete = async (presetId: string) => {
+    try {
+      await settingsApi.deletePreset(presetId);
+      message.success('预设已删除');
+      loadPresets();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '删除失败');
+      console.error(error);
+    }
+  };
+
+  const handlePresetActivate = async (presetId: string, presetName: string) => {
+    try {
+      await settingsApi.activatePreset(presetId);
+      message.success(`已激活预设: ${presetName}`);
+
+      // 激活预设后清除当前配置Tab的测试结果
+      setTestResult(null);
+      setShowTestResult(false);
+
+      // 清除模型列表缓存，因为API配置可能已变更
+      setModelOptions([]);
+      setModelsFetched(false);
+
+      loadPresets();
+      loadSettings(); // 重新加载当前配置
+    } catch (error) {
+      message.error('激活失败');
+      console.error(error);
+    }
+  };
+
+  const handlePresetTest = async (presetId: string) => {
+    setTestingPresetId(presetId);
+    try {
+      const result = await settingsApi.testPreset(presetId);
+      if (result.success) {
+        modal.success({
+          title: '测试成功',
+          centered: true,
+          width: isMobile ? '90%' : 600,
+          content: (
+            <div style={{ padding: '8px 0' }}>
+              <div style={{ marginBottom: 24, padding: 16, background: token.colorSuccessBg, border: `1px solid ${token.colorSuccessBorder}`, borderRadius: 8 }}>
+                <Typography.Text strong style={{ color: token.colorSuccess }}>
+                  ✓ API 连接正常
+                </Typography.Text>
+              </div>
+              <div style={{ padding: 16, background: token.colorBgLayout, borderRadius: 8, marginBottom: 16 }}>
+                <div style={{ marginBottom: 8, fontSize: 14 }}>
+                  <Text type="secondary">提供商：</Text>
+                  <Text strong>{result.provider?.toUpperCase() || 'N/A'}</Text>
+                </div>
+                <div style={{ marginBottom: 8, fontSize: 14 }}>
+                  <Text type="secondary">模型：</Text>
+                  <Text strong>{result.model || 'N/A'}</Text>
+                </div>
+                {result.response_time_ms !== undefined && (
+                  <div style={{ fontSize: 14 }}>
+                    <Text type="secondary">响应时间：</Text>
+                    <Text strong>{result.response_time_ms}ms</Text>
+                  </div>
+                )}
+              </div>
+              <Alert message="预设配置测试通过，可以正常使用" type="success" showIcon />
+            </div>
+          ),
+        });
+      } else {
+        modal.error({
+          title: '测试失败',
+          centered: true,
+          width: isMobile ? '90%' : 600,
+          content: (
+            <div style={{ padding: '8px 0' }}>
+              <div style={{ marginBottom: 16 }}>
+                <Alert message={result.message || 'API 测试失败'} type="error" showIcon />
+              </div>
+              {result.error && (
+                <div style={{ padding: 16, background: token.colorErrorBg, border: `1px solid ${token.colorErrorBorder}`, borderRadius: 8, marginBottom: 16 }}>
+                  <Text strong style={{ fontSize: 14, display: 'block', marginBottom: 8 }}>错误信息:</Text>
+                  <Text style={{ fontSize: 13, color: token.colorError, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                    {result.error}
+                  </Text>
+                </div>
+              )}
+              {result.suggestions && result.suggestions.length > 0 && (
+                <div style={{ padding: 16, background: token.colorWarningBg, border: `1px solid ${token.colorWarningBorder}`, borderRadius: 8, marginBottom: 16 }}>
+                  <Text strong style={{ fontSize: 14, display: 'block', marginBottom: 8 }}>💡 建议:</Text>
+                  <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13 }}>
+                    {result.suggestions.map((s, i) => (
+                      <li key={i} style={{ marginBottom: 4 }}>{s}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          ),
+        });
+      }
+    } catch (error) {
+      message.error('测试失败');
+      console.error(error);
+    } finally {
+      setTestingPresetId(null);
+    }
+  };
+
+  const getProviderColor = (provider: string) => {
+    switch (provider) {
+      case 'openai':
+        return 'blue';
+      case 'gemini':
+        return 'green';
+      default:
+        return 'default';
+    }
+  };
 
   // ========== 渲染预设列表 ==========
 
+  const renderPresetsList = () => (
+    <Spin spinning={presetsLoading}>
+      <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Text type="secondary">管理你的API配置预设，为不同动作分配专用模型</Text>
+        </div>
+
+        <Card size="small" style={{ background: token.colorFillAlter, borderColor: token.colorBorderSecondary }}>
+          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+            <Space direction="vertical" size={2}>
+              <Text strong>按行为动作分配模型</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                为不同动作指定专用 API 预设；未指定的动作使用默认配置。
+              </Text>
+            </Space>
+            {!newApiSubscribed && (
+              <Alert
+                showIcon
+                type="warning"
+                message="非订阅用户所有动作均使用默认模型"
+                description="订阅后可为各动作自定义不同模型与渠道。"
+                style={{ padding: '6px 10px' }}
+              />
+            )}
+            {usageListForFrontend().map((group) => (
+              <div key={group.group}>
+                <Text type="secondary" style={{ fontSize: 12, fontWeight: 600 }}>
+                  {group.groupLabel}
+                </Text>
+                <Space direction="vertical" size={6} style={{ width: '100%', marginTop: 4 }}>
+                  {group.actions
+                    .filter((a) => a.usage !== 'default')
+                    .map((action) => (
+                      <Row key={action.usage} gutter={[8, 4]} align="middle">
+                        <Col xs={24} sm={14} md={13}>
+                          <Space direction="vertical" size={0}>
+                            <Text style={{ fontSize: 13 }}>{action.label}</Text>
+                            <Text type="secondary" style={{ fontSize: 11 }}>
+                              {action.description}
+                            </Text>
+                          </Space>
+                        </Col>
+                        <Col xs={24} sm={10} md={11}>
+                          <Select
+                            allowClear
+                            placeholder="默认配置"
+                            value={actionPresetIds[action.usage] || undefined}
+                            loading={savingActionUsage === action.usage}
+                            disabled={
+                              presetsLoading ||
+                              savingActionUsage === action.usage ||
+                              !newApiSubscribed
+                            }
+                            style={{ width: '100%' }}
+                            onChange={(value) => handleActionPresetChange(action.usage, value)}
+                            options={presets.map((preset) => ({
+                              value: preset.id,
+                              label: `${preset.name} (${preset.config.llm_model})`,
+                            }))}
+                          />
+                        </Col>
+                      </Row>
+                    ))}
+                </Space>
+              </div>
+            ))}
+          </Space>
+        </Card>
+
+        {presets.length === 0 ? (
+          <Empty
+            description="暂无预设配置（预设由管理员统一维护）"
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            style={{ margin: '40px 0' }}
+          />
+        ) : (
+          <List
+            dataSource={presets}
+            renderItem={(preset) => {
+              const isActive = preset.id === activePresetId;
+              return (
+                <List.Item
+                  key={preset.id}
+                  style={{
+                    background: isActive ? token.colorInfoBg : 'transparent',
+                    padding: '16px',
+                    marginBottom: '8px',
+                    border: isActive ? `2px solid ${token.colorPrimary}` : `1px solid ${token.colorBorderSecondary}`,
+                    borderRadius: '8px',
+                  }}
+                  actions={[
+                    !isActive && (
+                      <Button
+                        key="activate"
+                        type="link"
+                        onClick={() => handlePresetActivate(preset.id, preset.name)}
+                      >
+                        激活
+                      </Button>
+                    ),
+                    <Button
+                      key="test"
+                      type="link"
+                      icon={<ThunderboltOutlined />}
+                      loading={testingPresetId === preset.id}
+                      onClick={() => handlePresetTest(preset.id)}
+                    >
+                      测试
+                    </Button>,
+                    <Button
+                      key="edit"
+                      type="link"
+                      icon={<EditOutlined />}
+                      onClick={() => showPresetModal(preset)}
+                    >
+                      编辑
+                    </Button>,
+                    <Popconfirm
+                      key="delete"
+                      title="确定删除此预设吗？"
+                      onConfirm={() => handlePresetDelete(preset.id)}
+                      disabled={isActive}
+                      okText="确定"
+                      cancelText="取消"
+                    >
+                      <Button
+                        type="link"
+                        danger
+                        icon={<DeleteOutlined />}
+                        disabled={isActive}
+                      >
+                        删除
+                      </Button>
+                    </Popconfirm>,
+                  ].filter(Boolean)}
+                >
+                  <List.Item.Meta
+                    avatar={
+                      isActive && (
+                        <CheckCircleOutlined
+                          style={{ fontSize: '24px', color: token.colorSuccess }}
+                        />
+                      )
+                    }
+                    title={
+                      <Space>
+                        <span style={{ fontWeight: 'bold' }}>{preset.name}</span>
+                        {isActive && <Tag color="success">激活中</Tag>}
+                        {Object.entries(actionPresetIds)
+                          .filter(([, pid]) => pid === preset.id)
+                          .map(([usage]) => AI_USAGES[usage]?.label)
+                          .filter(Boolean)
+                          .map((label) => (
+                            <Tag key={label as string} color="processing">
+                              {label}
+                            </Tag>
+                          ))}
+                      </Space>
+                    }
+                    description={
+                      <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                        {preset.description && (
+                          <div style={{ color: token.colorTextSecondary }}>{preset.description}</div>
+                        )}
+                        <Space wrap>
+                          <Tag color={getProviderColor(preset.config.api_provider)}>
+                            {preset.config.api_provider.toUpperCase()}
+                          </Tag>
+                          <Tag>{preset.config.llm_model}</Tag>
+                          <Tag>温度: {preset.config.temperature}</Tag>
+                          <Tag>Tokens: {preset.config.max_tokens}</Tag>
+                        </Space>
+                        <div style={{ fontSize: '12px', color: token.colorTextTertiary }}>
+                          创建于: {new Date(preset.created_at).toLocaleString()}
+                        </div>
+                      </Space>
+                    }
+                  />
+                </List.Item>
+              );
+            }}
+          />
+        )}
+      </Space>
+    </Spin>
+  );
 
   return (
     <>
@@ -1274,11 +1683,151 @@ export default function SettingsPage() {
                     </Spin>
                   ),
                 },
+                {
+                  key: 'presets',
+                  label: <Space size={6}><CopyOutlined />配置预设</Space>,
+                  children: renderPresetsList(),
+                },
               ]}
             />
           </Card>
         </div>
 
+        {/* 预设编辑对话框（仅支持编辑已有预设，不支持新建） */}
+        <Modal
+          title="编辑预设"
+          open={isPresetModalVisible}
+          onOk={handlePresetSave}
+          onCancel={handlePresetCancel}
+          width={isMobile ? '95%' : 640}
+          centered
+          okText="保存"
+          cancelText="取消"
+          styles={{
+            body: {
+              padding: isMobile ? '16px' : '20px 24px'
+            }
+          }}
+        >
+          <Form
+            form={presetForm}
+            layout="vertical"
+            size={isMobile ? 'middle' : 'large'}
+          >
+            {/* 基本信息 */}
+            <Form.Item
+              name="name"
+              label="预设名称"
+              rules={[
+                { required: true, message: '请输入预设名称' },
+                { max: 50, message: '名称不能超过50个字符' },
+              ]}
+              style={{ marginBottom: 16 }}
+            >
+              <Input placeholder="例如：工作账号-GPT4" />
+            </Form.Item>
+
+            <Form.Item
+              name="description"
+              label="预设描述"
+              rules={[{ max: 200, message: '描述不能超过200个字符' }]}
+              style={{ marginBottom: 16 }}
+            >
+              <Input placeholder="例如：用于日常写作任务（可选）" />
+            </Form.Item>
+
+            {/* 模型配置：与主「文本模型配置」同源，直接使用系统 NewAPI 模型列表（含价格） */}
+            <Row gutter={16}>
+              <Col xs={24} sm={12}>
+                <Form.Item
+                  name="llm_model"
+                  label={
+                    <Space size={4}>
+                      <span>模型</span>
+                      <InfoCircleOutlined
+                        title="预设仅使用系统提供的 API，模型列表与主「文本模型配置」一致，含价格"
+                        style={{ color: token.colorTextSecondary, fontSize: '12px' }}
+                      />
+                    </Space>
+                  }
+                  rules={[{ required: true, message: '请选择模型' }]}
+                  style={{ marginBottom: 16 }}
+                >
+                  <Select
+                    size={isMobile ? 'middle' : 'large'}
+                    showSearch
+                    placeholder="选择模型"
+                    optionFilterProp="label"
+                    loading={fetchingNewApiModels}
+                    disabled={!newApiSubscribed}
+                    options={newApiModels.map((m) => ({
+                      value: m.id,
+                      label: m.id === presetForm.getFieldValue('llm_model') ? `${m.id}（当前）` : m.id,
+                      pricing: m.pricing,
+                    }))}
+                    optionRender={(option: any) => (
+                      <div>
+                        <div style={{ fontWeight: 500 }}>{option.data.value}</div>
+                        {option.data.pricing && (
+                          <div style={{ fontSize: 12, color: token.colorTextSecondary }}>
+                            价格：输入 ${option.data.pricing.input}/百万tokens · 输出 ${option.data.pricing.output}/百万tokens
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    notFoundContent={
+                      fetchingNewApiModels ? <div style={{ padding: 8, textAlign: 'center' }}><Spin size="small" /> 加载中...</div> : null
+                    }
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} sm={6}>
+                <Form.Item
+                  name="temperature"
+                  label="温度"
+                  rules={[{ required: true, message: '必填' }]}
+                  style={{ marginBottom: 16 }}
+                >
+                  <InputNumber
+                    min={0}
+                    max={2}
+                    step={0.1}
+                    style={{ width: '100%' }}
+                    placeholder="0.7"
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} sm={6}>
+                <Form.Item
+                  name="max_tokens"
+                  label="最大Tokens"
+                  rules={[{ required: true, message: '必填' }]}
+                  style={{ marginBottom: 16 }}
+                >
+                  <InputNumber
+                    min={1}
+                    max={100000}
+                    style={{ width: '100%' }}
+                    placeholder="2000"
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
+
+            <Form.Item
+              name="system_prompt"
+              label="系统提示词"
+              style={{ marginBottom: 0 }}
+            >
+              <TextArea
+                rows={isMobile ? 2 : 3}
+                placeholder="例如：你是一个专业的小说创作助手...（可选）"
+                maxLength={10000}
+                showCount
+              />
+            </Form.Item>
+          </Form>
+        </Modal>
       </div>
     </>
   );
