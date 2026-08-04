@@ -9,7 +9,17 @@ TaskStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
 ImportMode = Literal["append", "overwrite"]
 ExtractLevel = Literal["basic", "standard", "deep"]
 WarningLevel = Literal["info", "warning", "error"]
-BookImportExtractMode = Literal["tail", "full"]
+BookImportExtractMode = Literal["head", "tail", "full"]
+
+# 拆书报告合法维度
+REPORT_DIMENSIONS = {
+    "writing_style",
+    "outline_structure",
+    "opening_formula",
+    "character_design",
+    "thrill_points",
+    "foreshadowing",
+}
 
 
 class BookImportWarning(BaseModel):
@@ -48,8 +58,15 @@ class BookImportOutline(BaseModel):
 
 class BookImportTaskCreateRequest(BaseModel):
     """创建拆书任务请求"""
-    extract_mode: BookImportExtractMode = Field(default="tail", description="提取范围：tail=截取末章，full=整本")
-    tail_chapter_count: int = Field(default=10, ge=5, le=9999, description="当 extract_mode=tail 时，截取末尾章节数；需为5的倍数，超过50将按整本处理")
+    extract_mode: BookImportExtractMode = Field(default="head", description="提取范围：head=截取前N章，tail=截取末N章，full=整本")
+    tail_chapter_count: int = Field(default=30, ge=5, le=9999, description="head/tail 模式下的截取章节数；需为5的倍数，超过50将按整本处理")
+
+
+class BookImportUrlTaskCreateRequest(BaseModel):
+    """在线拆书（URL）创建任务请求"""
+    url: str = Field(..., min_length=1, max_length=1000, description="小说目录页链接（http/https）")
+    extract_mode: BookImportExtractMode = Field(default="head", description="提取范围：head=截取前N章，tail=截取末N章，full=整本")
+    chapter_count: int = Field(default=30, ge=5, le=9999, description="head/tail 模式下的截取章节数；需为5的倍数，超过50将按整本处理")
 
 
 class BookImportTaskCreateResponse(BaseModel):
@@ -84,6 +101,10 @@ class BookImportApplyRequest(BaseModel):
     chapters: list[BookImportChapter]
     outlines: list[BookImportOutline] = Field(default_factory=list)
     import_mode: ImportMode = Field(default="append", description="导入模式")
+    report_dimensions: list[str] = Field(
+        default_factory=list,
+        description="拆书报告维度（可选）：writing_style/outline_structure/opening_formula/character_design/thrill_points/foreshadowing；为空则不生成报告",
+    )
 
 
 class BookImportApplyResponse(BaseModel):
@@ -92,6 +113,7 @@ class BookImportApplyResponse(BaseModel):
     project_id: str
     statistics: dict[str, int]
     warnings: list[BookImportWarning] = Field(default_factory=list)
+    report_markdown: Optional[str] = Field(default=None, description="拆书报告 Markdown 内容（未勾选维度时为空）")
 
 
 class BookImportRetryRequest(BaseModel):

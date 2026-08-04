@@ -3640,6 +3640,51 @@ class PromptService:
 ❌ 使用 markdown 或代码块
 </constraints>"""
 
+    # 拆书导入-拆书分析报告（对标竞品维度勾选）
+    BOOK_IMPORT_ANALYSIS_REPORT = """<system>
+你是资深网文评论家与写作教练，擅长拆解爆款小说的叙事结构与写作技巧，帮助作者学习借鉴。
+</system>
+
+<task>
+【任务】
+基于给定的小说章节正文，按用户勾选的维度输出一份拆书分析报告，用于学习该作品的写作逻辑。
+
+【已勾选分析维度】
+{dimensions_text}
+</task>
+
+<input priority="P0">
+【作品信息】
+书名：{title}
+类型：{genre}
+
+【章节正文样本】
+{sampled_text}
+</input>
+
+<output priority="P0">
+【输出格式】
+直接输出 Markdown 格式的拆书报告（不要用代码块包裹全文）。开头使用一级标题「# 《书名》拆书报告」。每个勾选维度对应一个二级标题（##），未勾选的维度不要输出：
+- writing_style -> ## 文风分析（句长节奏、用词特点、对话风格、叙事语感）
+- outline_structure -> ## 大纲结构拆解（主线脉络、每阶段核心事件、冲突升级节奏）
+- opening_formula -> ## 开篇套路（黄金开篇的钩子设计、矛盾与金手指出现时机）
+- character_design -> ## 角色塑造（主角人设立法、配角功能、角色弧光）
+- thrill_points -> ## 爽点与钩子（爽点密度、章末悬念、期待感营造）
+- foreshadowing -> ## 伏笔埋设（已埋伏笔、回收方式、悬念管理）
+每个维度末尾附一个「可复用技巧」要点列表，提炼作者可直接借鉴的写法。
+</output>
+
+<constraints>
+【必须遵守】
+✅ 仅基于正文样本分析，不臆造样本中不存在的情节
+✅ 每个维度分析 150-400 字，观点具体、有原文依据
+✅ 报告总长度适中，避免大段引用原文
+【禁止事项】
+❌ 输出报告以外的说明文字
+❌ 用代码块包裹整份报告
+❌ 分析未勾选的维度
+</constraints>"""
+
     @staticmethod
     def format_prompt(template: str, **kwargs) -> str:
         """
@@ -3931,6 +3976,12 @@ class PromptService:
                     "title", "genre", "theme", "narrative_perspective",
                     "start_chapter", "end_chapter", "expected_count", "chapters_text"
                 ]
+            },
+            "BOOK_IMPORT_ANALYSIS_REPORT": {
+                "name": "拆书导入-拆书分析报告",
+                "category": "拆书导入",
+                "description": "按勾选维度（文风/大纲结构/开篇套路/角色塑造/爽点钩子/伏笔）生成Markdown拆书报告",
+                "parameters": ["title", "genre", "dimensions_text", "sampled_text"]
             },
             "CHARACTERS_BATCH_GENERATION": {
                 "name": "批量角色生成",

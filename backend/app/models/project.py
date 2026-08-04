@@ -39,6 +39,9 @@ class Project(Base):
     cover_status = Column(String(20), default="none", nullable=False, comment="封面状态: none/generating/ready/failed")
     cover_error = Column(Text, comment="最近一次封面生成失败原因")
     cover_updated_at = Column(DateTime, comment="最近一次封面生成成功时间")
+
+    # 拆书报告
+    analysis_report = Column(Text, comment="拆书报告 Markdown 内容（拆书导入时按勾选维度生成）")
     
     created_at = Column(DateTime, server_default=func.now(), comment="创建时间")
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), comment="更新时间")

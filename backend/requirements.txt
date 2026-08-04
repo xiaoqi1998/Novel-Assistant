@@ -20,6 +20,7 @@ anthropic==0.72.0
 
 # 工具库
 httpx==0.28.1
+beautifulsoup4==4.12.3
 python-dotenv==1.1.0
 psutil==6.1.1
 aiosmtplib==4.0.2
