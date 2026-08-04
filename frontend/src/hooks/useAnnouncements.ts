@@ -170,10 +170,8 @@ export function useAnnouncements(syncInterval: number = DEFAULT_SYNC_INTERVAL) {
       // 需同步清理前端缓存的“幽灵公告”，避免历史残留缓存反复弹出。
       if (Array.isArray(activeIds) && activeIds.length === 0) {
         saveCachedAnnouncements([]);
-        setReadIds(prev => {
-          saveReadIds([]);
-          return [];
-        });
+        saveReadIds([]);
+        setReadIds([]);
       } else if (activeIds) {
         setReadIds(prev => {
           const activeSet = new Set(activeIds);
