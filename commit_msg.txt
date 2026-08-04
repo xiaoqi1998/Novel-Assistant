@@ -1,0 +1,6 @@
+feat(mcp): 默认写作场景 MCP 插件预设与一键恢复
+
+- 新增 app/constants/mcp_presets.py：默认预设 Tavily 搜索研究（需免费Key）/DeepWiki/Context7（免密钥开箱即用）
+- 用户首次打开 MCP 插件管理（无任何插件）时自动初始化默认预设
+- 新增 POST /mcp/plugins/restore-defaults 接口，仅补齐缺失预设，不覆盖用户修改
+- 前端 MCP 管理页新增"恢复默认插件"按钮
