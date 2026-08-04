@@ -775,12 +775,26 @@ export default function BookImport() {
               <p className="ant-upload-hint">首版仅支持 .txt，建议不超过 50MB</p>
             </Dragger>
           ) : (
-            <Input
-              placeholder="请输入小说目录页链接（http:// 或 https://）"
-              value={urlInput}
-              onChange={(e) => setUrlInput(e.target.value)}
-              allowClear
-            />
+            <Space direction="vertical" style={{ width: '100%' }} size={8}>
+              <Input
+                placeholder="请输入小说目录页链接（http:// 或 https://）"
+                value={urlInput}
+                onChange={(e) => setUrlInput(e.target.value)}
+                allowClear
+              />
+              <Alert
+                type="info"
+                showIcon
+                message="哪些链接支持在线拆书？"
+                description={
+                  <div style={{ lineHeight: 1.8, fontSize: 13 }}>
+                    <div>✅ <strong>支持</strong>：目录页包含完整章节列表（每章一个链接）、章节正文直接输出在网页中的免费小说站（如笔趣阁类站点）。</div>
+                    <div>❌ <strong>不支持</strong>：App 专属站点（七猫、番茄等，正文需在 App 内阅读）、正文由 JS 动态加载的站点、需登录才能阅读的站点。</div>
+                    <div>💡 粘贴后系统会自动检测，若站点不支持会提示具体原因。</div>
+                  </div>
+                }
+              />
+            </Space>
           )}
 
           <Card size="small" title="解析范围设置">

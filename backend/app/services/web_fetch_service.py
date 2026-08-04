@@ -46,6 +46,27 @@ class WebFetchService:
     # 页面正文提取时需要移除的噪音标签
     NOISE_TAGS = ("script", "style", "nav", "header", "footer", "ins", "iframe", "noscript", "aside", "form")
 
+    # 站点可抓取性诊断特征
+    SPA_MARKERS = (
+        "__NUXT__", "__NEXT_DATA__", '__APP_DATA__',
+        'id="app"', "id='app'", 'id="root"', "id='root'",
+        "data-reactroot", "window.__INITIAL_STATE__",
+    )
+    APP_ONLY_KEYWORDS = (
+        "打开APP", "下载APP", "APP内阅读", "在APP中阅读", "客户端阅读",
+        "扫码阅读", "打开七猫免费小说", "打开番茄免费小说", "到APP中继续阅读",
+    )
+    LOGIN_KEYWORDS = (
+        "请先登录", "登录后阅读", "登录后可阅读", "需要登录才能阅读", "登录后预览全文",
+    )
+    # SPA 判定下可见文本密度阈值：SSR 完整页面文本通常远超此值
+    SPA_TEXT_THRESHOLD = 3000
+
+    SUPPORTED_HINT = (
+        "支持的链接：目录页包含完整章节列表（每章一个链接）、"
+        "章节正文直接输出在 HTML 中的免费小说站点（如笔趣阁类站点）。"
+    )
+
     async def fetch_novel_from_url(
         self,
         *,
@@ -86,7 +107,7 @@ class WebFetchService:
             # 按单章页处理
             title, content = self._extract_single_page(soup)
             if len(content) < self.MIN_CONTENT_LENGTH:
-                raise ValueError("未能识别到目录或章节正文，请尝试粘贴小说目录页链接")
+                raise ValueError(self._diagnose_unfetchable(soup, html, chapter_links))
             return (
                 [{"title": title or "第1章", "content": content, "chapter_number": 1}],
                 [],
@@ -162,10 +183,65 @@ class WebFetchService:
             warnings.append(f"共 {failed_count} 章抓取失败已跳过（网络超时或页面结构无法解析）")
 
         if not chapters:
-            raise ValueError("所有章节均抓取失败，请确认链接可正常访问或更换目录页链接")
+            # 抽样诊断：抓取第一个章节链接分析不可抓原因
+            reason = await self._diagnose_chapter_fetch_failure(selected[0][1])
+            raise ValueError(reason)
 
         await _notify(f"抓取完成，共获得 {len(chapters)} 章正文", 92)
         return chapters, warnings
+
+    # ---- 站点可抓取性诊断 ----
+
+    def _diagnose_unfetchable(self, soup, html: str, chapter_links: list[tuple[str, str]]) -> str:
+        """目录/单章页无法提取正文时，诊断原因并返回可读错误信息"""
+        visible_text = soup.get_text(strip=True)
+        text_len = len(visible_text)
+
+        is_spa = any(marker in html for marker in self.SPA_MARKERS) and text_len < self.SPA_TEXT_THRESHOLD
+        if is_spa:
+            return (
+                "该站点内容通过 JavaScript 动态加载，服务端返回的页面中没有章节正文，暂不支持在线拆书。"
+                f"{self.SUPPORTED_HINT}"
+            )
+        if any(keyword in html for keyword in self.APP_ONLY_KEYWORDS):
+            return (
+                "该站点为 App 专属内容，网页端不提供可抓取的正文（需在 App 内阅读），暂不支持在线拆书。"
+                f"{self.SUPPORTED_HINT}"
+            )
+        if any(keyword in html for keyword in self.LOGIN_KEYWORDS):
+            return (
+                "该站点需要登录后才能阅读章节内容，暂不支持在线拆书。"
+                f"{self.SUPPORTED_HINT}"
+            )
+        if chapter_links:
+            return (
+                "页面中识别到的章节链接与当前站点域名不一致（或链接结构无法解析），暂不支持。"
+                f"{self.SUPPORTED_HINT}"
+            )
+        return (
+            "未能识别到章节目录或章节正文。请粘贴包含完整章节列表的小说目录页链接。"
+            f"{self.SUPPORTED_HINT}"
+        )
+
+    async def _diagnose_chapter_fetch_failure(self, sample_url: str) -> str:
+        """目录识别成功但所有章节正文都失败时，抽样一章诊断原因"""
+        from bs4 import BeautifulSoup
+
+        try:
+            html, _ = await self._fetch_page(sample_url)
+        except Exception as exc:
+            return (
+                f"章节目录识别成功，但章节页面无法访问（{type(exc).__name__}）："
+                "目标站点可能限流或需要特殊访问条件，请稍后重试或更换链接。"
+            )
+
+        soup = BeautifulSoup(html, "html.parser")
+        self._strip_noise(soup)
+        _, content = self._extract_single_page(soup)
+        if len(content) >= self.MIN_CONTENT_LENGTH:
+            return "所有章节均抓取失败（可能为瞬时网络问题），请稍后重试。"
+
+        return self._diagnose_unfetchable(soup, html, [])
 
     async def _fetch_page(self, url: str) -> tuple[str, str]:
         """抓取单个页面（带重试），返回 (html 文本, 最终 URL)"""
