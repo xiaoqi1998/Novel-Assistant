@@ -19,7 +19,9 @@ class WebFetchService:
 
     MAX_CHAPTERS = 300          # 单本抓取章节上限
     CONCURRENCY = 4             # 章节抓取并发数
-    PAGE_TIMEOUT = 10.0         # 单页超时（秒）
+    PAGE_TIMEOUT = 20.0         # 单页超时（秒）
+    CONNECT_TIMEOUT = 15.0      # 连接超时（秒）
+    PAGE_MAX_ATTEMPTS = 3       # 单页最大尝试次数
     MIN_TOC_LINKS = 5           # 判定为目录页所需的最少章节链接数
     MIN_CONTENT_LENGTH = 200    # 单章正文最短长度（低于则视为抓取失败）
 
@@ -166,13 +168,33 @@ class WebFetchService:
         return chapters, warnings
 
     async def _fetch_page(self, url: str) -> tuple[str, str]:
-        """抓取单个页面，返回 (html 文本, 最终 URL)"""
-        timeout = httpx.Timeout(self.PAGE_TIMEOUT, connect=8.0)
+        """抓取单个页面（带重试），返回 (html 文本, 最终 URL)"""
+        timeout = httpx.Timeout(self.PAGE_TIMEOUT, connect=self.CONNECT_TIMEOUT)
         headers = {"User-Agent": self.USER_AGENT, "Accept-Language": "zh-CN,zh;q=0.9"}
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=headers) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            return self._decode_html(response.content, response.headers.get("content-type", "")), str(response.url)
+        last_exc: Optional[Exception] = None
+        for attempt in range(self.PAGE_MAX_ATTEMPTS):
+            try:
+                async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=headers) as client:
+                    response = await client.get(url)
+                    response.raise_for_status()
+                    return self._decode_html(response.content, response.headers.get("content-type", "")), str(response.url)
+            except httpx.TimeoutException as exc:
+                last_exc = exc
+                logger.warning(
+                    f"页面抓取超时（第{attempt + 1}/{self.PAGE_MAX_ATTEMPTS}次） {url}: {type(exc).__name__}"
+                )
+                if attempt < self.PAGE_MAX_ATTEMPTS - 1:
+                    await asyncio.sleep(1.0 * (attempt + 1))
+            except httpx.HTTPError as exc:
+                last_exc = exc
+                logger.warning(
+                    f"页面抓取失败（第{attempt + 1}/{self.PAGE_MAX_ATTEMPTS}次） {url}: {type(exc).__name__} {exc}"
+                )
+                if attempt < self.PAGE_MAX_ATTEMPTS - 1:
+                    await asyncio.sleep(1.0 * (attempt + 1))
+        # 所有重试失败：抛出带可读信息的异常（httpx 部分异常 str() 为空）
+        exc_name = type(last_exc).__name__ if last_exc else "NetworkError"
+        raise RuntimeError(f"页面访问失败（{exc_name}）：目标站点可能限流或无法连通，请稍后重试或更换链接")
 
     @staticmethod
     def _decode_html(content: bytes, content_type: str) -> str:
