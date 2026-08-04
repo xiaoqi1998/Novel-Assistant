@@ -349,6 +349,16 @@ export const settingsApi = {
       preset_id: presetId || null,
     }),
 
+  /** 通用：为指定动作直接设置系统模型（modelId 为空则回退默认），仅使用系统API渠道 */
+  setActionModel: (action: string, modelId?: string) =>
+    api.put<unknown, {
+      message: string;
+      action: string;
+      model_id?: string;
+    }>(`/settings/presets/usage-model/${action}`, {
+      model_id: modelId || null,
+    }),
+
   createPresetFromCurrent: (name: string, description?: string) =>
     api.post<unknown, APIKeyPreset>('/settings/presets/from-current', null, {
       params: { name, description }

@@ -146,6 +146,10 @@ class PresetListResponse(BaseModel):
         default_factory=dict,
         description="按动作分配的预设ID映射，key 为动作 usage 值，value 为预设ID或空（回退默认）",
     )
+    action_model_ids: Dict[str, str] = Field(
+        default_factory=dict,
+        description="按动作直接指定的系统模型映射，key 为动作 usage 值，value 为系统模型ID",
+    )
 
 
 class ChapterAnalysisPresetSelectionRequest(BaseModel):
@@ -160,3 +164,10 @@ class ActionPresetSelectionRequest(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
     preset_id: Optional[str] = Field(None, description="该动作使用的预设ID；为空则回退默认API配置")
+
+
+class ActionModelSelectionRequest(BaseModel):
+    """通用：为指定动作直接设置系统模型请求"""
+    model_config = ConfigDict(protected_namespaces=())
+
+    model_id: Optional[str] = Field(None, description="该动作直接使用的系统模型ID；为空则回退默认配置")

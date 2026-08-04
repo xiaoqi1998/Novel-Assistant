@@ -22,6 +22,7 @@ from app.schemas.settings import (
     APIKeyPreset, APIKeyPresetConfig, PresetCreateRequest,
     PresetUpdateRequest, PresetResponse, PresetListResponse,
     ChapterAnalysisPresetSelectionRequest, ActionPresetSelectionRequest,
+    ActionModelSelectionRequest,
     SystemSMTPSettingsResponse, SystemSMTPSettingsUpdate, SMTPTestRequest
 )
 from app.user_manager import User
@@ -154,6 +155,18 @@ def _resolve_action_preset_id(prefs: Dict[str, Any], usage: str) -> Optional[str
         if usage == "chapter_analysis":
             preset_id = _get_chapter_analysis_preset_id(prefs)
     return preset_id if (isinstance(preset_id, str) and preset_id.strip()) else None
+
+
+def _resolve_action_model_id(prefs: Dict[str, Any], usage: str) -> Optional[str]:
+    """按动作解析用户直接指定的系统模型ID。
+
+    读取 preferences.action_model_ids[usage]；返回 None 表示该动作未单独指定模型。
+    """
+    model_map = prefs.get('action_model_ids')
+    if not isinstance(model_map, dict):
+        return None
+    model_id = model_map.get(usage)
+    return model_id if (isinstance(model_id, str) and model_id.strip()) else None
 
 
 def _build_ai_service_from_config(
@@ -368,9 +381,31 @@ async def get_user_ai_service_from_db_by_usage(
     force_default_model = app_settings.NEW_API_ENABLED and not is_subscribed
     effective_model = app_settings.NEW_API_DEFAULT_MODEL if force_default_model else settings.llm_model
 
-    # 非默认动作：尝试按动作查找用户配置的预设
+    # 非默认动作：先尝试用户直接指定的系统模型，再尝试按动作配置的预设
     if usage != "default":
         prefs = _safe_load_preferences(settings.preferences)
+        # 用户为该动作直接指定了系统模型（仅订阅用户生效，非订阅强制默认模型）
+        action_model_id = _resolve_action_model_id(prefs, usage)
+        if action_model_id and not force_default_model:
+            resolved_settings = resolve_runtime_ai_config(
+                settings.api_provider, settings.api_key, settings.api_base_url
+            )
+            logger.info(
+                f"用户 {user_id} 动作 '{usage}' 使用指定系统模型: {action_model_id}"
+            )
+            return create_user_ai_service_with_mcp(
+                api_provider=resolved_settings["api_provider"],
+                api_key=resolved_settings["api_key"],
+                api_base_url=resolved_settings["api_base_url"],
+                model_name=action_model_id,
+                temperature=settings.temperature,
+                max_tokens=settings.max_tokens,
+                user_id=user_id,
+                db_session=db,
+                system_prompt=settings.system_prompt,
+                enable_mcp=enable_mcp,
+            )
+
         preset_id = _resolve_action_preset_id(prefs, usage)
         if preset_id:
             api_presets = _get_api_presets_payload(prefs)
@@ -1362,6 +1397,15 @@ async def get_presets(
         if isinstance(v, str) and v in valid_preset_ids
     }
 
+    # 按动作直接指定的系统模型映射（仅保留字符串类型的 model id）
+    raw_model_map = prefs.get('action_model_ids')
+    if not isinstance(raw_model_map, dict):
+        raw_model_map = {}
+    action_model_ids = {
+        k: v for k, v in raw_model_map.items()
+        if isinstance(v, str) and v.strip()
+    }
+
     # 找到激活的预设
     active_preset_id = next(
         (p['id'] for p in presets if p.get('is_active')),
@@ -1376,6 +1420,7 @@ async def get_presets(
         "active_preset_id": active_preset_id,
         "chapter_analysis_preset_id": chapter_analysis_preset_id,
         "action_preset_ids": action_preset_ids,
+        "action_model_ids": action_model_ids,
     }
 
 
@@ -1626,6 +1671,44 @@ async def set_action_preset_selection(
     if action not in AI_USAGES:
         raise HTTPException(status_code=400, detail=f"未知的动作类型: {action}")
     return await _set_action_preset_selection_impl(user, db, action, data.preset_id)
+
+
+@router.put("/presets/usage-model/{action}")
+async def set_action_model_selection(
+    action: str,
+    data: ActionModelSelectionRequest,
+    user: User = Depends(require_login),
+    db: AsyncSession = Depends(get_db)
+):
+    """为指定动作直接设置系统模型；model_id 为空则回退默认配置。
+
+    仅使用系统提供的 API 渠道，只切换模型；action 取值见 app.constants.ai_usages.AI_USAGES。
+    """
+    if action not in AI_USAGES:
+        raise HTTPException(status_code=400, detail=f"未知的动作类型: {action}")
+
+    settings = await get_user_settings(user.user_id, db)
+    prefs = _safe_load_preferences(settings.preferences)
+
+    model_map = prefs.get('action_model_ids')
+    if not isinstance(model_map, dict):
+        model_map = {}
+    clean_model = data.model_id.strip() if data.model_id else None
+    if clean_model:
+        model_map[action] = clean_model
+    else:
+        model_map.pop(action, None)
+    prefs['action_model_ids'] = model_map
+
+    settings.preferences = json.dumps(prefs, ensure_ascii=False)
+    await db.commit()
+
+    logger.info(f"用户 {user.user_id} 设置动作 '{action}' 系统模型: {clean_model or '默认配置'}")
+    return {
+        "message": f"动作 '{action}' 的模型已更新",
+        "action": action,
+        "model_id": clean_model,
+    }
 
 
 async def _set_action_preset_selection_impl(

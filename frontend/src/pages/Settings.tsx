@@ -59,6 +59,7 @@ export default function SettingsPage() {
   const [presetsLoading, setPresetsLoading] = useState(false);
   const [activePresetId, setActivePresetId] = useState<string | undefined>();
   const [actionPresetIds, setActionPresetIds] = useState<Record<string, string | null>>({});
+  const [actionModelIds, setActionModelIds] = useState<Record<string, string>>({});
   const [editingPreset, setEditingPreset] = useState<APIKeyPreset | null>(null);
   const [isPresetModalVisible, setIsPresetModalVisible] = useState(false);
   const [testingPresetId, setTestingPresetId] = useState<string | null>(null);
@@ -546,6 +547,7 @@ export default function SettingsPage() {
       setPresets(response.presets);
       setActivePresetId(response.active_preset_id);
       setActionPresetIds(response.action_preset_ids || {});
+      setActionModelIds(response.action_model_ids || {});
     } catch (error) {
       message.error('加载预设失败');
       console.error(error);
@@ -610,17 +612,25 @@ export default function SettingsPage() {
     }
   };
 
-  /** 通用：为指定动作设置预设（presetId 为空则回退默认） */
-  const handleActionPresetChange = async (usage: string, presetId?: string) => {
+  /** 为指定动作直接设置系统模型（modelId 为空则回退默认），仅使用系统API渠道 */
+  const handleActionModelChange = async (usage: string, modelId?: string) => {
     setSavingActionUsage(usage);
     try {
-      const normalizedPresetId = presetId || undefined;
-      await settingsApi.setActionPreset(usage, normalizedPresetId);
-      setActionPresetIds((prev) => ({ ...prev, [usage]: normalizedPresetId || null }));
-      message.success(normalizedPresetId ? '已为该动作设置专用预设' : '已恢复使用默认API配置');
+      const normalizedModelId = modelId || undefined;
+      await settingsApi.setActionModel(usage, normalizedModelId);
+      setActionModelIds((prev) => {
+        const next = { ...prev };
+        if (normalizedModelId) {
+          next[usage] = normalizedModelId;
+        } else {
+          delete next[usage];
+        }
+        return next;
+      });
+      message.success(normalizedModelId ? `已为该动作设置系统模型: ${normalizedModelId}` : '已恢复使用默认模型');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (error: any) {
-      message.error(error.response?.data?.detail || '设置动作API配置失败');
+      message.error(error.response?.data?.detail || '设置动作模型失败');
       console.error(error);
     } finally {
       setSavingActionUsage(null);
@@ -761,7 +771,7 @@ export default function SettingsPage() {
             <Space direction="vertical" size={2}>
               <Text strong>按行为动作分配模型</Text>
               <Text type="secondary" style={{ fontSize: 12 }}>
-                为不同动作指定专用 API 预设；未指定的动作使用默认配置。
+                为不同动作直接指定系统模型（仅使用系统提供的 API，含价格）；未指定的动作使用默认模型。
               </Text>
             </Space>
             {!newApiSubscribed && (
@@ -769,7 +779,7 @@ export default function SettingsPage() {
                 showIcon
                 type="warning"
                 message="非订阅用户所有动作均使用默认模型"
-                description="订阅后可为各动作自定义不同模型与渠道。"
+                description="订阅后可为各动作指定不同的系统模型。"
                 style={{ padding: '6px 10px' }}
               />
             )}
@@ -794,20 +804,36 @@ export default function SettingsPage() {
                         <Col xs={24} sm={10} md={11}>
                           <Select
                             allowClear
-                            placeholder="默认配置"
-                            value={actionPresetIds[action.usage] || undefined}
-                            loading={savingActionUsage === action.usage}
+                            showSearch
+                            placeholder="默认模型"
+                            optionFilterProp="label"
+                            loading={savingActionUsage === action.usage || fetchingNewApiModels}
+                            value={actionModelIds[action.usage] || undefined}
                             disabled={
                               presetsLoading ||
                               savingActionUsage === action.usage ||
                               !newApiSubscribed
                             }
                             style={{ width: '100%' }}
-                            onChange={(value) => handleActionPresetChange(action.usage, value)}
-                            options={presets.map((preset) => ({
-                              value: preset.id,
-                              label: `${preset.name} (${preset.config.llm_model})`,
+                            onChange={(value) => handleActionModelChange(action.usage, value)}
+                            options={newApiModels.map((m) => ({
+                              value: m.id,
+                              label: m.id,
+                              pricing: m.pricing,
                             }))}
+                            optionRender={(option: any) => (
+                              <div>
+                                <div style={{ fontWeight: 500 }}>{option.data.value}</div>
+                                {option.data.pricing && (
+                                  <div style={{ fontSize: 12, color: token.colorTextSecondary }}>
+                                    价格：输入 ${option.data.pricing.input}/百万tokens · 输出 ${option.data.pricing.output}/百万tokens
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            notFoundContent={
+                              fetchingNewApiModels ? <div style={{ padding: 8, textAlign: 'center' }}><Spin size="small" /> 加载中...</div> : null
+                            }
                           />
                         </Col>
                       </Row>

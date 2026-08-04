@@ -139,6 +139,7 @@ export interface PresetListResponse {
   active_preset_id?: string;
   chapter_analysis_preset_id?: string;
   action_preset_ids?: Record<string, string | null>;
+  action_model_ids?: Record<string, string>;
 }
 
 // 项目类型定义
