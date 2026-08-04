@@ -11,6 +11,7 @@ from datetime import datetime
 
 from app.database import get_db, get_engine
 from app.models.mcp_plugin import MCPPlugin
+from app.constants.mcp_presets import DEFAULT_MCP_PRESETS
 from app.schemas.mcp_plugin import (
     MCPPluginCreate,
     MCPPluginSimpleCreate,
@@ -134,6 +135,72 @@ async def _unregister_plugin_safe(user_id: str, plugin_name: str):
         logger.warning(f"后台注销MCP插件出错: {plugin_name}, 错误: {e}")
 
 
+async def _create_preset_plugin(db: AsyncSession, user_id: str, preset: dict) -> Optional[MCPPlugin]:
+    """根据预设配置创建一个插件（同名已存在则跳过），返回创建的插件或 None"""
+    result = await db.execute(
+        select(MCPPlugin).where(
+            MCPPlugin.user_id == user_id,
+            MCPPlugin.plugin_name == preset["plugin_name"]
+        )
+    )
+    if result.scalar_one_or_none():
+        return None
+
+    try:
+        server_url = _validate_mcp_server_url(preset["plugin_type"], preset.get("server_url"))
+    except HTTPException as exc:
+        logger.warning(f"预设插件 {preset['plugin_name']} URL 校验失败，跳过: {exc.detail}")
+        return None
+
+    plugin = MCPPlugin(
+        user_id=user_id,
+        plugin_name=preset["plugin_name"],
+        display_name=preset.get("display_name") or preset["plugin_name"],
+        description=preset.get("description"),
+        plugin_type=preset["plugin_type"],
+        server_url=server_url,
+        headers=preset.get("headers") or {},
+        category=preset.get("category", "general"),
+        sort_order=preset.get("sort_order", 0),
+        enabled=bool(preset.get("enabled", True)),
+        status="pending" if preset.get("enabled", True) else "inactive",
+    )
+    db.add(plugin)
+    await db.flush()
+
+    # 仅启用状态的插件才需要后台注册 MCP 连接
+    if plugin.enabled:
+        asyncio.create_task(_register_plugin_background(
+            user_id=user_id,
+            plugin_name=plugin.plugin_name,
+            plugin_type=plugin.plugin_type,
+            server_url=plugin.server_url,
+            headers=plugin.headers,
+            config=plugin.config
+        ))
+    return plugin
+
+
+async def _ensure_default_plugins(db: AsyncSession, user_id: str) -> list[MCPPlugin]:
+    """用户首次访问且无任何插件时，自动初始化默认预设插件"""
+    result = await db.execute(
+        select(MCPPlugin.id).where(MCPPlugin.user_id == user_id).limit(1)
+    )
+    if result.scalar_one_or_none() is not None:
+        return []
+
+    created: list[MCPPlugin] = []
+    for preset in DEFAULT_MCP_PRESETS:
+        plugin = await _create_preset_plugin(db, user_id, preset)
+        if plugin:
+            created.append(plugin)
+
+    if created:
+        await db.commit()
+        logger.info(f"为用户 {user_id} 自动初始化 {len(created)} 个默认 MCP 插件")
+    return created
+
+
 async def _register_plugin_to_facade(plugin: MCPPlugin, user_id: str) -> bool:
     """
     将插件注册到统一门面
@@ -169,7 +236,12 @@ async def list_plugins(
 ):
     """
     获取用户的所有MCP插件
+
+    首次访问（用户无任何插件且未使用筛选条件）时自动初始化默认预设插件。
     """
+    if not enabled_only and not category:
+        await _ensure_default_plugins(db, user.user_id)
+
     query = select(MCPPlugin).where(MCPPlugin.user_id == user.user_id)
     
     if enabled_only:
@@ -185,6 +257,34 @@ async def list_plugins(
     
     logger.info(f"用户 {user.user_id} 查询插件列表，共 {len(plugins)} 个")
     return plugins
+
+
+@router.post("/restore-defaults", response_model=List[MCPPluginResponse])
+async def restore_default_plugins(
+    user: User = Depends(require_login),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    恢复默认 MCP 插件预设
+
+    仅创建当前缺失的预设插件（同名已存在则跳过，不覆盖用户修改）。
+    返回本次实际创建的插件列表。
+    """
+    created: list[MCPPlugin] = []
+    for preset in DEFAULT_MCP_PRESETS:
+        plugin = await _create_preset_plugin(db, user.user_id, preset)
+        if plugin:
+            created.append(plugin)
+
+    if created:
+        await db.commit()
+        for p in created:
+            await db.refresh(p)
+        logger.info(f"用户 {user.user_id} 恢复默认插件，新增 {len(created)} 个")
+    else:
+        logger.info(f"用户 {user.user_id} 恢复默认插件：预设均已存在，无需创建")
+
+    return created
 
 
 @router.post("", response_model=MCPPluginResponse)

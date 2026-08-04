@@ -1510,6 +1510,10 @@ export const mcpPluginApi = {
   getPlugins: () =>
     api.get<unknown, MCPPlugin[]>('/mcp/plugins'),
 
+  // 恢复默认插件预设（仅创建缺失的预设）
+  restoreDefaultPlugins: () =>
+    api.post<unknown, MCPPlugin[]>('/mcp/plugins/restore-defaults'),
+
   // 获取单个插件
   getPlugin: (id: string) =>
     api.get<unknown, MCPPlugin>(`/mcp/plugins/${id}`),
