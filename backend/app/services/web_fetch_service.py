@@ -360,7 +360,26 @@ class WebFetchService:
                 continue
             cleaned.append(normalized)
 
+        if not self._has_novel_like_content(cleaned):
+            # 无小说正文特征（如纯 UI/菜单文本），视为无正文，交由诊断逻辑给出原因
+            return title, ""
+
         return title, "\n\n".join(cleaned).strip()
+
+    @staticmethod
+    def _has_novel_like_content(lines: list[str]) -> bool:
+        """判断文本是否具备小说正文特征：多个长段落。
+
+        用于过滤纯 UI/菜单/表单文本（短行堆砌，如 App 引导页、举报表单等）。
+        """
+        if not lines:
+            return False
+        long_lines = [line for line in lines if len(line) >= 30]
+        if len(long_lines) < 3:
+            return False
+        long_text_len = sum(len(line) for line in long_lines)
+        total_len = sum(len(line) for line in lines)
+        return total_len > 0 and long_text_len / total_len >= 0.5
 
     @staticmethod
     def _find_content_container(soup):
