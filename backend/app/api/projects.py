@@ -21,6 +21,13 @@ from app.models.analysis_task import AnalysisTask
 from app.models.batch_generation_task import BatchGenerationTask
 from app.models.character_arc import CharacterArc
 from app.models.background_task import BackgroundTask
+from app.models.chapter_snapshot import ChapterSnapshot
+from app.models.character_location import CharacterLocation
+from app.models.item import Item
+from app.models.secret import Secret
+from app.models.vow import Vow
+from app.models.project_default_style import ProjectDefaultStyle
+from app.models.regeneration_task import RegenerationTask
 from app.schemas.project import (
     ProjectCreate,
     ProjectUpdate,
@@ -348,7 +355,49 @@ async def delete_project(
         )
         logger.debug(f"删除后台任务数: {bg_tasks_result.rowcount}")
 
-        # 15. 清理磁盘上的封面文件
+        # 15. 删除天命快照（章节事实快照）
+        snapshots_result = await db.execute(
+            delete(ChapterSnapshot).where(ChapterSnapshot.project_id == project_id)
+        )
+        logger.debug(f"删除天命快照数: {snapshots_result.rowcount}")
+
+        # 16. 删除角色位置记录（需在删除角色之前）
+        char_locations_result = await db.execute(
+            delete(CharacterLocation).where(CharacterLocation.project_id == project_id)
+        )
+        logger.debug(f"删除角色位置记录数: {char_locations_result.rowcount}")
+
+        # 17. 删除物品（天命物品体系）
+        items_result = await db.execute(
+            delete(Item).where(Item.project_id == project_id)
+        )
+        logger.debug(f"删除物品数: {items_result.rowcount}")
+
+        # 18. 删除秘密（天命秘密体系）
+        secrets_result = await db.execute(
+            delete(Secret).where(Secret.project_id == project_id)
+        )
+        logger.debug(f"删除秘密数: {secrets_result.rowcount}")
+
+        # 19. 删除誓言（天命誓言体系）
+        vows_result = await db.execute(
+            delete(Vow).where(Vow.project_id == project_id)
+        )
+        logger.debug(f"删除誓言数: {vows_result.rowcount}")
+
+        # 20. 删除项目默认写作风格绑定
+        default_styles_result = await db.execute(
+            delete(ProjectDefaultStyle).where(ProjectDefaultStyle.project_id == project_id)
+        )
+        logger.debug(f"删除项目默认风格绑定数: {default_styles_result.rowcount}")
+
+        # 21. 删除重新生成任务记录
+        regen_tasks_result = await db.execute(
+            delete(RegenerationTask).where(RegenerationTask.project_id == project_id)
+        )
+        logger.debug(f"删除重新生成任务数: {regen_tasks_result.rowcount}")
+
+        # 22. 清理磁盘上的封面文件
         if project.cover_image_url:
             try:
                 from app.config import PROJECT_ROOT
