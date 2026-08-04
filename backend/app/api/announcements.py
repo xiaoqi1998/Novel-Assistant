@@ -7,12 +7,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.config import INSTANCE_ID, is_workshop_server, settings
 from app.database import get_engine
 from app.models.announcement import Announcement
 from app.models.user import User
 from app.schemas.announcement import AnnouncementCreate, AnnouncementUpdate
-from app.services.announcement_client import announcement_client, AnnouncementClientError
 from app.logger import get_logger
 
 router = APIRouter(prefix="/announcements", tags=["announcements"])
@@ -35,10 +33,7 @@ async def get_global_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def check_announcement_admin(request: Request) -> User:
-    """检查公告管理员权限：仅云端服务端管理员可管理公告"""
-    if not is_workshop_server():
-        raise HTTPException(status_code=403, detail="公告发布仅在云端服务端可用")
-
+    """检查公告管理员权限：本地管理员可管理公告"""
     user = getattr(request.state, "user", None)
     if not user:
         raise HTTPException(status_code=401, detail="未登录")
@@ -244,16 +239,7 @@ async def _sync_announcements_local(db: AsyncSession, since: Optional[str], limi
 @router.get("/status")
 async def get_status():
     """获取公告服务状态"""
-    result = {
-        "mode": settings.WORKSHOP_MODE,
-        "instance_id": INSTANCE_ID,
-    }
-
-    if not is_workshop_server():
-        result["cloud_url"] = settings.WORKSHOP_CLOUD_URL
-        result["cloud_connected"] = await announcement_client.check_connection()
-
-    return result
+    return {"mode": "server", "instance_id": "server"}
 
 
 @router.get("")
@@ -262,14 +248,8 @@ async def get_announcements(
     limit: int = Query(20, ge=1, le=100, description="每页数量"),
     db: AsyncSession = Depends(get_global_db),
 ):
-    """获取公告列表（公开接口）"""
-    if is_workshop_server():
-        return await _get_announcements_local(db, page=page, limit=limit)
-
-    try:
-        return await announcement_client.get_announcements(page=page, limit=limit)
-    except AnnouncementClientError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+    """获取公告列表（公开接口），始终读取本地数据库"""
+    return await _get_announcements_local(db, page=page, limit=limit)
 
 
 @router.get("/sync")
@@ -278,14 +258,8 @@ async def sync_announcements(
     limit: int = Query(50, ge=1, le=100, description="同步数量"),
     db: AsyncSession = Depends(get_global_db),
 ):
-    """同步公告（公开接口）"""
-    if is_workshop_server():
-        return await _sync_announcements_local(db, since=since, limit=limit)
-
-    try:
-        return await announcement_client.sync(since=since, limit=limit)
-    except AnnouncementClientError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+    """同步公告（公开接口），始终读取本地数据库"""
+    return await _sync_announcements_local(db, since=since, limit=limit)
 
 
 @router.get("/admin/items")

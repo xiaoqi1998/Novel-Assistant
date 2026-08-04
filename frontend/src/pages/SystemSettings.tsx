@@ -4,7 +4,7 @@ import { Alert, Button, Card, Col, DatePicker, Form, Input, Modal, Popconfirm, R
 import type { ColumnsType, TablePaginationConfig } from 'antd/es/table';
 import { BellOutlined, DeleteOutlined, EditOutlined, EyeInvisibleOutlined, PlusOutlined, ReloadOutlined, SendOutlined, SettingOutlined } from '@ant-design/icons';
 import { announcementApi, authApi } from '../services/api';
-import type { Announcement, AnnouncementCreate, AnnouncementLevel, AnnouncementStatus, AnnouncementStatusResponse, AnnouncementUpdate, User } from '../types';
+import type { Announcement, AnnouncementCreate, AnnouncementLevel, AnnouncementStatus, AnnouncementUpdate, User } from '../types';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import useIsMobile from '../utils/useIsMobile';
 
@@ -71,8 +71,6 @@ export default function SystemSettingsPage() {
   const [announcementForm] = Form.useForm<AnnouncementFormValues>();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
-  const [announcementStatus, setAnnouncementStatus] = useState<AnnouncementStatusResponse | null>(null);
-  const [announcementStatusLoading, setAnnouncementStatusLoading] = useState(false);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [announcementLoading, setAnnouncementLoading] = useState(false);
   const [announcementSaving, setAnnouncementSaving] = useState(false);
@@ -86,22 +84,7 @@ export default function SystemSettingsPage() {
   const announcementContent = Form.useWatch('content', announcementForm) || '';
 
   const headerBackground = `linear-gradient(135deg, ${token.colorPrimary} 0%, ${token.colorPrimaryHover} 100%)`;
-  const announcementAdminAvailable = announcementStatus?.mode === 'server';
-
-  const loadAnnouncementStatus = useCallback(async () => {
-    setAnnouncementStatusLoading(true);
-    try {
-      const status = await announcementApi.getStatus();
-      setAnnouncementStatus(status);
-      return status;
-    } catch (error) {
-      console.error('加载公告服务状态失败:', error);
-      message.error('加载公告服务状态失败');
-      return null;
-    } finally {
-      setAnnouncementStatusLoading(false);
-    }
-  }, []);
+  const announcementAdminAvailable = true;
 
   const loadAnnouncements = useCallback(async (page: number, pageSize: number, keyword: string) => {
     if (!announcementAdminAvailable) {
@@ -127,7 +110,7 @@ export default function SystemSettingsPage() {
       });
     } catch (error) {
       console.error('加载公告列表失败:', error);
-      message.error('加载公告列表失败，请确认当前实例为服务端模式且账号拥有管理员权限');
+      message.error('加载公告列表失败，请确认账号拥有管理员权限');
     } finally {
       setAnnouncementLoading(false);
     }
@@ -136,12 +119,8 @@ export default function SystemSettingsPage() {
   const loadData = async () => {
     setInitialLoading(true);
     try {
-      const [user, status] = await Promise.all([
-        authApi.getCurrentUser(),
-        announcementApi.getStatus().catch(() => null),
-      ]);
+      const user = await authApi.getCurrentUser();
       setCurrentUser(user);
-      setAnnouncementStatus(status);
     } catch (error) {
       console.error('加载系统设置失败:', error);
       message.error('加载系统设置失败');
@@ -156,18 +135,14 @@ export default function SystemSettingsPage() {
   }, []);
 
   useEffect(() => {
-    if (currentUser?.is_admin && announcementAdminAvailable) {
+    if (currentUser?.is_admin) {
       void loadAnnouncements(announcementCurrentPage, announcementPageSize, announcementSearchKeyword);
     }
-    if (currentUser?.is_admin && announcementStatus && !announcementAdminAvailable) {
-      setAnnouncements([]);
-      setAnnouncementPagination(prev => ({ ...prev, total: 0 }));
-    }
-  }, [currentUser?.is_admin, announcementAdminAvailable, announcementStatus, announcementStatusFilter, loadAnnouncements, announcementCurrentPage, announcementPageSize, announcementSearchKeyword]);
+  }, [currentUser?.is_admin, announcementStatusFilter, loadAnnouncements, announcementCurrentPage, announcementPageSize, announcementSearchKeyword]);
 
   const openCreateAnnouncementModal = () => {
     if (!announcementAdminAvailable) {
-      message.warning('公告发布仅在服务端模式可用');
+      message.warning('需要管理员权限');
       return;
     }
     setEditingAnnouncement(null);
@@ -285,7 +260,7 @@ export default function SystemSettingsPage() {
       await loadAnnouncements(announcementPagination.current, announcementPagination.pageSize, announcementSearchKeyword);
     } catch (error) {
       console.error('保存公告失败:', error);
-      message.error('保存公告失败，请确认当前实例为服务端模式且账号拥有管理员权限');
+      message.error('保存公告失败，请确认账号拥有管理员权限');
     } finally {
       setAnnouncementSaving(false);
     }
@@ -461,7 +436,7 @@ export default function SystemSettingsPage() {
               <Title level={3} style={{ color: '#fff', margin: 0 }}>系统设置</Title>
             </Space>
             <Paragraph style={{ color: 'rgba(255,255,255,0.88)', margin: 0 }}>
-              仅管理员可见，用于维护服务端公告发布。
+              仅管理员可见，用于维护公告发布。
             </Paragraph>
           </Space>
         </div>
@@ -482,12 +457,10 @@ export default function SystemSettingsPage() {
               <Card bordered={false} style={{ borderRadius: 16 }}>
                 <Space direction="vertical" size={16} style={{ width: '100%' }}>
                   <Alert
-                    type={announcementAdminAvailable ? 'info' : 'warning'}
+                    type="info"
                     showIcon
-                    message={announcementAdminAvailable ? '公告发布入口' : '当前实例不是公告发布端'}
-                    description={announcementAdminAvailable
-                      ? '公告只能由服务端模式下的管理员发布、编辑、隐藏或删除；客户端实例会定时从服务端同步已发布且未过期的公告。'
-                      : `公告发布仅在云端服务端可用。当前模式：${announcementStatus?.mode || '未知'}${announcementStatus?.cloud_url ? `，云端地址：${announcementStatus.cloud_url}` : ''}`}
+                    message="公告发布入口"
+                    description="管理员发布的公告会保存到本地数据库，并展示给所有登录用户。"
                   />
 
                   <Row gutter={[16, 16]} justify="space-between" align="middle">
@@ -496,14 +469,10 @@ export default function SystemSettingsPage() {
                         <Button type="primary" icon={<PlusOutlined />} disabled={!announcementAdminAvailable} onClick={openCreateAnnouncementModal}>
                           新建公告
                         </Button>
-                        <Button icon={<ReloadOutlined />} loading={announcementLoading || announcementStatusLoading} onClick={() => { void loadAnnouncementStatus(); void loadAnnouncements(announcementPagination.current, announcementPagination.pageSize, announcementSearchKeyword); }}>
+                        <Button icon={<ReloadOutlined />} loading={announcementLoading} onClick={() => { void loadAnnouncements(announcementPagination.current, announcementPagination.pageSize, announcementSearchKeyword); }}>
                           刷新列表
                         </Button>
-                        {announcementStatus && (
-                          <Tag color={announcementAdminAvailable ? 'green' : 'orange'}>
-                            {announcementStatus.mode === 'server' ? '服务端模式' : '客户端模式'}
-                          </Tag>
-                        )}
+                        <Tag color="green">本地公告</Tag>
                       </Space>
                     </Col>
                     <Col xs={24} lg={10} style={{ textAlign: 'right' }}>
