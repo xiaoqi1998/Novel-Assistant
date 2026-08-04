@@ -735,40 +735,47 @@ class SnapshotService:
         # 6. 剧情节点（从最新快照继承，如果有）
         snapshot["plot_nodes"] = []  # 将在快照合并时从 CHANGES 补充
 
-        # 7. 地点状态（从 Organization.location 提取，简化版）
+        # 7. 地点状态 + 8. 势力状态
+        # 组织本体存在 characters 表（is_organization=True），组织名称 = characters.name，
+        # 组织详情（power_level/member_count/location）存在 organizations 表（character_id 关联）。
         orgs_result = await db.execute(
-            select(Organization).where(
+            select(Character, Organization)
+            .outerjoin(Organization, Organization.character_id == Character.id)
+            .where(
                 and_(
-                    Organization.project_id == project_id,
-                    Organization.is_organization == True
+                    Character.project_id == project_id,
+                    Character.is_organization == True
                 )
             )
         )
-        organizations = orgs_result.scalars().all()
+        org_pairs = orgs_result.all()
+
+        # 8. 势力状态
+        faction_states = []
+        for char_org, org_detail in org_pairs:
+            faction_states.append({
+                "organization_id": (org_detail.id if org_detail else None) or char_org.id,
+                "name": char_org.name,
+                "power_level": (org_detail.power_level if org_detail else None) or 50,
+                "member_count": (org_detail.member_count if org_detail else None) or 0,
+                "status": "active",
+                "location": (org_detail.location if org_detail else None) or "",
+            })
+        snapshot["faction_states"] = faction_states
+
+        # 7. 地点状态（从组织所在地提取，简化版，去重）
         seen_locations = set()
         location_states = []
-        for org in organizations:
-            if org.location and org.location not in seen_locations:
-                seen_locations.add(org.location)
+        for char_org, org_detail in org_pairs:
+            loc = (org_detail.location if org_detail else None) or char_org.current_location or ""
+            if loc and loc not in seen_locations:
+                seen_locations.add(loc)
                 location_states.append({
-                    "location_name": org.location,
+                    "location_name": loc,
                     "current_status": "normal",
                     "last_changed_chapter": None,
                 })
         snapshot["location_states"] = location_states
-
-        # 8. 势力状态
-        snapshot["faction_states"] = [
-            {
-                "organization_id": org.id,
-                "name": org.name,
-                "power_level": org.power_level,
-                "member_count": org.member_count,
-                "status": "active",
-                "location": org.location,
-            }
-            for org in organizations
-        ]
 
         # 9. 时间线
         snapshot["timeline"] = {
