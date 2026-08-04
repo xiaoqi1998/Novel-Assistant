@@ -29,6 +29,7 @@ from app.models.secret import Secret
 from app.models.vow import Vow
 from app.models.character_location import CharacterLocation
 from app.models.chapter_snapshot import ChapterSnapshot
+from app.models.book_import_task import BookImportTaskRecord
 
 __all__ = [
     "Project",
@@ -70,4 +71,5 @@ __all__ = [
     "Vow",
     "CharacterLocation",
     "ChapterSnapshot",
+    "BookImportTaskRecord",
 ]

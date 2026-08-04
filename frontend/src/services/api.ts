@@ -65,6 +65,7 @@ import type {
   BookImportPreview,
   BookImportApplyPayload,
   BookImportCreateTaskPayload,
+  BookImportCreateTaskFromUrlPayload,
   BookImportResult,
   BookImportRetryResult,
   BatchAnalysisStatusResponse,
@@ -508,14 +509,25 @@ export const bookImportApi = {
   createTask: (params: BookImportCreateTaskPayload) => {
     const formData = new FormData();
     formData.append('file', params.file);
-    const tailChapterCount = params.tail_chapter_count ?? 10;
-    formData.append('extract_mode', params.extract_mode ?? 'tail');
+    const tailChapterCount = params.tail_chapter_count ?? 30;
+    formData.append('extract_mode', params.extract_mode ?? 'head');
     formData.append('tail_chapter_count', String(tailChapterCount));
 
     return api.post<unknown, { task_id: string; status: BookImportTask['status'] }>(
       '/book-import/tasks',
       formData,
       { headers: { 'Content-Type': 'multipart/form-data' } }
+    );
+  },
+
+  createTaskFromUrl: (params: BookImportCreateTaskFromUrlPayload) => {
+    return api.post<unknown, { task_id: string; status: BookImportTask['status'] }>(
+      '/book-import/tasks/from-url',
+      {
+        url: params.url,
+        extract_mode: params.extract_mode ?? 'head',
+        chapter_count: params.chapter_count ?? 30,
+      }
     );
   },
 

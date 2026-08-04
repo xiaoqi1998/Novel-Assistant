@@ -8,6 +8,43 @@ from app.logger import get_logger
 
 logger = get_logger(__name__)
 
+# 网文站点广告/声明噪音关键词（TXT 清洗与在线抓取共用）
+NOVEL_AD_LINE_PATTERNS = (
+    "笔趣阁",
+    "请记住本站",
+    "请收藏本站",
+    "最新章节",
+    "天才一秒",
+    "一秒记住",
+    "手机版阅读网址",
+    "本章未完，点击下一页",
+    "点击下一页继续阅读",
+    "继续阅读下一页",
+    "加入书签",
+    "投推荐票",
+    "本书来自",
+    "更多手打全文字",
+    "请搜索最新网址",
+    "最新网址",
+    "请勿开启浏览器阅读模式",
+    "广告位招租",
+    "加入书签投票",
+)
+
+
+def filter_ad_lines(text: str) -> str:
+    """移除短行中的广告/站点声明噪音（长正文行不处理，避免误伤）"""
+    if not text:
+        return text
+
+    cleaned_lines: list[str] = []
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if stripped and len(stripped) <= 150 and any(k in stripped for k in NOVEL_AD_LINE_PATTERNS):
+            continue
+        cleaned_lines.append(line)
+    return "\n".join(cleaned_lines)
+
 
 class TxtParserService:
     """TXT 解析服务（规则优先）"""
@@ -37,10 +74,11 @@ class TxtParserService:
         return content.decode("utf-8", errors="ignore"), "utf-8(ignore)"
 
     def clean_text(self, text: str) -> str:
-        """基础清洗：换行归一、去除异常空白、压缩多余空行"""
+        """基础清洗：换行归一、去除异常空白、压缩多余空行、过滤广告噪音行"""
         normalized = text.replace("\r\n", "\n").replace("\r", "\n").replace("\ufeff", "")
         normalized = normalized.replace("\u3000", "  ")
         normalized = re.sub(r"[ \t]+\n", "\n", normalized)
+        normalized = filter_ad_lines(normalized)
         normalized = re.sub(r"\n{4,}", "\n\n\n", normalized)
         return normalized.strip()
 

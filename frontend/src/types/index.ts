@@ -1510,7 +1510,15 @@ export interface TianmingCharacterStateResponse {
 
 export type BookImportTaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 export type BookImportWarningLevel = 'info' | 'warning' | 'error';
-export type BookImportExtractMode = 'tail' | 'full';
+export type BookImportExtractMode = 'head' | 'tail' | 'full';
+
+export type BookImportReportDimension =
+  | 'writing_style'
+  | 'outline_structure'
+  | 'opening_formula'
+  | 'character_design'
+  | 'thrill_points'
+  | 'foreshadowing';
 
 export interface BookImportWarning {
   code: string;
@@ -1565,12 +1573,19 @@ export interface BookImportApplyPayload {
   chapters: BookImportChapter[];
   outlines: BookImportOutline[];
   import_mode?: 'append' | 'overwrite';
+  report_dimensions?: BookImportReportDimension[];
 }
 
 export interface BookImportCreateTaskPayload {
   file: File;
   extract_mode?: BookImportExtractMode;
   tail_chapter_count?: number;
+}
+
+export interface BookImportCreateTaskFromUrlPayload {
+  url: string;
+  extract_mode?: BookImportExtractMode;
+  chapter_count?: number;
 }
 
 export interface BookImportResult {

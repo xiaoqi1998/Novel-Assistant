@@ -4,6 +4,7 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   Col,
   Collapse,
   Empty,
@@ -18,6 +19,7 @@ import {
   Space,
   Spin,
   Steps,
+  Tabs,
   Tag,
   Typography,
   Upload,
@@ -33,6 +35,7 @@ import type {
   BookImportPreview,
   BookImportStepFailure,
   BookImportTask,
+  BookImportReportDimension,
 } from '../types';
 
 const { Text, Title } = Typography;
@@ -51,6 +54,8 @@ type BookImportPageCache = {
   isApplyComplete: boolean;
   extractMode: BookImportExtractMode;
   tailChapterCount: number;
+  sourceType: 'txt' | 'url';
+  urlInput: string;
   cachedAt: number;
 };
 
@@ -115,8 +120,10 @@ export default function BookImport() {
   const { token } = theme.useToken();
   const isMobile = useIsMobile();
   const [file, setFile] = useState<File | null>(null);
-  const [extractMode, setExtractMode] = useState<BookImportExtractMode>('tail');
-  const [tailChapterCount, setTailChapterCount] = useState(10);
+  const [sourceType, setSourceType] = useState<'txt' | 'url'>('txt');
+  const [urlInput, setUrlInput] = useState('');
+  const [extractMode, setExtractMode] = useState<BookImportExtractMode>('head');
+  const [tailChapterCount, setTailChapterCount] = useState(30);
 
   const [taskId, setTaskId] = useState<string | null>(null);
   const [taskStatus, setTaskStatus] = useState<BookImportTask | null>(null);
@@ -124,6 +131,15 @@ export default function BookImport() {
 
   const [creatingTask, setCreatingTask] = useState(false);
   const [loadingPreview, setLoadingPreview] = useState(false);
+  const [selectedReportDimensions, setSelectedReportDimensions] = useState<BookImportReportDimension[]>([
+    'writing_style',
+    'outline_structure',
+    'opening_formula',
+    'character_design',
+    'thrill_points',
+    'foreshadowing',
+  ]);
+  const [reportMarkdown, setReportMarkdown] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
   const [applyProgress, setApplyProgress] = useState(0);
   const [applyMessage, setApplyMessage] = useState('');
@@ -211,8 +227,10 @@ export default function BookImport() {
         setApplyProgress(cache.applyProgress);
         setApplyError(cache.applyError);
         setIsApplyComplete(cache.isApplyComplete);
-        setExtractMode(cache.extractMode ?? 'tail');
-        setTailChapterCount(cache.tailChapterCount ?? 10);
+        setExtractMode(cache.extractMode ?? 'head');
+        setTailChapterCount(cache.tailChapterCount ?? 30);
+        setSourceType(cache.sourceType ?? 'txt');
+        setUrlInput(cache.urlInput ?? '');
         setApplyMessage(
           cache.applyMessage || (cache.applyProgress > 0 && !cache.isApplyComplete
             ? '已恢复页面缓存，请重新点击“确认导入”继续。'
@@ -259,6 +277,8 @@ export default function BookImport() {
       isApplyComplete,
       extractMode,
       tailChapterCount,
+      sourceType,
+      urlInput,
       cachedAt: Date.now(),
     });
   }, [
@@ -334,6 +354,34 @@ export default function BookImport() {
   }, [taskId, taskStatus, preview]);
 
   const startTask = async () => {
+    if (sourceType === 'url') {
+      if (!urlInput.trim()) {
+        message.warning('请输入小说目录页链接');
+        return;
+      }
+      try {
+        setCreatingTask(true);
+        setPreview(null);
+        setTaskStatus(null);
+        setExtractMode(effectiveExtractMode);
+        setTailChapterCount(normalizedTailChapterCount);
+
+        const response = await bookImportApi.createTaskFromUrl({
+          url: urlInput.trim(),
+          extract_mode: effectiveExtractMode,
+          chapter_count: normalizedTailChapterCount,
+        });
+        setTaskId(response.task_id);
+        message.success('在线拆书任务已创建');
+      } catch (error) {
+        console.error('创建在线拆书任务失败:', error);
+        message.error('创建在线拆书任务失败');
+      } finally {
+        setCreatingTask(false);
+      }
+      return;
+    }
+
     if (!file) {
       message.warning('请先选择 TXT 文件');
       return;
@@ -404,6 +452,7 @@ export default function BookImport() {
       chapters: preview.chapters,
       outlines: preview.outlines,
       import_mode: 'append',
+      report_dimensions: selectedReportDimensions,
     };
 
     try {
@@ -438,6 +487,10 @@ export default function BookImport() {
             importedProjectId.current = result.project_id;
             const generatedCareers = result.statistics?.generated_careers ?? 0;
             const generatedEntities = result.statistics?.generated_entities ?? 0;
+
+            if (result.report_markdown) {
+              setReportMarkdown(result.report_markdown);
+            }
 
             // 检查最终是否有失败步骤
             setIsApplyComplete(true);
@@ -557,6 +610,8 @@ export default function BookImport() {
     importedProjectId.current = null;
 
     setFile(null);
+    setUrlInput('');
+    setSourceType('txt');
     setTaskId(null);
     setTaskStatus(null);
     setPreview(null);
@@ -573,10 +628,11 @@ export default function BookImport() {
     setRetrying(false);
     setRetryProgress(0);
     setRetryMessage('');
-    setExtractMode('tail');
-    setTailChapterCount(10);
+    setExtractMode('head');
+    setTailChapterCount(30);
+    setReportMarkdown(null);
 
-    message.success('已重新开始，请重新上传 TXT 并解析');
+    message.success('已重新开始，请重新上传 TXT 或输入在线链接');
   }, []);
 
   const updateChapter = (index: number, patch: Partial<BookImportPreview['chapters'][number]>) => {
@@ -678,37 +734,54 @@ export default function BookImport() {
         </Card>
 
       {currentStep === 0 && (
-      <Card title="上传 TXT 并开始解析" style={{ marginBottom: 16 }}>
+      <Card title="上传或输入在线链接并开始解析" style={{ marginBottom: 16 }}>
         <Space direction="vertical" style={{ width: '100%' }} size={16}>
-          <Dragger
-            accept=".txt"
-            multiple={false}
-            beforeUpload={(f) => {
-              setFile(f);
-              return false;
-            }}
-            onRemove={() => {
-              setFile(null);
-            }}
-            fileList={
-              file
-                ? [
-                    {
-                      uid: 'selected-txt',
-                      name: file.name,
-                      status: 'done',
-                    } as UploadFile,
-                  ]
-                : []
-            }
-            style={{ padding: '8px 0' }}
-          >
-            <p className="ant-upload-drag-icon">
-              <InboxOutlined />
-            </p>
-            <p className="ant-upload-text">点击或拖拽 TXT 文件到此区域</p>
-            <p className="ant-upload-hint">首版仅支持 .txt，建议不超过 50MB</p>
-          </Dragger>
+          <Tabs
+            activeKey={sourceType}
+            onChange={(key) => setSourceType(key as 'txt' | 'url')}
+            items={[
+              { key: 'txt', label: '上传 TXT' },
+              { key: 'url', label: '在线链接' },
+            ]}
+          />
+          {sourceType === 'txt' ? (
+            <Dragger
+              accept=".txt"
+              multiple={false}
+              beforeUpload={(f) => {
+                setFile(f);
+                return false;
+              }}
+              onRemove={() => {
+                setFile(null);
+              }}
+              fileList={
+                file
+                  ? [
+                      {
+                        uid: 'selected-txt',
+                        name: file.name,
+                        status: 'done',
+                      } as UploadFile,
+                    ]
+                  : []
+              }
+              style={{ padding: '8px 0' }}
+            >
+              <p className="ant-upload-drag-icon">
+                <InboxOutlined />
+              </p>
+              <p className="ant-upload-text">点击或拖拽 TXT 文件到此区域</p>
+              <p className="ant-upload-hint">首版仅支持 .txt，建议不超过 50MB</p>
+            </Dragger>
+          ) : (
+            <Input
+              placeholder="请输入小说目录页链接（http:// 或 https://）"
+              value={urlInput}
+              onChange={(e) => setUrlInput(e.target.value)}
+              allowClear
+            />
+          )}
 
           <Card size="small" title="解析范围设置">
             <Space direction="vertical" style={{ width: '100%' }} size={12}>
@@ -724,6 +797,7 @@ export default function BookImport() {
                 value={extractMode}
                 onChange={(value) => setExtractMode(value)}
                 options={[
+                  { label: '前 x 章反向生成', value: 'head' },
                   { label: '截取末 x 章反向生成', value: 'tail' },
                   { label: '整本反向生成', value: 'full' },
                 ]}
@@ -736,17 +810,17 @@ export default function BookImport() {
                 step={5}
                 precision={0}
                 value={tailChapterCount}
-                disabled={rangeLocked || extractMode !== 'tail'}
-                onChange={(value) => setTailChapterCount(typeof value === 'number' ? value : 10)}
-                addonBefore="末尾章节数"
+                disabled={rangeLocked || extractMode === 'full'}
+                onChange={(value) => setTailChapterCount(typeof value === 'number' ? value : 30)}
+                addonBefore={extractMode === 'head' ? '前章节数' : '末尾章节数'}
                 style={{ width: '100%' }}
               />
               <Text type="secondary">
-                {effectiveExtractMode === 'tail'
-                  ? `当前将截取末 ${normalizedTailChapterCount} 章进行反向生成；章节数必须为 5 的倍数，最多 50 章。`
-                  : extractMode === 'tail' && tailChapterCount > 50
-                    ? '当前输入已超过 50 章，将自动按整本拆处理。'
-                    : '当前将基于整本内容进行反向生成，适合完整拆书但耗时可能更长。'}
+                {effectiveExtractMode === 'full'
+                  ? '当前将基于整本内容进行反向生成，适合完整拆书但耗时可能更长。'
+                  : effectiveExtractMode === 'head'
+                    ? `当前将截取前 ${normalizedTailChapterCount} 章进行反向生成；章节数必须为 5 的倍数，最多 50 章。`
+                    : `当前将截取末 ${normalizedTailChapterCount} 章进行反向生成；章节数必须为 5 的倍数，最多 50 章。`}
               </Text>
             </Space>
           </Card>
@@ -783,7 +857,7 @@ export default function BookImport() {
               loading={creatingTask}
               onClick={startTask}
             >
-              开始解析
+              {sourceType === 'url' ? '开始在线解析' : '开始解析'}
             </Button>
             {taskId && (
               <Tag color="blue">任务ID: {taskId}</Tag>
@@ -811,7 +885,7 @@ export default function BookImport() {
             <div style={{ marginTop: 24 }}>
               <Text strong style={{ fontSize: 16 }}>
                 {taskStatus?.status === 'pending' && '等待调度...'}
-                {taskStatus?.status === 'running' && '正在解析TXT文件...'}
+                {taskStatus?.status === 'running' && '正在抓取并解析内容...'}
                 {taskStatus?.status === 'completed' && '解析完成！正在生成预览...'}
                 {taskStatus?.status === 'failed' && '解析失败'}
                 {taskStatus?.status === 'cancelled' && '已取消'}
@@ -975,6 +1049,26 @@ export default function BookImport() {
                     />
                   </Col>
                 </Row>
+              </Card>
+
+              <Card size="small" title="拆书报告维度（可选）">
+                <Checkbox.Group
+                  value={selectedReportDimensions}
+                  onChange={(values) => setSelectedReportDimensions(values as BookImportReportDimension[])}
+                  style={{ width: '100%' }}
+                >
+                  <Row>
+                    <Col xs={24} md={12}><Checkbox value="writing_style">文风分析</Checkbox></Col>
+                    <Col xs={24} md={12}><Checkbox value="outline_structure">大纲结构拆解</Checkbox></Col>
+                    <Col xs={24} md={12}><Checkbox value="opening_formula">开篇套路</Checkbox></Col>
+                    <Col xs={24} md={12}><Checkbox value="character_design">角色塑造</Checkbox></Col>
+                    <Col xs={24} md={12}><Checkbox value="thrill_points">爽点与钩子</Checkbox></Col>
+                    <Col xs={24} md={12}><Checkbox value="foreshadowing">伏笔埋设</Checkbox></Col>
+                  </Row>
+                </Checkbox.Group>
+                <Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
+                  勾选维度后，导入完成后会生成对应的 Markdown 拆书报告。
+                </Text>
               </Card>
 
               <Card size="small" title={`章节（${preview.chapters.length}）`}>
@@ -1142,6 +1236,24 @@ export default function BookImport() {
             </div>
           )}
           
+          {reportMarkdown && isApplyComplete && (
+            <div style={{ textAlign: 'left', marginBottom: 24 }}>
+              <Card
+                size="small"
+                title="拆书分析报告"
+                extra={
+                  <Button size="small" onClick={() => { const el = document.createElement('textarea'); el.value = reportMarkdown; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el); message.success('报告已复制'); }}>
+                    复制
+                  </Button>
+                }
+              >
+                <div style={{ maxHeight: 400, overflowY: 'auto', whiteSpace: 'pre-wrap', fontSize: 14, lineHeight: 1.6 }}>
+                  {reportMarkdown}
+                </div>
+              </Card>
+            </div>
+          )}
+
           {!failedSteps.length && !retrying && (
             <div style={{
               background: 'var(--color-bg-layout)',

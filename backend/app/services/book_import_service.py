@@ -19,6 +19,7 @@ from app.api.common import verify_project_access
 from app.config import settings as app_settings
 from app.database import get_engine
 from app.logger import get_logger
+from app.models.book_import_task import BookImportTaskRecord
 from app.models.chapter import Chapter
 from app.models.character import Character
 from app.models.career import Career, CharacterCareer
@@ -31,6 +32,7 @@ from app.models.relationship import CharacterRelationship, Organization, Organiz
 from app.models.settings import Settings
 from app.models.writing_style import WritingStyle
 from app.schemas.book_import import (
+    REPORT_DIMENSIONS,
     BookImportApplyRequest,
     BookImportApplyResponse,
     BookImportChapter,
@@ -45,6 +47,7 @@ from app.schemas.book_import import (
 from app.services.ai_service import AIService, create_user_ai_service_with_mcp
 from app.services.prompt_service import PromptService
 from app.services.txt_parser_service import txt_parser_service
+from app.services.web_fetch_service import web_fetch_service
 
 logger = get_logger(__name__)
 
@@ -52,7 +55,7 @@ logger = get_logger(__name__)
 @dataclass
 class _StepFailure:
     """记录某个生成步骤的失败信息"""
-    step_name: str          # 步骤标识: world_building / career_system / characters
+    step_name: str          # 步骤标识: world_building / career_system / characters / analysis_report
     step_label: str         # 步骤中文名
     error_message: str      # 错误详情
     retry_count: int = 0    # 已重试次数
@@ -66,8 +69,8 @@ class _BookImportTask:
     project_id: Optional[str]
     create_new_project: bool
     import_mode: str
-    extract_mode: BookImportExtractMode = "tail"
-    tail_chapter_count: int = 10
+    extract_mode: BookImportExtractMode = "head"
+    tail_chapter_count: int = 30
     status: str = "pending"
     progress: int = 0
     message: Optional[str] = "任务已创建"
@@ -80,6 +83,9 @@ class _BookImportTask:
     imported_project_id: Optional[str] = None
     # 步骤级失败记录
     failed_steps: list[_StepFailure] = field(default_factory=list)
+    # 来源信息
+    source_type: str = "txt"       # 'txt' 或 'url'
+    source_url: Optional[str] = None  # 在线拆书来源链接
 
 
 class BookImportService:
@@ -98,8 +104,8 @@ class BookImportService:
         project_id: Optional[str],
         create_new_project: bool,
         import_mode: str,
-        extract_mode: BookImportExtractMode = "tail",
-        tail_chapter_count: int = 10,
+        extract_mode: BookImportExtractMode = "head",
+        tail_chapter_count: int = 30,
     ) -> BookImportTaskCreateResponse:
         normalized_tail_count = max(5, int(tail_chapter_count))
         normalized_extract_mode = extract_mode
@@ -118,11 +124,50 @@ class BookImportService:
             import_mode=import_mode,
             extract_mode=normalized_extract_mode,
             tail_chapter_count=normalized_tail_count,
+            source_type="txt",
+            source_url=None,
         )
         async with self._tasks_lock:
             self._tasks[task_id] = task
 
+        await self._persist_task(task)
         asyncio.create_task(self._run_pipeline(task_id=task_id, file_content=file_content))
+        return BookImportTaskCreateResponse(task_id=task_id, status="pending")
+
+    async def create_task_from_url(
+        self,
+        *,
+        user_id: str,
+        url: str,
+        extract_mode: BookImportExtractMode = "head",
+        chapter_count: int = 30,
+    ) -> BookImportTaskCreateResponse:
+        """创建在线拆书任务（URL 来源）"""
+        normalized_chapter_count = max(5, int(chapter_count))
+        normalized_extract_mode = extract_mode
+        if normalized_chapter_count % 5 != 0:
+            normalized_chapter_count = ((normalized_chapter_count + 4) // 5) * 5
+        if normalized_chapter_count > 50:
+            normalized_extract_mode = "full"
+
+        task_id = str(uuid.uuid4())
+        task = _BookImportTask(
+            task_id=task_id,
+            user_id=user_id,
+            filename=Path(url).name[:500] or "在线拆书",
+            project_id=None,
+            create_new_project=True,
+            import_mode="append",
+            extract_mode=normalized_extract_mode,
+            tail_chapter_count=normalized_chapter_count,
+            source_type="url",
+            source_url=url,
+        )
+        async with self._tasks_lock:
+            self._tasks[task_id] = task
+
+        await self._persist_task(task)
+        asyncio.create_task(self._run_url_pipeline(task_id=task_id, url=url))
         return BookImportTaskCreateResponse(task_id=task_id, status="pending")
 
     async def get_task_status(self, *, task_id: str, user_id: str) -> BookImportTaskStatusResponse:
@@ -144,6 +189,7 @@ class BookImportService:
 
         task.cancelled = True
         self._set_task_state(task, status="cancelled", progress=task.progress, message="任务已取消")
+        await self._persist_task(task)
         return {"success": True, "message": "取消成功"}
 
     async def apply_import(
@@ -401,14 +447,43 @@ class BookImportService:
             project.wizard_status = "completed"
             project.status = "writing"
 
-            # -- 步骤7: 提交数据库 (92-98%)
-            await _notify("正在保存到数据库...", 95)
+            # -- 步骤7: 拆书报告 (92-98%)
+            report_markdown: Optional[str] = None
+            if payload.report_dimensions:
+                try:
+                    await _notify("📊 正在生成拆书分析报告...", 93)
+                    report_markdown = await self._generate_analysis_report(
+                        db=db,
+                        user_id=user_id,
+                        project=project,
+                        chapters=chapters_to_import,
+                        dimensions=payload.report_dimensions,
+                        ai_service=ai_service,
+                        progress_callback=progress_callback,
+                        progress_range=(93, 98),
+                    )
+                    if report_markdown:
+                        project.analysis_report = report_markdown
+                        statistics["report_generated"] = True
+                        await _notify("✅ 拆书报告生成完成", 98)
+                except Exception as exc:
+                    logger.warning(f"拆书报告生成失败: {exc}")
+                    failed_steps.append(_StepFailure(
+                        step_name="analysis_report",
+                        step_label="拆书报告生成",
+                        error_message=str(exc),
+                    ))
+                    await _notify(f"⚠️ 拆书报告生成失败：{str(exc)[:80]}", 98, "warning")
+
+            # -- 步骤8: 提交数据库 (98-99%)
+            await _notify("正在保存到数据库...", 98)
             await db.commit()
-            await _notify("数据保存完成", 98)
+            await _notify("数据保存完成", 99)
 
             # 记录失败步骤和项目ID到任务中，供重试使用
             task.imported_project_id = project.id
             task.failed_steps = failed_steps
+            await self._persist_task(task)
 
             # 如果有步骤失败，通过 SSE 推送失败步骤详情
             if failed_steps:
@@ -434,6 +509,7 @@ class BookImportService:
                 project_id=project.id,
                 statistics=statistics,
                 warnings=warnings,
+                report_markdown=report_markdown,
             )
         except HTTPException:
             await db.rollback()
@@ -563,6 +639,48 @@ class BookImportService:
                         ))
                         await _notify(f"⚠️ 角色/组织重试失败：{str(exc)[:80]}", step_end_pct, "warning")
 
+                elif step_name == "analysis_report":
+                    # 重试拆书报告生成，需要从项目章节中重新采样
+                    await _notify("🔄 正在重试拆书报告生成...", step_start_pct)
+                    try:
+                        # 从任务预览中获取章节数据用于报告生成
+                        report_dims = ["writing_style", "outline_structure", "opening_formula", "character_design", "thrill_points", "foreshadowing"]
+                        if task.preview and task.preview.chapters:
+                            sampled_chapters = [
+                                BookImportChapter(
+                                    title=c.title or "",
+                                    content=c.content or "",
+                                    summary=c.summary,
+                                    chapter_number=c.chapter_number or 0,
+                                    outline_title=c.outline_title,
+                                )
+                                for c in task.preview.chapters
+                            ]
+                            report = await self._generate_analysis_report(
+                                db=db,
+                                user_id=user_id,
+                                project=project,
+                                chapters=sampled_chapters,
+                                dimensions=report_dims,
+                                ai_service=ai_service,
+                                progress_callback=progress_callback,
+                                progress_range=(step_start_pct, step_end_pct),
+                            )
+                            project.analysis_report = report
+                            retry_results["report_generated"] = True
+                            await _notify("✅ 拆书报告重试成功", step_end_pct)
+                        else:
+                            raise ValueError("任务预览中没有章节数据，无法生成报告")
+                    except Exception as exc:
+                        logger.warning(f"拆书报告重试失败 (第{retry_count}次): {exc}")
+                        still_failed.append(_StepFailure(
+                            step_name="analysis_report",
+                            step_label="拆书报告生成",
+                            error_message=str(exc),
+                            retry_count=retry_count,
+                        ))
+                        await _notify(f"⚠️ 拆书报告重试失败：{str(exc)[:80]}", step_end_pct, "warning")
+
             # 提交数据库
             await _notify("正在保存到数据库...", 93)
             await db.commit()
@@ -570,6 +688,7 @@ class BookImportService:
 
             # 更新任务的失败步骤记录
             task.failed_steps = still_failed
+            await self._persist_task(task)
 
             if still_failed:
                 failed_info = [
@@ -637,8 +756,10 @@ class BookImportService:
             self._check_cancelled(task)
             task.preview = preview
             self._set_task_state(task, status="completed", progress=100, message="解析完成，可预览并确认导入")
+            await self._persist_task(task)
         except asyncio.CancelledError:
             self._set_task_state(task, status="cancelled", progress=task.progress, message="任务已取消")
+            await self._persist_task(task)
         except Exception as exc:
             logger.error(f"拆书任务失败 task_id={task_id}: {exc}", exc_info=True)
             self._set_task_state(
@@ -648,6 +769,7 @@ class BookImportService:
                 message="解析失败",
                 error=str(exc),
             )
+            await self._persist_task(task)
 
     async def _prepare_project(
         self,
@@ -841,7 +963,10 @@ class BookImportService:
             selected = sorted_chapters
         else:
             normalized_tail_count = min(normalized_tail_count, len(sorted_chapters))
-            selected = sorted_chapters[-normalized_tail_count:]
+            if extract_mode == "head":
+                selected = sorted_chapters[:normalized_tail_count]
+            else:
+                selected = sorted_chapters[-normalized_tail_count:]
 
         was_trimmed = len(sorted_chapters) > len(selected)
 
@@ -860,7 +985,7 @@ class BookImportService:
         normalized_outlines: list[BookImportOutline] = []
         sorted_outlines = sorted(outlines, key=lambda x: x.order_index) if outlines else []
         if sorted_outlines:
-            if extract_mode == "full":
+            if extract_mode == "full" or extract_mode == "head":
                 selected_outlines = sorted_outlines[:len(normalized_chapters)]
             else:
                 selected_outlines = sorted_outlines[-len(normalized_chapters):]
@@ -906,12 +1031,17 @@ class BookImportService:
 
         normalized_tail_count = min(normalized_tail_count, len(chapters_data))
 
-        selected = chapters_data[-normalized_tail_count:]
+        if extract_mode == "head":
+            selected = chapters_data[:normalized_tail_count]
+        else:
+            selected = chapters_data[-normalized_tail_count:]
         return selected, len(selected) < len(chapters_data)
 
     def _get_extract_mode_label(self, extract_mode: BookImportExtractMode, selected_total: int) -> str:
         if extract_mode == "full" or selected_total > 50:
             return "整本"
+        if extract_mode == "head":
+            return f"前{selected_total}章"
         return f"末{selected_total}章"
 
     def _derive_world_settings(
@@ -2245,6 +2375,13 @@ class BookImportService:
             task = self._tasks.get(task_id)
 
         if not task:
+            # 内存未命中，尝试从 DB 加载
+            task = await self._load_task_from_db(task_id, user_id)
+            if task:
+                async with self._tasks_lock:
+                    self._tasks[task_id] = task
+
+        if not task:
             raise HTTPException(status_code=404, detail="任务不存在")
         if task.user_id != user_id:
             raise HTTPException(status_code=403, detail="无权访问该任务")
@@ -2279,6 +2416,261 @@ class BookImportService:
     def _check_cancelled(self, task: _BookImportTask) -> None:
         if task.cancelled or task.status == "cancelled":
             raise asyncio.CancelledError("任务已取消")
+
+    # ---- 持久化：任务状态读写 DB ----
+
+    async def _persist_task(self, task: _BookImportTask) -> None:
+        """将任务状态持久化到 book_import_tasks 表"""
+        try:
+            engine = await get_engine(task.user_id)
+            session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+            async with session_factory() as db:
+                existing = await db.execute(
+                    select(BookImportTaskRecord).where(BookImportTaskRecord.task_id == task.task_id)
+                )
+                record = existing.scalar_one_or_none()
+
+                preview_json = None
+                if task.preview is not None:
+                    try:
+                        preview_json = json.loads(task.preview.model_dump_json())
+                    except Exception:
+                        preview_json = task.preview.model_dump()
+
+                failed_steps_json = [
+                    {
+                        "step_name": f.step_name,
+                        "step_label": f.step_label,
+                        "error_message": f.error_message,
+                        "retry_count": f.retry_count,
+                    }
+                    for f in task.failed_steps
+                ] or None
+
+                if record is None:
+                    record = BookImportTaskRecord(
+                        task_id=task.task_id,
+                        user_id=task.user_id,
+                        source_type=task.source_type,
+                        source_url=task.source_url,
+                        filename=task.filename,
+                        extract_mode=task.extract_mode,
+                        tail_chapter_count=task.tail_chapter_count,
+                        import_mode=task.import_mode,
+                        project_id=task.project_id,
+                        create_new_project=task.create_new_project,
+                        status=task.status,
+                        progress=task.progress,
+                        message=task.message,
+                        error=task.error,
+                        preview=preview_json,
+                        imported_project_id=task.imported_project_id,
+                        failed_steps=failed_steps_json,
+                    )
+                    db.add(record)
+                else:
+                    record.status = task.status
+                    record.progress = task.progress
+                    record.message = task.message
+                    record.error = task.error
+                    record.preview = preview_json
+                    record.imported_project_id = task.imported_project_id
+                    record.failed_steps = failed_steps_json
+
+                await db.commit()
+        except Exception as exc:
+            logger.warning(f"拆书任务持久化失败 task_id={task.task_id}: {exc}", exc_info=True)
+
+    async def _load_task_from_db(self, task_id: str, user_id: str) -> Optional[_BookImportTask]:
+        """从 DB 加载任务记录，重建内存对象（预览数据完整反序列化）"""
+        try:
+            engine = await get_engine(user_id)
+            session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+            async with session_factory() as db:
+                result = await db.execute(
+                    select(BookImportTaskRecord).where(BookImportTaskRecord.task_id == task_id)
+                )
+                record = result.scalar_one_or_none()
+                if not record or record.user_id != user_id:
+                    return None
+
+                preview: Optional[BookImportPreviewResponse] = None
+                if record.preview is not None:
+                    try:
+                        preview = BookImportPreviewResponse.model_validate(record.preview)
+                    except Exception as exc:
+                        logger.warning(f"拆书预览反序列化失败: {exc}", exc_info=True)
+
+                failed_steps: list[_StepFailure] = []
+                if record.failed_steps:
+                    for item in record.failed_steps:
+                        failed_steps.append(
+                            _StepFailure(
+                                step_name=item.get("step_name", ""),
+                                step_label=item.get("step_label", ""),
+                                error_message=item.get("error_message", ""),
+                                retry_count=int(item.get("retry_count", 0)),
+                            )
+                        )
+
+                task = _BookImportTask(
+                    task_id=record.task_id,
+                    user_id=record.user_id,
+                    filename=record.filename or "",
+                    project_id=record.project_id,
+                    create_new_project=bool(record.create_new_project) if record.create_new_project is not None else True,
+                    import_mode=record.import_mode or "append",
+                    extract_mode=(record.extract_mode or "head") if record.extract_mode in ("head", "tail", "full") else "head",
+                    tail_chapter_count=int(record.tail_chapter_count or 30),
+                    status=record.status or "pending",
+                    progress=int(record.progress or 0),
+                    message=record.message,
+                    error=record.error,
+                    preview=preview,
+                    imported_project_id=record.imported_project_id,
+                    failed_steps=failed_steps,
+                    source_type=record.source_type or "txt",
+                    source_url=record.source_url,
+                )
+                return task
+        except Exception as exc:
+            logger.warning(f"拆书任务从 DB 加载失败 task_id={task_id}: {exc}", exc_info=True)
+            return None
+
+    async def _run_url_pipeline(self, *, task_id: str, url: str) -> None:
+        """URL 来源的拆书流程：抓取 -> 预览"""
+        task = self._tasks.get(task_id)
+        if not task:
+            return
+
+        try:
+            self._set_task_state(task, status="running", progress=2, message="正在抓取在线小说章节...")
+            await self._persist_task(task)
+            self._check_cancelled(task)
+
+            async def _progress_callback(message: str, progress: int, _status: str = "processing") -> None:
+                self._set_task_state(task, status="running", progress=max(2, min(90, progress)), message=message)
+
+            chapters_data, warnings_text = await web_fetch_service.fetch_novel_from_url(
+                url=url,
+                extract_mode=task.extract_mode,
+                chapter_count=task.tail_chapter_count,
+                progress_callback=_progress_callback,
+            )
+
+            if not chapters_data:
+                raise ValueError("未能从链接中识别到有效章节，请检查链接是否为小说目录页")
+
+            self._set_task_state(
+                task, status="running", progress=15,
+                message=f"已获取 {len(chapters_data)} 个章节，正在构建预览结构...",
+            )
+            self._check_cancelled(task)
+
+            self._set_task_state(task, status="running", progress=18, message="正在构建预览...")
+            preview = await self._build_preview(
+                task=task,
+                filename=task.filename,
+                task_id=task.task_id,
+                chapters_data=chapters_data,
+            )
+
+            if warnings_text:
+                for w in warnings_text:
+                    preview.warnings.append(
+                        BookImportWarning(code="web_fetch_warning", message=w, level="info")
+                    )
+
+            self._check_cancelled(task)
+            task.preview = preview
+            self._set_task_state(task, status="completed", progress=100, message="抓取完成，可预览并确认导入")
+            await self._persist_task(task)
+        except asyncio.CancelledError:
+            self._set_task_state(task, status="cancelled", progress=task.progress, message="任务已取消")
+            await self._persist_task(task)
+        except Exception as exc:
+            logger.error(f"在线拆书任务失败 task_id={task_id}: {exc}", exc_info=True)
+            self._set_task_state(
+                task,
+                status="failed",
+                progress=task.progress,
+                message="在线抓取失败",
+                error=str(exc),
+            )
+            await self._persist_task(task)
+
+    # ---- 拆书报告 ----
+
+    async def _generate_analysis_report(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: str,
+        project: Project,
+        chapters: list[BookImportChapter],
+        dimensions: list[str],
+        ai_service: Optional[AIService] = None,
+        progress_callback: Any = None,
+        progress_range: tuple[int, int] = (0, 100),
+    ) -> str:
+        """按勾选维度生成拆书分析报告（Markdown）"""
+        valid_dims = [d for d in dimensions if d in REPORT_DIMENSIONS]
+        if not valid_dims:
+            return ""
+
+        async def _notify(msg: str, sub: float) -> None:
+            if progress_callback:
+                p = progress_range[0] + int((progress_range[1] - progress_range[0]) * sub)
+                await progress_callback(msg, p)
+
+        await _notify("📊 正在初始化AI服务...", 0.1)
+        ai_service = ai_service or await self._build_user_ai_service(db=db, user_id=user_id)
+
+        dimension_labels = {
+            "writing_style": "文风分析",
+            "outline_structure": "大纲结构拆解",
+            "opening_formula": "开篇套路",
+            "character_design": "角色塑造",
+            "thrill_points": "爽点与钩子",
+            "foreshadowing": "伏笔埋设",
+        }
+        dimensions_text = "\n".join(
+            f"- {d}：{dimension_labels.get(d, d)}" for d in valid_dims
+        )
+
+        sampled_chapters = chapters[:5]
+        sampled_text = "\n\n".join(
+            f"【第{idx + 1}章 {chapter.title}】\n{(chapter.content or '')[:2000]}"
+            for idx, chapter in enumerate(sampled_chapters)
+        ).strip()
+
+        if not sampled_text:
+            return ""
+
+        await _notify("📊 正在准备拆书分析提示词...", 0.2)
+        template = await PromptService.get_template("BOOK_IMPORT_ANALYSIS_REPORT", user_id, db)
+        prompt = PromptService.format_prompt(
+            template,
+            title=project.title or "拆书导入项目",
+            genre=project.genre or "未设定",
+            dimensions_text=dimensions_text,
+            sampled_text=sampled_text,
+        )
+
+        await _notify("📊 AI正在生成拆书分析报告...", 0.3)
+        response = await ai_service.generate_text(prompt=prompt)
+        content = (response.get("content") or "").strip()
+        if not content:
+            raise ValueError("AI返回的拆书报告为空")
+
+        # 去除可能的整报告代码块包裹
+        if content.startswith("```") and "```" in content[3:]:
+            lines = content.split("\n")
+            if lines[0].startswith("```") and lines[-1].strip() == "```":
+                content = "\n".join(lines[1:-1])
+
+        await _notify("📊 拆书报告生成完成", 1.0)
+        return content
 
 
 book_import_service = BookImportService()
