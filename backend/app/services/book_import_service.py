@@ -2589,13 +2589,14 @@ class BookImportService:
             self._set_task_state(task, status="cancelled", progress=task.progress, message="任务已取消")
             await self._persist_task(task)
         except Exception as exc:
-            logger.error(f"在线拆书任务失败 task_id={task_id}: {exc}", exc_info=True)
+            logger.error(f"在线拆书任务失败 task_id={task_id}: {exc!r}", exc_info=True)
+            error_msg = str(exc) or f"{type(exc).__name__}（未知网络错误）"
             self._set_task_state(
                 task,
                 status="failed",
                 progress=task.progress,
                 message="在线抓取失败",
-                error=str(exc),
+                error=error_msg,
             )
             await self._persist_task(task)
 
