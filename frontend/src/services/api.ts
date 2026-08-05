@@ -1265,7 +1265,7 @@ export const shortStoryApi = {
   generateCharacters: (id: string, params: { title?: string; logline?: string; genre?: string }) =>
     api.post<unknown, { characters: ShortStoryCharacter[] }>(`/short-stories/${id}/generate-characters`, params),
 
-  // AI一键补全设定（Task 38.3）：基于最小输入生成 logline/twist/clues/characters
+  // AI一键补全设定（Task 38.3）：基于最小输入生成 logline/twist/clues/characters/爆款关键点
   autoCompleteSetup: (id: string, params: { title: string; genre?: string; emotion_goal?: string }) =>
     api.post<unknown, {
       logline: string;
@@ -1273,6 +1273,11 @@ export const shortStoryApi = {
       twist_content: string;
       clues: string[];
       characters: ShortStoryCharacter[];
+      reversal_grade?: string;
+      beat_design?: string;
+      emotional_payoff?: string;
+      dual_line?: string;
+      character_profile?: string;
     }>(`/short-stories/${id}/auto-complete-setup`, params),
 
   // ============ Task 39: 功能补全 ============

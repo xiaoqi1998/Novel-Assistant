@@ -29,6 +29,13 @@ class ShortStory(Base):
     twist_content = Column(Text, comment="反转内容描述")
     twist_clues = Column(Text, comment="铺垫线索JSON数组")
 
+    # 爆款关键点（story-short-write 方法论，JSON 文本，向后兼容可空）
+    reversal_grade = Column(String(50), comment="反转等级：S认知反转/A身份关系反转/B事件真相反转/C单纯信息揭露")
+    beat_design = Column(Text, comment="爆点设计JSON：{max_thrill_point, max_tearjerker_point, max_shock_point, max_viral_line}")
+    emotional_payoff = Column(Text, comment="情绪收益点JSON数组：读者期待的收益兑现")
+    dual_line = Column(Text, comment="双线叙事JSON：{surface_line, inner_line, junction_nodes, reveal_point}")
+    character_profile = Column(Text, comment="人物四要素JSON：主角欲望/反派逻辑/关键关系变化")
+
     # 情绪曲线 JSON
     emotion_curve = Column(Text, comment="情绪曲线JSON：[{stage, emotion, intensity}]")
 

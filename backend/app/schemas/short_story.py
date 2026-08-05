@@ -20,6 +20,11 @@ class ShortStoryCreate(ShortStoryBase):
     twist_type: Optional[str] = Field(None, description="反转类型")
     twist_content: Optional[str] = Field(None, description="反转内容")
     twist_clues: Optional[str] = Field(None, description="铺垫线索JSON")
+    reversal_grade: Optional[str] = Field(None, description="反转等级：S/A/B/C")
+    beat_design: Optional[str] = Field(None, description="爆点设计JSON")
+    emotional_payoff: Optional[str] = Field(None, description="情绪收益点JSON")
+    dual_line: Optional[str] = Field(None, description="双线叙事JSON")
+    character_profile: Optional[str] = Field(None, description="人物四要素JSON")
     emotion_curve: Optional[str] = Field(None, description="情绪曲线JSON")
     characters: Optional[str] = Field(None, description="人设速写JSON")
     content: Optional[str] = Field(None, description="完整正文")
@@ -40,6 +45,11 @@ class ShortStoryUpdate(BaseModel):
     twist_type: Optional[str] = None
     twist_content: Optional[str] = None
     twist_clues: Optional[str] = None
+    reversal_grade: Optional[str] = None
+    beat_design: Optional[str] = None
+    emotional_payoff: Optional[str] = None
+    dual_line: Optional[str] = None
+    character_profile: Optional[str] = None
     emotion_curve: Optional[str] = None
     characters: Optional[str] = None
     content: Optional[str] = None
@@ -60,6 +70,11 @@ class ShortStoryResponse(ShortStoryBase):
     twist_type: Optional[str] = None
     twist_content: Optional[str] = None
     twist_clues: Optional[str] = None
+    reversal_grade: Optional[str] = None
+    beat_design: Optional[str] = None
+    emotional_payoff: Optional[str] = None
+    dual_line: Optional[str] = None
+    character_profile: Optional[str] = None
     emotion_curve: Optional[str] = None
     characters: Optional[str] = None
     content: Optional[str] = None
