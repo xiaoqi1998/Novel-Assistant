@@ -130,7 +130,7 @@ generate_announcement() {
     # 容器内执行，复用 DATABASE_URL 与依赖；失败不影响部署
     log "📢 正在发布更新公告..."
     if ! $DOCKER_COMPOSE exec -T novel-assistant \
-        python scripts/generate_update_announcement.py \
+        python /app/scripts/generate_update_announcement.py \
         --prev "$UPDATE_PREV_COMMIT" --new "$UPDATE_NEW_COMMIT" 2>&1 | tee -a "$LOG_FILE"; then
         log "⚠️  更新公告生成失败（不影响部署）"
     fi
