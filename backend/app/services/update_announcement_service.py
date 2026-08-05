@@ -1,13 +1,15 @@
-"""Git 拉取后自动生成更新公告
+"""Git 提交读取与更新公告草稿生成
 
-机制：
-- 应用启动时调用 auto_generate_update_announcement()
-- 读取当前 Git HEAD，与公告库中上一条自动公告记录的 hash 对比
-- 有新提交（即 git pull 后重启了服务）则把新提交按类型整理成更新公告自动发布
-- 首次运行仅记录基线 hash（hidden 公告），不产生面向用户的公告
-- 非 Git 环境 / git 不可用 / 配置关闭时静默跳过，绝不影响应用启动
+职责：
+- 读取当前仓库 git 提交（与上次自动公告的 hash 对比取增量，无基线时取最近 N 条）
+- 过滤不适合展示给用户的提交（[skip-changelog] 标记 / 内部前缀 / .changelogignore）
+- 按类型分类整理为公告草稿（标题 / 正文 / 摘要 / 提交列表），不落库
+- 供「公告管理」页面调用：先预览整理结果，确认后再由 API 创建公告
 
-关闭方式：环境变量 AUTO_UPDATE_ANNOUNCEMENT=false
+旧机制说明：
+- 曾经有 CLI 脚本 backend/app/scripts/generate_update_announcement.py + 启动时
+  auto_generate_update_announcement() 自动发布公告，均已移除；
+  现改为在公告管理页面由管理员手动触发（见 build_git_announcement_draft）。
 
 提交内容不适合给用户看时的三种屏蔽方式：
 1. commit message 里加 [skip-changelog] / [no-changelog] / [内部] / [不公告] 标记
@@ -17,15 +19,13 @@
 import os
 import re
 import subprocess
-import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_engine
 from app.models.announcement import Announcement
 from app.logger import get_logger
 
@@ -35,8 +35,6 @@ logger = get_logger(__name__)
 AUTO_TITLE_PREFIX = "[自动更新]"
 # 正文最多展示的提交条数，超出部分折叠为一行计数
 MAX_COMMITS_IN_CONTENT = 30
-# 公告全局数据库的引擎标识（与 announcements API 保持一致）
-ANNOUNCEMENT_DB_KEY = "_announcements_"
 
 # 提交信息分类规则（按顺序匹配，命中即归类）
 _CATEGORY_RULES = [
@@ -213,14 +211,6 @@ def _build_announcement_content(commits: list[tuple[str, str]], head_short: str)
     return content, summary
 
 
-async def _ensure_announcement_table(engine) -> None:
-    """兼容未执行 Alembic 迁移的旧部署：确保 announcements 表存在"""
-    async with engine.begin() as conn:
-        await conn.run_sync(
-            lambda sync_conn: Announcement.__table__.create(sync_conn, checkfirst=True)
-        )
-
-
 async def _find_last_auto_announcement(session: AsyncSession) -> Optional[Announcement]:
     """查找最近一条自动公告（按标题前缀识别）"""
     result = await session.execute(
@@ -232,187 +222,158 @@ async def _find_last_auto_announcement(session: AsyncSession) -> Optional[Announ
     return result.scalar_one_or_none()
 
 
-async def auto_generate_update_announcement() -> None:
-    """启动时自动生成更新公告（git pull 有新提交时）"""
+def _draft_result(
+    *,
+    ok: bool,
+    message: str,
+    git_available: bool = True,
+    head_short: Optional[str] = None,
+    head_full: Optional[str] = None,
+    prev_short: Optional[str] = None,
+    range_desc: str = "",
+    commits: Optional[list[dict]] = None,
+    skipped: int = 0,
+    title: str = "",
+    content: str = "",
+    summary: str = "",
+) -> dict:
+    """构造统一的公告草稿返回结构"""
+    return {
+        "ok": ok,
+        "message": message,
+        "git_available": git_available,
+        "head_short": head_short,
+        "head_full": head_full,
+        "prev_short": prev_short,
+        "range_desc": range_desc,
+        "commits": commits or [],
+        "skipped": skipped,
+        "title": title,
+        "content": content,
+        "summary": summary,
+    }
+
+
+async def build_git_announcement_draft(
+    session: AsyncSession,
+    *,
+    max_count: int = 100,
+) -> dict:
+    """根据当前 git 版本读取提交并整理为公告草稿（不落库）。
+
+    供「公告管理」页面调用：先展示整理结果，管理员确认后再由 API 创建公告。
+
+    增量逻辑：
+    - 若库中存在上一条自动公告，取其标题中记录的 hash 作为起点（prev..HEAD 增量）；
+    - 若无基线或 hash 不可达，则读取最近 max_count 条提交。
+
+    Args:
+        session: 全局公告库会话（用于查询上一条自动公告的 hash）
+        max_count: 无基线时读取的最近提交条数
+
+    Returns:
+        {
+            "ok": bool,
+            "message": str,
+            "git_available": bool,
+            "head_short": str|None,
+            "head_full": str|None,
+            "prev_short": str|None,
+            "range_desc": str,       # 例如 "abc1234 → def5678" 或 "最近 100 条提交"
+            "commits": list[dict],   # 过滤后的用户可见提交 [{short, subject, category}]
+            "skipped": int,          # 被过滤的内部提交数量
+            "title": str,            # 建议标题
+            "content": str,          # 整理后的公告正文
+            "summary": str,          # 建议摘要
+        }
+    """
     if os.getenv("AUTO_UPDATE_ANNOUNCEMENT", "").lower() in ("false", "0", "off"):
-        logger.info("自动生成更新公告已关闭（AUTO_UPDATE_ANNOUNCEMENT）")
-        return
+        logger.info("更新公告功能已关闭（AUTO_UPDATE_ANNOUNCEMENT），跳过草稿生成")
+        return _draft_result(ok=False, message="更新公告功能已关闭（AUTO_UPDATE_ANNOUNCEMENT）", git_available=False)
 
     root = _project_root()
     hashes = _get_head_hashes(root)
     if not hashes:
-        logger.info(f"非 Git 环境或 git 不可用（检查目录: {root}），跳过自动更新公告")
-        return
+        logger.info(f"非 Git 环境或 git 不可用（检查目录: {root}），无法读取提交")
+        return _draft_result(ok=False, message="非 Git 环境或 git 不可用，无法读取提交记录", git_available=False)
     head_short, head_full = hashes
 
-    engine = await get_engine(ANNOUNCEMENT_DB_KEY)
-    await _ensure_announcement_table(engine)
-    session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    async with session_maker() as session:
-        last = await _find_last_auto_announcement(session)
-
-        # 首次运行：记录基线 hash（hidden，不面向用户），下次启动才开始对比
-        if not last:
-            baseline = Announcement(
-                id=str(uuid.uuid4()),
-                title=f"{AUTO_TITLE_PREFIX} 基线 ({head_full})",
-                content=f"自动更新公告基线记录，当前版本：{head_short}",
-                level="info",
-                status="hidden",
-                pinned=False,
-                author_name="系统",
-                publish_at=datetime.utcnow(),
-            )
-            session.add(baseline)
-            await session.commit()
-            logger.info(f"自动更新公告：已记录基线 hash={head_short}")
-            return
-
-        prev_hash = _extract_prev_hash(last.title)
-        if not prev_hash or prev_hash == head_full:
-            logger.info("自动更新公告：无新提交，跳过")
-            return
-
-        # 校验旧 hash 是否仍可达（rebase/浅克隆可能失效）
-        if not _run_git(["rev-parse", "--verify", f"{prev_hash}^{{commit}}"], root):
-            logger.warning(f"自动更新公告：旧 hash {prev_hash[:7]} 不可达，重置基线为 {head_short}")
-            last.title = f"{AUTO_TITLE_PREFIX} 基线 ({head_full})"
-            last.updated_at = datetime.utcnow()
-            await session.commit()
-            return
-
-        # 读取 prev..HEAD 的提交（新→旧）
-        log_output = _run_git(
-            ["log", f"{prev_hash}..{head_full}", "--pretty=format:%h%x09%s", "--max-count=100"],
-            root,
-        )
-        commits = []
-        if log_output:
-            for line in log_output.splitlines():
-                parts = line.split("\t", 1)
-                if len(parts) == 2 and parts[1].strip():
-                    commits.append((parts[0], parts[1].strip()))
-
-        if not commits:
-            logger.info("自动更新公告：git log 为空，仅更新基线")
-            last.title = f"{AUTO_TITLE_PREFIX} 基线 ({head_full})"
-            last.updated_at = datetime.utcnow()
-            await session.commit()
-            return
-
-        # 过滤不适合展示给用户的提交（[skip-changelog] 标记 / 内部前缀 / .changelogignore）
-        commits, skipped_count = _filter_commits_for_users(commits, root)
-        if skipped_count:
-            logger.info(f"自动更新公告：已过滤 {skipped_count} 条内部提交")
-        if not commits:
-            logger.info("自动更新公告：新提交均为内部提交，不生成公告，仅更新基线")
-            last.title = f"{AUTO_TITLE_PREFIX} 基线 ({head_full})"
-            last.updated_at = datetime.utcnow()
-            await session.commit()
-            return
-
-        content, summary = _build_announcement_content(commits, head_short)
-        prev_short = prev_hash[:7]
-
-        announcement = Announcement(
-            id=str(uuid.uuid4()),
-            title=f"{AUTO_TITLE_PREFIX} {prev_short} → {head_short} ({head_full})",
-            content=content,
-            summary=summary,
-            level="success",
-            status="published",
-            pinned=False,
-            author_name="系统",
-            publish_at=datetime.utcnow(),
-        )
-        session.add(announcement)
-        await session.commit()
-        logger.info(
-            f"自动更新公告已生成: {prev_short} → {head_short}，共 {len(commits)} 个提交"
-        )
-
-
-async def generate_update_announcement_from_range(
-    prev_hash: str,
-    new_hash: str,
-    *,
-    force: bool = False,
-) -> bool:
-    """按给定的提交区间显式生成更新公告（供部署脚本触发，更可靠的时机）。
-
-    与 auto_generate_update_announcement 的区别：
-    1. 由 auto-update.sh 在 git pull 之后显式调用，时机明确（只有真正更新时才触发）。
-    2. 不依赖库里"上次公告基线"，首次部署也能直接生成可见公告。
-    3. 通过 docker compose exec 在容器内执行，复用已配置的 DATABASE_URL。
-
-    Args:
-        prev_hash: 更新前的 commit 完整/短 hash
-        new_hash: 更新后的 commit 完整/短 hash
-        force: True 时即使提交被过滤为空也写一条公告（内容=无面向用户变更）
-
-    Returns:
-        是否成功生成公告
-    """
-    if os.getenv("AUTO_UPDATE_ANNOUNCEMENT", "").lower() in ("false", "0", "off"):
-        logger.info("自动生成更新公告已关闭（AUTO_UPDATE_ANNOUNCEMENT），跳过显式生成")
-        return False
-
-    root = _project_root()
-    if not _run_git(["rev-parse", "--verify", f"{new_hash}^{{commit}}"], root):
-        logger.warning(f"显式生成公告：new_hash 无效或不可达: {new_hash[:12]}")
-        return False
-
+    # 尝试从上次自动公告解析 prev hash，实现增量（prev..HEAD）
+    prev_hash: Optional[str] = None
+    prev_short: Optional[str] = None
     try:
-        new_full = _run_git(["rev-parse", new_hash], root) or new_hash
-    except Exception:
-        new_full = new_hash
-    new_short = new_full[:7]
+        last = await _find_last_auto_announcement(session)
+        if last:
+            candidate = _extract_prev_hash(last.title)
+            if candidate and _run_git(["rev-parse", "--verify", f"{candidate}^{{commit}}"], root):
+                prev_hash = candidate
+                prev_short = candidate[:7]
+    except Exception as e:
+        logger.warning(f"查询上次公告 hash 失败，改为读取最近提交: {e}")
 
-    # 读取 prev..new 的提交（新→旧），最多 200 条
+    if prev_hash:
+        range_arg = f"{prev_hash}..{head_full}"
+        range_desc = f"{prev_short} → {head_short}"
+    else:
+        range_arg = f"-{max_count}"
+        range_desc = f"最近 {max_count} 条提交"
+
+    # 读取提交（新→旧）
     log_output = _run_git(
-        ["log", f"{prev_hash}..{new_hash}", "--pretty=format:%h%x09%s", "--max-count=200"],
+        ["log", range_arg, "--pretty=format:%h%x09%s", "--date=short"],
         root,
     )
-    commits = []
+    commits: list[tuple[str, str]] = []
     if log_output:
         for line in log_output.splitlines():
             parts = line.split("\t", 1)
             if len(parts) == 2 and parts[1].strip():
                 commits.append((parts[0], parts[1].strip()))
 
-    if not commits and not force:
-        logger.info("显式生成公告：提交区间为空，跳过")
-        return False
+    if not commits:
+        return _draft_result(
+            ok=False,
+            message="没有可展示的提交（可能已是最新版本）",
+            head_short=head_short,
+            head_full=head_full,
+            prev_short=prev_short,
+            range_desc=range_desc,
+        )
 
     # 过滤不适合展示给用户的提交
-    commits, _ = _filter_commits_for_users(commits, root)
-    if not commits and not force:
-        logger.info("显式生成公告：新提交均为内部提交，不生成公告")
-        return False
+    commits, skipped = _filter_commits_for_users(commits, root)
+    if not commits:
+        return _draft_result(
+            ok=False,
+            message="新提交均为内部提交（chore/ci/test 等），无需发布公告",
+            head_short=head_short,
+            head_full=head_full,
+            prev_short=prev_short,
+            range_desc=range_desc,
+            skipped=skipped,
+        )
 
-    content, summary = _build_announcement_content(commits, new_short)
-    prev_short = prev_hash[:7] if prev_hash else "未知"
+    content, summary = _build_announcement_content(commits, head_short)
+    title = f"{AUTO_TITLE_PREFIX} {range_desc}"
 
-    announcement = Announcement(
-        id=str(uuid.uuid4()),
-        title=f"{AUTO_TITLE_PREFIX} {prev_short} → {new_short} ({new_full})",
+    commit_items = [
+        {"short": short, "subject": subject, "category": _classify(subject)}
+        for short, subject in commits
+    ]
+
+    logger.info(
+        f"已读取 git 提交并整理公告草稿: {range_desc}，可见提交 {len(commit_items)} 条，过滤 {skipped} 条"
+    )
+    return _draft_result(
+        ok=True,
+        message="已读取 git 提交并整理公告草稿",
+        head_short=head_short,
+        head_full=head_full,
+        prev_short=prev_short,
+        range_desc=range_desc,
+        commits=commit_items,
+        skipped=skipped,
+        title=title,
         content=content,
         summary=summary,
-        level="success",
-        status="published",
-        pinned=False,
-        author_name="系统",
-        publish_at=datetime.utcnow(),
     )
-
-    engine = await get_engine(ANNOUNCEMENT_DB_KEY)
-    await _ensure_announcement_table(engine)
-    session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    async with session_maker() as session:
-        session.add(announcement)
-        await session.commit()
-    logger.info(
-        f"显式更新公告已生成: {prev_short} → {new_short}，共 {len(commits)} 个提交"
-    )
-    return True

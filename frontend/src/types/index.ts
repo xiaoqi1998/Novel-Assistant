@@ -1797,6 +1797,32 @@ export interface AnnouncementStatusResponse {
   cloud_connected?: boolean;
 }
 
+export interface GitCommitItem {
+  short: string;
+  subject: string;
+  category: string;
+}
+
+export interface GitAnnouncementDraft {
+  ok: boolean;
+  message: string;
+  git_available: boolean;
+  head_short?: string | null;
+  head_full?: string | null;
+  prev_short?: string | null;
+  range_desc?: string;
+  commits?: GitCommitItem[];
+  skipped?: number;
+  title?: string;
+  content?: string;
+  summary?: string;
+}
+
+export interface GitAnnouncementDraftResponse {
+  success: boolean;
+  data: GitAnnouncementDraft;
+}
+
 // 提示词工坊分类常量
 export const PROMPT_CATEGORIES: Record<string, string> = {
   general: '通用',

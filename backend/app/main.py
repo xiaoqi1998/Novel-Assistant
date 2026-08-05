@@ -70,12 +70,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"后台任务表检查失败（不影响启动）: {e}")
 
-    # git pull 后自动生成更新公告（对比 Git HEAD 与上次公告 hash，非 Git 环境自动跳过）
-    try:
-        from app.services.update_announcement_service import auto_generate_update_announcement
-        await auto_generate_update_announcement()
-    except Exception as e:
-        logger.warning(f"自动生成更新公告失败（不影响启动）: {e}")
+    # 更新公告已改为「公告管理」页面手动触发（根据当前 Git 版本读取提交整理生成），启动时不再自动发布
 
     # 安全保障：确保意见反馈表存在（全局库，无需 Alembic 迁移）
     try:
