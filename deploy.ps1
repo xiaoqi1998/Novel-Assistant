@@ -96,7 +96,40 @@ Write-Ok "SSH 连接正常"
 Write-Step "执行远程部署..."
 & ssh -p $Port $target "cd `"$ProjectDir`" && $remote"
 if ($LASTEXITCODE -ne 0) {
-    Die "远程部署执行失败（退出码 $LASTEXITCODE）"
+    Write-Host "[X]    远程部署执行失败（退出码 $LASTEXITCODE）" -ForegroundColor Red
+
+    # 尝试从服务器拉取错误日志并显示（前端构建失败 / 完整更新失败均会写日志）
+    # hot 模式 → logs/frontend-build.log；full 模式 → logs/update.log
+    $localLogDir = Join-Path $PSScriptRoot "logs"
+    New-Item -ItemType Directory -Force -Path $localLogDir | Out-Null
+    $localLogFile = Join-Path $localLogDir ("deploy-error-" + (Get-Date -Format 'yyyyMMdd-HHmmss') + ".log")
+    $remoteLog = $null
+    if ($Mode -eq 'full') {
+        $remoteLog = "logs/update.log"
+    } else {
+        # 优先前端构建日志，若无则回退到 update.log
+        & ssh -p $Port -o BatchMode=yes $target "test -f `"$ProjectDir/logs/frontend-build.log`"" 2>$null
+        if ($LASTEXITCODE -eq 0) { $remoteLog = "logs/frontend-build.log" }
+        else { $remoteLog = "logs/update.log" }
+    }
+
+    Write-Host "`n[错误日志] 正在拉取服务器端日志: $remoteLog" -ForegroundColor Yellow
+    $logOutput = (& ssh -p $Port -o BatchMode=yes $target "cd `"$ProjectDir`" && tail -60 `"$remoteLog`" 2>&1") 2>&1
+    if ($logOutput) {
+        Write-Host "================= 服务器错误日志（末尾60行） =================" -ForegroundColor Yellow
+        $logOutput | ForEach-Object { Write-Host $_ }
+        Write-Host "==================================================================" -ForegroundColor Yellow
+        # 本地落盘一份，便于事后查看
+        try {
+            $logOutput | Set-Content -Path $localLogFile -Encoding UTF8
+            Write-Host "本地已保存错误日志: $localLogFile" -ForegroundColor Yellow
+        } catch {
+            Write-Warn "本地保存错误日志失败: $($_.Exception.Message)"
+        }
+    } else {
+        Write-Warn "未能从服务器拉取到日志，请手动登录服务器查看 $ProjectDir/logs/"
+    }
+    exit 1
 }
 Write-Ok "远程命令执行完成"
 
