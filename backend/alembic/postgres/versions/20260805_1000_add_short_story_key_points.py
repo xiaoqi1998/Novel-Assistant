@@ -52,7 +52,7 @@ def upgrade() -> None:
     ]
     for col_name, col_type in new_columns:
         if not _column_exists(bind, 'short_stories', col_name):
-            op.add_column('short_stories', sa.Column(col_name, col_type(), nullable=True))
+            op.add_column('short_stories', sa.Column(col_name, col_type, nullable=True))
 
 
 def downgrade() -> None:
