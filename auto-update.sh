@@ -85,8 +85,11 @@ pull_code() {
     fi
 }
 
-# 显式生成更新公告：仅在有新提交时，先展示本次提交，交互确认是否发布
+# 显式生成更新公告：仅在有新提交时，根据 deploy.ps1 传入的确认（参数或环境变量）发布
+# 参数 $1: 非空 = 已确认发布（--announce）；否则看环境变量 ANNOUNCE_CONFIRM
 generate_announcement() {
+    local announce_arg="${1:-}"
+
     if [ -z "$UPDATE_PREV_COMMIT" ] || [ -z "$UPDATE_NEW_COMMIT" ]; then
         return 0
     fi
@@ -111,13 +114,16 @@ generate_announcement() {
     echo ""
     echo "=============================================="
 
-    # 是否发布公告由外部（deploy.ps1 本地交互确认后）通过环境变量 ANNOUNCE_CONFIRM 传入
-    # 值可为 yes / 1 / true / auto（auto 表示无人值守时自动发布）
-    if [ "$ANNOUNCE_CONFIRM" = "yes" ] || [ "$ANNOUNCE_CONFIRM" = "1" ] \
-        || [ "$ANNOUNCE_CONFIRM" = "true" ] || [ "$ANNOUNCE_CONFIRM" = "auto" ]; then
-        log "📢 已确认发布公告（ANNOUNCE_CONFIRM=$ANNOUNCE_CONFIRM）"
+    # 是否发布公告由外部（deploy.ps1 本地交互确认后）通过【脚本参数 --announce】或【环境变量 ANNOUNCE_CONFIRM】传入
+    # 两者任一为真即发布；值可为 yes / 1 / true / auto
+    local confirm_val="${ANNOUNCE_CONFIRM:-<空>}"
+    local arg_desc="参数=${announce_arg:+是}，ANNOUNCE_CONFIRM=${confirm_val}"
+    if [ -n "$announce_arg" ] || [ "$ANNOUNCE_CONFIRM" = "yes" ] \
+        || [ "$ANNOUNCE_CONFIRM" = "1" ] || [ "$ANNOUNCE_CONFIRM" = "true" ] \
+        || [ "$ANNOUNCE_CONFIRM" = "auto" ]; then
+        log "📢 已确认发布公告（$arg_desc）"
     else
-        log "⏭️  未确认发布公告（ANNOUNCE_CONFIRM=${ANNOUNCE_CONFIRM:-未设置}），跳过"
+        log "⏭️  未确认发布公告（$arg_desc），跳过"
         return 0
     fi
 
@@ -215,11 +221,19 @@ main() {
     log "🚀 开始自动更新"
     log "=========================================="
 
+    # 支持 --announce：显式要求发布更新公告（由 deploy.ps1 本地确认后传入）
+    local announce_requested=""
+    for arg in "$@"; do
+        case "$arg" in
+            --announce) announce_requested="1" ;;
+        esac
+    done
+
     check_container
     pull_code
     fix_migration
     build_frontend
-    generate_announcement
+    generate_announcement "$announce_requested"
     restart_service
     verify_service
 
