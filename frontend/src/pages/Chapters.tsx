@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, Tooltip, Skeleton, theme, Dropdown } from 'antd';
-import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined, BulbOutlined, DownOutlined, FileMarkdownOutlined, HistoryOutlined } from '@ant-design/icons';
+import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined, BulbOutlined, DownOutlined, FileMarkdownOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { eventBus } from '../store/eventBus';
 import { useChapterSync } from '../store/hooks';
@@ -183,12 +183,6 @@ export default function Chapters() {
   // Task 26.2：草稿自动保存
   const [lastDraftSaveTime, setLastDraftSaveTime] = useState<number | null>(null);
   const draftAutoSaveTimerRef = useRef<number | null>(null);
-
-  // P0：历史版本（内容被覆盖前自动快照，支持一键回滚）
-  const [versionsOpen, setVersionsOpen] = useState(false);
-  const [versionsLoading, setVersionsLoading] = useState(false);
-  const [versionsList, setVersionsList] = useState<Array<{ id: string; created_at: string | null; word_count: number; preview: string }>>([]);
-  const [restoringVersionId, setRestoringVersionId] = useState<string | null>(null);
 
   // 批量生成相关状态
   const [batchGenerateVisible, setBatchGenerateVisible] = useState(false);
@@ -992,52 +986,6 @@ export default function Chapters() {
     } finally {
       setSaving(false);
     }
-  };
-
-  // P0：历史版本——打开面板并加载版本列表
-  const handleOpenVersions = async () => {
-    if (!editingId) return;
-    setVersionsOpen(true);
-    setVersionsLoading(true);
-    try {
-      const res = await chapterApi.getChapterVersions(editingId);
-      setVersionsList(res.items || []);
-    } catch (error) {
-      showErrorToast(error, '加载历史版本失败');
-    } finally {
-      setVersionsLoading(false);
-    }
-  };
-
-  // P0：历史版本——回滚到指定版本（回滚前服务端会自动备份当前内容，可撤销）
-  const handleRestoreVersion = (versionId: string) => {
-    if (!editingId || !currentProject) return;
-    modal.confirm({
-      title: '回滚到该历史版本？',
-      content: '当前内容将被替换为该历史版本。回滚前会自动备份当前内容，可随时再次回滚。',
-      okText: '确认回滚',
-      cancelText: '取消',
-      centered: true,
-      onOk: async () => {
-        setRestoringVersionId(versionId);
-        try {
-          const result = await chapterApi.restoreChapterVersion(editingId, versionId);
-          editorForm.setFieldsValue({ content: result.chapter.content });
-          setEditorWordCount(countWords(result.chapter.content));
-          clearChapterDraft(editingId);
-          setLastDraftSaveTime(null);
-          await refreshChapters();
-          const updatedProject = await projectApi.getProject(currentProject.id);
-          setCurrentProject(updatedProject);
-          setVersionsOpen(false);
-          message.success('已回滚到历史版本');
-        } catch (error) {
-          showErrorToast(error, '回滚失败');
-        } finally {
-          setRestoringVersionId(null);
-        }
-      },
-    });
   };
 
   // Task 26.2：取消编辑时处理草稿（有未保存内容则询问是否保存为草稿）
@@ -2938,87 +2886,21 @@ export default function Chapters() {
         </Form>
       </Modal>
 
-      {/* P0：章节内容历史版本面板 */}
-      <Modal
-        title="历史版本"
-        open={versionsOpen}
-        onCancel={() => setVersionsOpen(false)}
-        footer={null}
-        centered
-        width={isMobile ? 'calc(100vw - 32px)' : 640}
-      >
-        <Alert
-          type="info"
-          showIcon
-          message="每次覆盖保存前会自动备份原内容；回滚前也会先备份当前内容，因此回滚可随时撤销。"
-          style={{ marginBottom: 12 }}
-        />
-        {versionsLoading ? (
-          <Skeleton active />
-        ) : versionsList.length === 0 ? (
-          <Empty description="暂无历史版本，内容被覆盖时会自动创建备份" />
-        ) : (
-          <List
-            dataSource={versionsList}
-            renderItem={(v) => (
-              <List.Item
-                actions={[
-                  <Button
-                    key="restore"
-                    size="small"
-                    loading={restoringVersionId === v.id}
-                    onClick={() => handleRestoreVersion(v.id)}
-                  >
-                    回滚到此版本
-                  </Button>,
-                ]}
-              >
-                <List.Item.Meta
-                  title={
-                    <Space>
-                      <span>{v.created_at ? new Date(v.created_at).toLocaleString() : '未知时间'}</span>
-                      <Tag>{formatWordCount(v.word_count)}</Tag>
-                    </Space>
-                  }
-                  description={
-                    <span style={{ color: token.colorTextSecondary }}>
-                      {v.preview ? `${v.preview}…` : '（空内容）'}
-                    </span>
-                  }
-                />
-              </List.Item>
-            )}
-          />
-        )}
-      </Modal>
-
       <Modal
         title={
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingRight: 40 }}>
             <span>编辑章节内容</span>
             {!isMobile && editingId && (
-              <Space size={4}>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<HistoryOutlined />}
-                  onClick={handleOpenVersions}
-                  title="查看本章内容被覆盖前的自动备份，可一键回滚"
-                  style={{ color: token.colorTextSecondary }}
-                >
-                  历史版本
-                </Button>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<BulbOutlined />}
-                  onClick={() => setAssistantVisible(!assistantVisible)}
-                  title={assistantVisible ? '隐藏写作助手' : '显示写作助手'}
-                  style={{ color: assistantVisible ? token.colorPrimary : token.colorTextSecondary }}
-                >
-                  {assistantVisible ? '隐藏助手' : '写作助手'}
-                </Button>
-              </Space>
+              <Button
+                type="text"
+                size="small"
+                icon={<BulbOutlined />}
+                onClick={() => setAssistantVisible(!assistantVisible)}
+                title={assistantVisible ? '隐藏写作助手' : '显示写作助手'}
+                style={{ color: assistantVisible ? token.colorPrimary : token.colorTextSecondary }}
+              >
+                {assistantVisible ? '隐藏助手' : '写作助手'}
+              </Button>
             )}
           </div>
         }
