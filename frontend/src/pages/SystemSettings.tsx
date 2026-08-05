@@ -2,9 +2,9 @@ import { useCallback, useEffect, useState } from 'react';
 import dayjs, { Dayjs } from 'dayjs';
 import { Alert, Button, Card, Col, DatePicker, Form, Input, Modal, Popconfirm, Row, Select, Space, Spin, Switch, Table, Tag, Tabs, Typography, message, theme } from 'antd';
 import type { ColumnsType, TablePaginationConfig } from 'antd/es/table';
-import { BellOutlined, DeleteOutlined, EditOutlined, EyeInvisibleOutlined, PlusOutlined, ReloadOutlined, SendOutlined, SettingOutlined } from '@ant-design/icons';
+import { BellOutlined, BranchesOutlined, DeleteOutlined, EditOutlined, EyeInvisibleOutlined, PlusOutlined, ReloadOutlined, SendOutlined, SettingOutlined } from '@ant-design/icons';
 import { announcementApi, authApi } from '../services/api';
-import type { Announcement, AnnouncementCreate, AnnouncementLevel, AnnouncementStatus, AnnouncementUpdate, User } from '../types';
+import type { Announcement, AnnouncementCreate, AnnouncementLevel, AnnouncementStatus, AnnouncementUpdate, GitAnnouncementDraft, GitCommitItem, User } from '../types';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import useIsMobile from '../utils/useIsMobile';
 
@@ -76,6 +76,9 @@ export default function SystemSettingsPage() {
   const [announcementSaving, setAnnouncementSaving] = useState(false);
   const [announcementModalOpen, setAnnouncementModalOpen] = useState(false);
   const [editingAnnouncement, setEditingAnnouncement] = useState<Announcement | null>(null);
+  const [gitDraftLoading, setGitDraftLoading] = useState(false);
+  const [gitDraft, setGitDraft] = useState<GitAnnouncementDraft | null>(null);
+  const [gitPreviewOpen, setGitPreviewOpen] = useState(false);
   const [announcementStatusFilter, setAnnouncementStatusFilter] = useState<AnnouncementStatusFilter>('all');
   const [announcementSearchKeyword, setAnnouncementSearchKeyword] = useState('');
   const [announcementPagination, setAnnouncementPagination] = useState({ current: 1, pageSize: 10, total: 0 });
@@ -156,6 +159,50 @@ export default function SystemSettingsPage() {
       publish_at: dayjs(),
       expire_at: null,
     });
+    setAnnouncementModalOpen(true);
+  };
+
+  const handleFetchGitDraft = async () => {
+    if (!announcementAdminAvailable) {
+      message.warning('需要管理员权限');
+      return;
+    }
+    setGitDraftLoading(true);
+    setGitDraft(null);
+    try {
+      const res = await announcementApi.gitDraft();
+      const draft = res.data;
+      setGitDraft(draft);
+      if (!draft.ok) {
+        message.warning(draft.message || '暂无可生成的公告草稿');
+      }
+      setGitPreviewOpen(true);
+    } catch (error) {
+      console.error('读取 Git 提交生成公告失败:', error);
+      message.error('读取 Git 提交失败，请确认服务器为 Git 环境');
+      setGitPreviewOpen(false);
+    } finally {
+      setGitDraftLoading(false);
+    }
+  };
+
+  const handleUseGitDraft = () => {
+    if (!gitDraft?.ok || !gitDraft.title) {
+      return;
+    }
+    setEditingAnnouncement(null);
+    announcementForm.setFieldsValue({
+      title: gitDraft.title,
+      summary: gitDraft.summary || '',
+      content: gitDraft.content || '',
+      level: 'success',
+      status: 'published',
+      pinned: false,
+      publish_at: dayjs(),
+      expire_at: null,
+    });
+    setGitPreviewOpen(false);
+    setGitDraft(null);
     setAnnouncementModalOpen(true);
   };
 
@@ -469,6 +516,14 @@ export default function SystemSettingsPage() {
                         <Button type="primary" icon={<PlusOutlined />} disabled={!announcementAdminAvailable} onClick={openCreateAnnouncementModal}>
                           新建公告
                         </Button>
+                        <Button
+                          icon={<BranchesOutlined />}
+                          loading={gitDraftLoading}
+                          disabled={!announcementAdminAvailable}
+                          onClick={() => { void handleFetchGitDraft(); }}
+                        >
+                          从Git生成公告
+                        </Button>
                         <Button icon={<ReloadOutlined />} loading={announcementLoading} onClick={() => { void loadAnnouncements(announcementPagination.current, announcementPagination.pageSize, announcementSearchKeyword); }}>
                           刷新列表
                         </Button>
@@ -678,6 +733,99 @@ export default function SystemSettingsPage() {
             <Switch />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title={
+          <Space>
+            <BranchesOutlined />
+            从 Git 提交生成公告
+          </Space>
+        }
+        open={gitPreviewOpen}
+        onCancel={() => { setGitPreviewOpen(false); setGitDraft(null); }}
+        onOk={handleUseGitDraft}
+        okText="使用草稿创建公告"
+        okButtonProps={{ disabled: !gitDraft?.ok }}
+        cancelText="关闭"
+        width={isMobile ? 'calc(100vw - 32px)' : 860}
+      >
+        {gitDraftLoading ? (
+          <div style={{ textAlign: 'center', padding: 32 }}>
+            <Spin />
+            <div style={{ marginTop: 12 }}><Text type="secondary">正在读取 Git 提交并整理公告内容...</Text></div>
+          </div>
+        ) : gitDraft ? (
+          gitDraft.ok ? (
+            <Space direction="vertical" size={12} style={{ width: '100%' }}>
+              <Alert
+                type="success"
+                showIcon
+                message={gitDraft.message || '已生成公告草稿'}
+                description={
+                  <Space direction="vertical" size={4}>
+                    <Text>当前版本：<Text code>{gitDraft.head_short}</Text>
+                      {gitDraft.prev_short ? <>（自 <Text code>{gitDraft.prev_short}</Text> 起的增量更新）</> : '（无基线，读取最近提交）'}</Text>
+                    {gitDraft.skipped ? <Text type="secondary">已过滤 {gitDraft.skipped} 条内部提交（chore/ci/test 等）</Text> : null}
+                  </Space>
+                }
+              />
+              <div>
+                <Text strong>提交列表（{gitDraft.commits?.length || 0} 条）</Text>
+                <div
+                  style={{
+                    marginTop: 8,
+                    maxHeight: 200,
+                    overflow: 'auto',
+                    border: `1px solid ${token.colorBorderSecondary}`,
+                    borderRadius: 8,
+                    padding: 8,
+                  }}
+                >
+                  {(gitDraft.commits || []).map((commit: GitCommitItem) => (
+                    <div key={commit.short} style={{ display: 'flex', gap: 8, padding: '4px 0', alignItems: 'flex-start' }}>
+                      <Text code style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{commit.short}</Text>
+                      <Tag style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{commit.category}</Tag>
+                      <Text style={{ fontSize: 13 }}>{commit.subject}</Text>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <Text strong>建议标题</Text>
+                <div style={{ marginTop: 4 }}><Text code>{gitDraft.title}</Text></div>
+              </div>
+              <div>
+                <Text strong>公告正文预览</Text>
+                <div
+                  style={{
+                    marginTop: 8,
+                    maxHeight: 260,
+                    overflow: 'auto',
+                    border: `1px solid ${token.colorBorderSecondary}`,
+                    borderRadius: 8,
+                    padding: 12,
+                    background: token.colorFillQuaternary,
+                  }}
+                >
+                  <MarkdownRenderer content={gitDraft.content || ''} />
+                </div>
+              </div>
+              <Alert
+                type="info"
+                showIcon
+                message="确认后将以草稿内容打开编辑框，可继续修改标题、正文后发布。"
+              />
+            </Space>
+          ) : (
+            <Alert
+              type="warning"
+              showIcon
+              message="暂无可生成的公告"
+              description={gitDraft.message || '未读取到可展示的 Git 提交'}
+            />
+          )
+        ) : null}
       </Modal>
     </div>
   );

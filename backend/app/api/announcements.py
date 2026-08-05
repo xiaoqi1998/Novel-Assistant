@@ -11,6 +11,7 @@ from app.database import get_engine
 from app.models.announcement import Announcement
 from app.models.user import User
 from app.schemas.announcement import AnnouncementCreate, AnnouncementUpdate
+from app.services.update_announcement_service import build_git_announcement_draft
 from app.logger import get_logger
 
 router = APIRouter(prefix="/announcements", tags=["announcements"])
@@ -260,6 +261,26 @@ async def sync_announcements(
 ):
     """同步公告（公开接口），始终读取本地数据库"""
     return await _sync_announcements_local(db, since=since, limit=limit)
+
+
+@router.get("/admin/git/draft")
+async def admin_git_announcement_draft(
+    request: Request,
+    db: AsyncSession = Depends(get_global_db),
+):
+    """管理员获取 Git 提交整理成的公告草稿（不落库）
+
+    读取当前 git 版本相对上次公告的提交（无基线则最近 100 条），
+    过滤内部提交后按类型分类整理为标题/正文/摘要，供管理员预览确认后发布。
+    """
+    await check_announcement_admin(request)
+
+    try:
+        draft = await build_git_announcement_draft(db)
+        return {"success": True, "data": draft}
+    except Exception as e:
+        logger.error(f"读取 Git 提交生成公告草稿失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"读取 Git 提交失败: {str(e)}")
 
 
 @router.get("/admin/items")

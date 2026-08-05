@@ -54,10 +54,6 @@ check_health() {
     error_exit "健康检查超时，服务可能未正常启动"
 }
 
-# 记录本次更新前后的 commit（供公告生成使用）
-UPDATE_PREV_COMMIT=""
-UPDATE_NEW_COMMIT=""
-
 # 拉取最新代码
 pull_code() {
     log "📥 检查并拉取最新代码..."
@@ -68,72 +64,12 @@ pull_code() {
         git commit -m "auto: 保存更新前的本地修改 [$(date '+%Y-%m-%d %H:%M:%S')] [内部]"
     fi
 
-    local before_commit=$(git rev-parse HEAD)
-
     if ! git pull --no-rebase --no-edit; then
         error_exit "代码拉取失败！存在冲突，请手动解决"
     fi
 
-    local after_commit=$(git rev-parse HEAD)
-
-    if [ "$before_commit" = "$after_commit" ]; then
-        log "ℹ️  已是最新代码，无更新"
-    else
-        log "✅ 更新到: $(git log -1 --oneline)"
-        UPDATE_PREV_COMMIT="$before_commit"
-        UPDATE_NEW_COMMIT="$after_commit"
-    fi
-}
-
-# 显式生成更新公告：仅在有新提交时，根据 deploy.ps1 传入的确认（参数或环境变量）发布
-# 参数 $1: 非空 = 已确认发布（--announce）；否则看环境变量 ANNOUNCE_CONFIRM
-generate_announcement() {
-    local announce_arg="${1:-}"
-
-    if [ -z "$UPDATE_PREV_COMMIT" ] || [ -z "$UPDATE_NEW_COMMIT" ]; then
-        return 0
-    fi
-
-    # 检查是否开启自动公告（默认开启）
-    if [ "${AUTO_UPDATE_ANNOUNCEMENT:-true}" = "false" ] || [ "${AUTO_UPDATE_ANNOUNCEMENT:-true}" = "0" ]; then
-        log "ℹ️  自动更新公告已关闭（AUTO_UPDATE_ANNOUNCEMENT），跳过"
-        return 0
-    fi
-
-    if [ -z "$DOCKER_COMPOSE" ]; then
-        log "⚠️  未找到 docker compose，跳过公告生成"
-        return 0
-    fi
-
-    log "📢 检测到代码更新（$UPDATE_PREV_COMMIT → $UPDATE_NEW_COMMIT）"
-
-    # 先展示本次更新涉及的用户可见提交，供确认
-    echo ""
-    echo "===== 本次更新的提交（过滤掉内部提交）====="
-    git log --pretty=format:"%h %s" "${UPDATE_PREV_COMMIT}..${UPDATE_NEW_COMMIT}" --max-count=50 2>/dev/null | head -50
-    echo ""
-    echo "=============================================="
-
-    # 是否发布公告由外部（deploy.ps1 本地交互确认后）通过【脚本参数 --announce】或【环境变量 ANNOUNCE_CONFIRM】传入
-    # 两者任一为真即发布；值可为 yes / 1 / true / auto
-    local confirm_val="${ANNOUNCE_CONFIRM:-<空>}"
-    local arg_desc="参数=${announce_arg:+是}，ANNOUNCE_CONFIRM=${confirm_val}"
-    if [ -n "$announce_arg" ] || [ "$ANNOUNCE_CONFIRM" = "yes" ] \
-        || [ "$ANNOUNCE_CONFIRM" = "1" ] || [ "$ANNOUNCE_CONFIRM" = "true" ] \
-        || [ "$ANNOUNCE_CONFIRM" = "auto" ]; then
-        log "📢 已确认发布公告（$arg_desc）"
-    else
-        log "⏭️  未确认发布公告（$arg_desc），跳过"
-        return 0
-    fi
-
-    # 容器内执行，复用 DATABASE_URL 与依赖；失败不影响部署
-    # 脚本位于 /app/app/scripts/ 下，复用 ./backend/app 实时挂载，无需重建容器
-    log "📢 正在发布更新公告..."
-    if ! $DOCKER_COMPOSE exec -T novel-assistant \
-        python /app/app/scripts/generate_update_announcement.py \
-        --prev "$UPDATE_PREV_COMMIT" --new "$UPDATE_NEW_COMMIT" 2>&1 | tee -a "$LOG_FILE"; then
-        log "⚠️  更新公告生成失败（不影响部署）"
+    if git rev-parse HEAD &>/dev/null; then
+        log "✅ 当前版本: $(git log -1 --oneline)"
     fi
 }
 
@@ -222,19 +158,10 @@ main() {
     log "🚀 开始自动更新"
     log "=========================================="
 
-    # 支持 --announce：显式要求发布更新公告（由 deploy.ps1 本地确认后传入）
-    local announce_requested=""
-    for arg in "$@"; do
-        case "$arg" in
-            --announce) announce_requested="1" ;;
-        esac
-    done
-
     check_container
     pull_code
     fix_migration
     build_frontend
-    generate_announcement "$announce_requested"
     restart_service
     verify_service
 

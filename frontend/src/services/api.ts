@@ -49,6 +49,7 @@ import type {
   AnnouncementListResponse,
   AnnouncementStatusResponse,
   AnnouncementUpdate,
+  GitAnnouncementDraftResponse,
   MCPPlugin,
   MCPPluginCreate,
   MCPPluginUpdate,
@@ -1034,6 +1035,9 @@ export const announcementApi = {
 
   adminList: (params?: { status?: string; q?: string; page?: number; limit?: number; include_expired?: boolean }) =>
     api.get<unknown, AnnouncementListResponse>('/announcements/admin/items', { params }),
+
+  gitDraft: () =>
+    api.get<unknown, GitAnnouncementDraftResponse>('/announcements/admin/git/draft'),
 
   adminCreate: (data: AnnouncementCreate) =>
     api.post<unknown, { success: boolean; item: Announcement }>('/announcements/admin/items', data),
