@@ -21,6 +21,8 @@ services:
       - ./backend/app:/app/app:ro
       - ./backend/alembic:/app/alembic:ro
       - ./backend/alembic-postgres.ini:/app/alembic.ini:ro
+      # 后端脚本挂载（公告生成等 CLI 脚本）：git pull 后无需重建镜像即可生效
+      - ./backend/scripts:/app/scripts:ro
       # 前端构建产物挂载：修改后用 hot-deploy.sh frontend 更新，无需重构建
       - ./backend/static:/app/static:ro
       # Git 仓库信息挂载：供启动时自动生成更新公告对比提交记录（只读）
