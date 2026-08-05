@@ -85,7 +85,7 @@ pull_code() {
     fi
 }
 
-# 显式生成更新公告：仅在 git pull 真的有新提交时，通过容器内脚本生成
+# 显式生成更新公告：仅在有新提交时，先展示本次提交，交互确认是否发布
 generate_announcement() {
     if [ -z "$UPDATE_PREV_COMMIT" ] || [ -z "$UPDATE_NEW_COMMIT" ]; then
         return 0
@@ -97,12 +97,38 @@ generate_announcement() {
         return 0
     fi
 
-    log "📢 生成更新公告: $UPDATE_PREV_COMMIT → $UPDATE_NEW_COMMIT"
     if [ -z "$DOCKER_COMPOSE" ]; then
         log "⚠️  未找到 docker compose，跳过公告生成"
         return 0
     fi
+
+    log "📢 检测到代码更新（$UPDATE_PREV_COMMIT → $UPDATE_NEW_COMMIT）"
+
+    # 先展示本次更新涉及的用户可见提交，供确认
+    echo ""
+    echo "===== 本次更新的提交（过滤掉内部提交）====="
+    git log --pretty=format:"%h %s" "${UPDATE_PREV_COMMIT}..${UPDATE_NEW_COMMIT}" --max-count=50 2>/dev/null | head -50
+    echo ""
+    echo "=============================================="
+
+    # 交互确认是否发布公告（仅手动运行时有效）
+    # 支持 --yes 跳过确认（定时/非交互场景）
+    if [ "$SKIP_ANNOUNCE_CONFIRM" = "1" ]; then
+        log "📢 已设置自动发布（SKIP_ANNOUNCE_CONFIRM=1）"
+    else
+        read -r -p "是否发布本次更新公告？[y/N] " publish_answer
+        case "$publish_answer" in
+            [yY]|[yY][eE][sS])
+                ;;
+            *)
+                log "⏭️  已跳过发布更新公告"
+                return 0
+                ;;
+        esac
+    fi
+
     # 容器内执行，复用 DATABASE_URL 与依赖；失败不影响部署
+    log "📢 正在发布更新公告..."
     if ! $DOCKER_COMPOSE exec -T novel-assistant \
         python scripts/generate_update_announcement.py \
         --prev "$UPDATE_PREV_COMMIT" --new "$UPDATE_NEW_COMMIT" 2>&1 | tee -a "$LOG_FILE"; then
