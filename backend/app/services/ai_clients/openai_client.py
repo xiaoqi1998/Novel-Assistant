@@ -5,10 +5,40 @@ from typing import Any, AsyncGenerator, Dict, Optional
 
 import httpx
 
-from app.logger import get_logger, summarize_log_value
-from .base_client import BaseAIClient, friendly_network_error_message
+from app.logger import get_logger, summarize_log_value, safe_preview
+from .base_client import BaseAIClient, friendly_network_error_message, _log_raw_response_body
 
 logger = get_logger(__name__)
+
+# 工具参数 schema 中需要递归剔除的字段
+_SCHEMA_FORBIDDEN_KEYS = ("$schema", "$defs", "definitions", "$ref", "$dynamicRef", "$id")
+
+
+def _clean_schema_node(node: Any) -> Any:
+    """递归清理 JSON Schema 中不被上游模型网关接受的字段。"""
+    if isinstance(node, dict):
+        return {
+            k: _clean_schema_node(v)
+            for k, v in node.items()
+            if k not in _SCHEMA_FORBIDDEN_KEYS
+        }
+    if isinstance(node, list):
+        return [_clean_schema_node(v) for v in node]
+    return node
+
+
+def _normalize_tool_parameters(parameters: Any) -> Dict[str, Any]:
+    """规范化工具参数 schema，确保是合法的 object 类型且无非法字段。"""
+    if not isinstance(parameters, dict):
+        return {"type": "object", "properties": {}, "required": []}
+    cleaned = _clean_schema_node(parameters)
+    cleaned.setdefault("type", "object")
+    properties = cleaned.get("properties")
+    if not isinstance(properties, dict) or not properties:
+        cleaned["properties"] = {}
+        # 没有属性时不允许声明 required，否则网关可能报 400
+        cleaned.pop("required", None)
+    return cleaned
 
 
 def _message_content_length(content: Any) -> int:
@@ -78,18 +108,46 @@ class OpenAIClient(BaseAIClient):
         if stream:
             payload["stream"] = True
         if tools:
-            # 清理 $schema 字段
+            # 深度清理 MCP 工具参数 schema 中的非法字段（如 $schema/$ref/definitions 等）
             cleaned = []
             for t in tools:
-                tc = t.copy()
-                if "function" in tc and "parameters" in tc["function"]:
-                    tc["function"]["parameters"] = {
-                        k: v for k, v in tc["function"]["parameters"].items() if k != "$schema"
-                    }
+                tc = dict(t)
+                func = tc.get("function")
+                if isinstance(func, dict):
+                    tc["function"] = dict(func)
+                    if "parameters" in tc["function"]:
+                        tc["function"]["parameters"] = _normalize_tool_parameters(
+                            tc["function"]["parameters"]
+                        )
                 cleaned.append(tc)
             payload["tools"] = cleaned
             if tool_choice:
+                # 部分上游/模型（如 qwen3.7-max via micuapi.ai）不支持 "required" 强制工具选择，
+                # 会返回 400。降级为 "auto" 以兼容（auto 仍能触发工具调用）。
+                if tool_choice == "required":
+                    logger.warning(
+                        "⚠️ tool_choice='required' 不被上游支持，降级为 'auto' 以避免 400"
+                    )
+                    tool_choice = "auto"
                 payload["tool_choice"] = tool_choice
+            # 记录实际发送的工具结构，便于排查上游 400（如某工具 schema 非法）
+            tool_summary = []
+            for t in cleaned:
+                fn = t.get("function", {})
+                params = fn.get("parameters", {})
+                tool_summary.append({
+                    "name": fn.get("name"),
+                    "param_type": params.get("type"),
+                    "required": params.get("required"),
+                    "prop_keys": list((params.get("properties") or {}).keys())[:10],
+                    "has_forbidden": any(
+                        k in str(params) for k in ("$ref", "definitions", "$dynamicRef")
+                    ),
+                })
+            logger.warning(
+                "📤 发送工具列表(%d): tool_choice=%s 结构=%s",
+                len(cleaned), tool_choice, safe_preview(str(tool_summary), 2000),
+            )
         return payload
 
     async def chat_completion(
@@ -156,7 +214,18 @@ class OpenAIClient(BaseAIClient):
             completed = False
             try:
                 async with await self._request_with_retry("POST", "/chat/completions", payload, stream=True) as response:
-                    response.raise_for_status()
+                    try:
+                        response.raise_for_status()
+                    except httpx.HTTPStatusError as status_err:
+                        # 流式分支的异常在 base_client 之外抛出，需在此补记上游真实错误体
+                        if status_err.response is not None:
+                            logger.error(
+                                "🚨 流式请求上游状态错误: status=%s body_preview=%s",
+                                status_err.response.status_code,
+                                safe_preview(status_err.response.text, 1000),
+                            )
+                            _log_raw_response_body(status_err.response, "http_status_error_stream")
+                        raise
                     try:
                         async for line in response.aiter_lines():
                             if line.startswith("data: "):
