@@ -11,6 +11,7 @@ import {
   WalletOutlined,
   QuestionCircleOutlined,
   TeamOutlined,
+  CommentOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { useStore } from '../store';
@@ -35,6 +36,7 @@ const PATH_TO_KEY: Record<string, string> = {
   '/help': 'help',
   '/settings': 'settings',
   '/system-settings': 'system-settings',
+  '/feedback-admin': 'feedback-admin',
   '/user-management': 'user-management',
   '/account': 'account',
 };
@@ -49,6 +51,7 @@ const PATH_TO_TITLE: Record<string, string> = {
   '/help': '使用说明',
   '/settings': 'API 设置',
   '/system-settings': '系统设置',
+  '/feedback-admin': '意见反馈',
   '/user-management': '用户管理',
   '/account': '个人中心',
 };
@@ -62,6 +65,7 @@ const KEY_TO_PATH: Record<string, string> = {
   help: '/help',
   settings: '/settings',
   'system-settings': '/system-settings',
+  'feedback-admin': '/feedback-admin',
   'user-management': '/user-management',
   account: '/account',
 };
@@ -153,6 +157,7 @@ export default function RootLayout() {
           { key: 'settings', icon: <SettingOutlined />, label: 'API 设置' },
           { key: 'account', icon: <WalletOutlined />, label: '个人中心' },
           ...(isAdmin ? [{ key: 'system-settings', icon: <MailOutlined />, label: '系统设置' }] : []),
+          ...(isAdmin ? [{ key: 'feedback-admin', icon: <CommentOutlined />, label: '意见反馈' }] : []),
           ...(isAdmin ? [{ key: 'user-management', icon: <TeamOutlined />, label: '用户管理' }] : []),
         ],
       },
@@ -171,6 +176,7 @@ export default function RootLayout() {
       { key: 'settings', icon: <SettingOutlined />, label: 'API 设置' },
       { key: 'account', icon: <WalletOutlined />, label: '个人中心' },
       ...(isAdmin ? [{ key: 'system-settings', icon: <MailOutlined />, label: '系统设置' }] : []),
+      ...(isAdmin ? [{ key: 'feedback-admin', icon: <CommentOutlined />, label: '意见反馈' }] : []),
       ...(isAdmin ? [{ key: 'user-management', icon: <TeamOutlined />, label: '用户管理' }] : []),
     ],
     [isAdmin]

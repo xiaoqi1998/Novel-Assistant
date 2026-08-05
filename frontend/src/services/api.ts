@@ -1051,6 +1051,44 @@ export const announcementApi = {
     api.post<unknown, { success: boolean; item: Announcement }>(`/announcements/admin/items/${id}/hide`),
 };
 
+// ============ 意见反馈 ============
+
+export interface FeedbackItem {
+  id: string;
+  user_id: string;
+  username?: string;
+  display_name?: string;
+  content: string;
+  contact?: string;
+  page?: string;
+  adoption_status: 'pending' | 'adopted' | 'rejected';
+  resolve_status: 'unresolved' | 'resolved';
+  admin_reply?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export const feedbackApi = {
+  // 用户提交反馈
+  submit: (data: { content: string; contact?: string; page?: string }) =>
+    api.post<unknown, { success: boolean; item: FeedbackItem }>('/feedbacks', data),
+
+  // 管理员：反馈列表
+  adminList: (params?: { adoption_status?: string; resolve_status?: string; q?: string; page?: number; limit?: number }) =>
+    api.get<unknown, { success: boolean; data: { total: number; page: number; limit: number; items: FeedbackItem[] } }>(
+      '/feedbacks/admin/items',
+      { params }
+    ),
+
+  // 管理员：更新采纳/解决状态与回复
+  adminUpdate: (id: string, data: { adoption_status?: string; resolve_status?: string; admin_reply?: string }) =>
+    api.put<unknown, { success: boolean; item: FeedbackItem }>(`/feedbacks/admin/items/${id}`, data),
+
+  // 管理员：删除反馈
+  adminDelete: (id: string) =>
+    api.delete<unknown, { success: boolean; message: string }>(`/feedbacks/admin/items/${id}`),
+};
+
 export const polishApi = {
   polishText: (data: PolishTextRequest) =>
     api.post<unknown, { polished_text: string }>('/polish', data),

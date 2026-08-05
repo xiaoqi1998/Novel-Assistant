@@ -214,9 +214,18 @@ export default function Polish() {
     const handleTaskFinished = async (data: unknown) => {
       const payload = data as { taskId?: string; taskType?: string; projectId?: string; status?: string };
       if (payload?.projectId !== story.id) return;
-      // 评分任务终态：清除 scoring 锁，AI 操作互斥解除
+      // 评分任务终态：清除 scoring 锁，AI 操作互斥解除；completed 时刷新最新评分到页面
       if (payload.taskType === 'short_story_score') {
         setScoring(false);
+        if (payload.status === 'completed') {
+          try {
+            const updated = await shortStoryApi.get(story.id);
+            updateCurrentStory(updated); // Effect B 会根据 score_data 更新评分展示
+            message.success('后台评分完成，评分结果已更新');
+          } catch {
+            // 刷新失败忽略，用户可手动刷新页面查看
+          }
+        }
       }
       // 改进任务终态：清除 improving 锁，completed 时弹出对比预览，failed 时提示
       if (payload.taskType === 'short_story_improve' && payload.taskId) {
@@ -431,7 +440,7 @@ export default function Polish() {
       >
         {autoScoring ? (
           <div style={{ textAlign: 'center', padding: '40px 0' }}>
-            <Spin tip={autoScoring ? '已确认改进，正在自动重新评分…' : 'AI正在按爆款方法论评分中…'} size="large" />
+            <Spin tip={autoScoring ? '已确认改进，正在创建后台重新评分任务…' : 'AI正在按爆款方法论评分中…'} size="large" />
             <div style={{ marginTop: 16, color: token.colorTextSecondary, fontSize: 13 }}>
               评分维度：选题 / 结构 / 情绪 / 人设对话 / 完成度
             </div>
@@ -661,27 +670,20 @@ v3：结尾增加一句留白，强化余味"
           }
 
           if (wasImprove) {
-            // 改进类型：自动触发重新评分
-            message.loading({ content: '已确认保存改进，正在自动重新评分...', key: 'autoScore', duration: 0 });
+            // 改进类型：自动创建后台评分任务（只触发一次AI评分，不阻塞页面，关浏览器不影响）
             try {
               setAutoScoring(true);
-              const scoreResult = await shortStoryApi.score(story.id);
-              setScoreResult(scoreResult);
+              await shortStoryApi.scoreBackground(story.id);
               message.success({
-                content: `自动评分完成：${scoreResult.total_score}分（${scoreResult.level}）`,
+                content: '已确认保存改进，已自动创建后台重新评分任务，完成后右下角浮窗会提示',
                 key: 'autoScore',
                 duration: 5,
               });
-              // 同步story状态
-              try {
-                const updated = await shortStoryApi.get(story.id);
-                updateCurrentStory(updated);
-              } catch {
-                // 同步失败不影响主流程
-              }
+              // 通知 FloatingTaskPanel 立即刷新
+              eventBus.emit('background-task-created');
             } catch (error) {
               message.destroy('autoScore');
-              showErrorToast(error, '自动评分失败，可手动点击评分按钮重试');
+              showErrorToast(error, '自动创建后台评分任务失败，可手动点击评分按钮重试');
             } finally {
               setAutoScoring(false);
             }

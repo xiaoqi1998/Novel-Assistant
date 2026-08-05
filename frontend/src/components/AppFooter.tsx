@@ -1,5 +1,5 @@
 import { Typography, Grid, theme } from 'antd';
-import { VERSION_INFO, getVersionString } from '../config/version';
+import { VERSION_INFO, getVersionWithHash } from '../config/version';
 import { alphaColor } from '../utils/color';
 
 const { Text } = Typography;
@@ -48,7 +48,7 @@ export default function AppFooter({ sidebarWidth = 0 }: AppFooterProps) {
           }}
         >
           <strong style={{ color: token.colorText }}>{VERSION_INFO.projectName}</strong>
-          <span style={{ color: token.colorPrimary }}>{getVersionString()}</span>
+          <span style={{ color: token.colorPrimary }}>{getVersionWithHash()}</span>
         </Text>
       </div>
     </div>

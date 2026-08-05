@@ -166,7 +166,8 @@ export default function TianmingTimelineView({ projectId }: Props) {
   });
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    // 跟随页面自然滚动（不锁定高度），避免内容被裁剪后无法下滑
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
       <Alert
         message={
           <Space>
@@ -289,8 +290,8 @@ export default function TianmingTimelineView({ projectId }: Props) {
         </Card>
       )}
 
-      {/* 时间线主体 */}
-      <div style={{ flex: 1, overflow: 'auto', paddingRight: 4 }}>
+      {/* 时间线主体（随页面滚动） */}
+      <div style={{ paddingRight: 4 }}>
         {loading ? (
           <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
         ) : timelineItems.length > 0 ? (

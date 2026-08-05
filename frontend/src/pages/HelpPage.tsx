@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { getVersionWithHash } from '../config/version';
 import {
   Typography,
   Card,
@@ -199,7 +200,8 @@ const TIPS: { icon: ReactNode; title: string; desc: string }[] = [
   },
 ];
 
-const APP_VERSION = 'v1.5.2';
+// 版本号从 package.json 构建时注入（含 Git hash），不再硬编码
+const APP_VERSION = getVersionWithHash();
 const LAST_UPDATED = '2026-07-27';
 
 export default function HelpPage() {

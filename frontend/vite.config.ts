@@ -2,11 +2,31 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
+import { execSync } from 'child_process'
 
 // 读取 package.json 获取版本号
 const packageJson = JSON.parse(
   readFileSync(resolve(__dirname, 'package.json'), 'utf-8')
 )
+
+// 获取 Git 短 hash（优先使用外部注入的 VITE_GIT_HASH 环境变量，如 Docker 构建；
+// 否则本地执行 git rev-parse，非 Git 环境降级为 unknown）
+function getGitHash(): string {
+  let hash = ''
+  if (process.env.VITE_GIT_HASH) {
+    hash = process.env.VITE_GIT_HASH
+  } else {
+    try {
+      hash = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
+        .toString()
+        .trim()
+    } catch {
+      return 'unknown'
+    }
+  }
+  // 统一截断为 7 位短 hash（兼容 CI 传入的完整 SHA）
+  return hash ? hash.slice(0, 7) : 'unknown'
+}
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -18,6 +38,7 @@ export default defineConfig(({ mode }) => ({
   // 定义全局常量，在构建时注入
   define: {
     'import.meta.env.VITE_APP_VERSION': JSON.stringify(packageJson.version),
+    'import.meta.env.VITE_GIT_HASH': JSON.stringify(getGitHash()),
     'import.meta.env.VITE_BUILD_TIME': JSON.stringify(
       new Date().toISOString().split('T')[0]
     ),

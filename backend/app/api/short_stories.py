@@ -507,6 +507,129 @@ async def generate_twists(
         raise HTTPException(status_code=500, detail=f"生成失败: {str(e)}")
 
 
+class GenerateCluesRequest(BaseModel):
+    title: Optional[str] = None
+    logline: Optional[str] = None
+    genre: Optional[str] = None
+
+
+@router.post("/{story_id}/generate-clues", summary="AI生成铺垫线索")
+async def generate_clues(
+    story_id: str,
+    req: GenerateCluesRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    ai_service: AIService = Depends(get_ai_service_for_usage("short_story")),
+):
+    try:
+        user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="未登录")
+
+        result = await db.execute(
+            select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+        )
+        story = result.scalar_one_or_none()
+        if not story:
+            raise HTTPException(status_code=404, detail="短故事不存在")
+
+        clues = await ShortStoryAIService.generate_clues(
+            ai_service=ai_service,
+            title=req.title or story.title or "",
+            logline=req.logline or story.logline or "",
+            genre=req.genre or story.genre or "",
+        )
+        logger.info(f"AI生成线索成功: story_id={story_id}, clues_count={len(clues)}")
+        return {"clues": clues}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"AI生成线索失败: story_id={story_id}, error={str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"生成失败: {str(e)}")
+
+
+class GenerateCharactersRequest(BaseModel):
+    title: Optional[str] = None
+    logline: Optional[str] = None
+    genre: Optional[str] = None
+
+
+@router.post("/{story_id}/generate-characters", summary="AI生成标签化人设")
+async def generate_characters(
+    story_id: str,
+    req: GenerateCharactersRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    ai_service: AIService = Depends(get_ai_service_for_usage("short_story")),
+):
+    try:
+        user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="未登录")
+
+        result = await db.execute(
+            select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+        )
+        story = result.scalar_one_or_none()
+        if not story:
+            raise HTTPException(status_code=404, detail="短故事不存在")
+
+        characters = await ShortStoryAIService.generate_characters(
+            ai_service=ai_service,
+            title=req.title or story.title or "",
+            logline=req.logline or story.logline or "",
+            genre=req.genre or story.genre or "",
+        )
+        logger.info(f"AI生成人设成功: story_id={story_id}, characters_count={len(characters)}")
+        return {"characters": characters}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"AI生成人设失败: story_id={story_id}, error={str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"生成失败: {str(e)}")
+
+
+class AutoCompleteSetupRequest(BaseModel):
+    title: str
+    genre: Optional[str] = None
+    emotion_goal: Optional[str] = None
+
+
+@router.post("/{story_id}/auto-complete-setup", summary="AI一键补全设定")
+async def auto_complete_setup(
+    story_id: str,
+    req: AutoCompleteSetupRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    ai_service: AIService = Depends(get_ai_service_for_usage("short_story")),
+):
+    try:
+        user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="未登录")
+
+        result = await db.execute(
+            select(ShortStory).where(ShortStory.id == story_id, ShortStory.user_id == user_id)
+        )
+        story = result.scalar_one_or_none()
+        if not story:
+            raise HTTPException(status_code=404, detail="短故事不存在")
+
+        data = await ShortStoryAIService.auto_complete_setup(
+            ai_service=ai_service,
+            title=req.title or story.title or "",
+            genre=req.genre or story.genre or "",
+            emotion_goal=req.emotion_goal or story.emotion_goal or "",
+        )
+        logger.info(f"AI一键补全设定成功: story_id={story_id}")
+        return data
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"AI一键补全设定失败: story_id={story_id}, error={str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"生成失败: {str(e)}")
+
+
 class GenerateSegmentRequest(BaseModel):
     segment_stage: str  # hook / escalation / climax / resolution
 
@@ -2913,7 +3036,15 @@ async def generate_full_story_background(
                     message="AI正在按黄金结构生成全文...",
                 )
 
-                # 调用生成器（传入取消检查器）
+                # 进度回调：每段生成完成后按累计字数上报进度，避免进度条卡在20%
+                async def _progress_cb(current_chars: int, message: str):
+                    await tracker.generating(
+                        current_chars=current_chars,
+                        estimated_total=target_words,
+                        message=message,
+                    )
+
+                # 调用生成器（传入取消检查器和进度回调）
                 story_data = await FullStoryGenerator.generate_full_story(
                     ai_service=bg_ai_service,
                     initial_idea=initial_idea,
@@ -2922,6 +3053,7 @@ async def generate_full_story_background(
                     target_platform=target_platform,
                     emotion_curve="",
                     cancel_checker=tracker.check_cancelled,
+                    progress_callback=_progress_cb,
                 )
 
                 # AI调用后检查取消请求

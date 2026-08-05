@@ -70,6 +70,25 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"后台任务表检查失败（不影响启动）: {e}")
 
+    # git pull 后自动生成更新公告（对比 Git HEAD 与上次公告 hash，非 Git 环境自动跳过）
+    try:
+        from app.services.update_announcement_service import auto_generate_update_announcement
+        await auto_generate_update_announcement()
+    except Exception as e:
+        logger.warning(f"自动生成更新公告失败（不影响启动）: {e}")
+
+    # 安全保障：确保意见反馈表存在（全局库，无需 Alembic 迁移）
+    try:
+        from app.database import get_engine as _get_feedback_engine
+        from app.models.feedback import Feedback
+        _feedback_engine = await _get_feedback_engine("_announcements_")
+        async with _feedback_engine.begin() as conn:
+            await conn.run_sync(
+                lambda sync_conn: Feedback.__table__.create(sync_conn, checkfirst=True)
+            )
+    except Exception as e:
+        logger.warning(f"意见反馈表检查失败（不影响启动）: {e}")
+
     logger.info("应用启动完成")
     
     yield
@@ -175,7 +194,7 @@ from app.api import (
     careers, foreshadows, prompt_workshop, book_import,
     project_covers, tasks, skills, announcements, full_review, newapi,
     polish, character_arcs, short_stories, short_inspiration,
-    tianming
+    tianming, feedbacks
 )
 
 app.include_router(auth.router, prefix="/api")
@@ -210,6 +229,7 @@ app.include_router(announcements.router, prefix="/api")  # 公告API
 app.include_router(newapi.router, prefix="/api")  # New API 额度中心
 app.include_router(full_review.router)  # 全文审查API（已包含/api前缀）
 app.include_router(tianming.router, prefix="/api")  # 天命状态管理API
+app.include_router(feedbacks.router, prefix="/api")  # 意见反馈API
 
 # 静态资源目录：PyInstaller 打包后位于 _MEIPASS，开发模式位于 backend/
 if getattr(sys, 'frozen', False):

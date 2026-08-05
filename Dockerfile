@@ -8,6 +8,7 @@ ARG USE_CN_MIRROR=false
 FROM node:22-alpine AS frontend-builder
 
 ARG USE_CN_MIRROR
+ARG GIT_HASH=unknown
 
 WORKDIR /frontend
 
@@ -31,7 +32,8 @@ COPY frontend/ ./
 # 临时修改vite配置，使其输出到dist目录（而不是../backend/static）
 RUN sed -i "s|outDir: '../backend/static'|outDir: 'dist'|g" vite.config.ts
 
-# 构建前端
+# 构建前端（容器内无 .git，通过构建参数注入 Git hash）
+ENV VITE_GIT_HASH=${GIT_HASH}
 RUN npm run build
 
 # 阶段2: 构建最终镜像
