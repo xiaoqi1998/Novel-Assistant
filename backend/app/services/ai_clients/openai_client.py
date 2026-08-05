@@ -1,9 +1,12 @@
 """OpenAI 客户端"""
+import asyncio
 import json
 from typing import Any, AsyncGenerator, Dict, Optional
 
+import httpx
+
 from app.logger import get_logger, summarize_log_value
-from .base_client import BaseAIClient
+from .base_client import BaseAIClient, friendly_network_error_message
 
 logger = get_logger(__name__)
 
@@ -143,71 +146,109 @@ class OpenAIClient(BaseAIClient):
             - done: bool - 是否结束
         """
         payload = self._build_payload(messages, model, temperature, max_tokens, tools, tool_choice, stream=True)
-        
-        tool_calls_buffer = {}  # 收集工具调用块
-        
-        try:
-            async with await self._request_with_retry("POST", "/chat/completions", payload, stream=True) as response:
-                response.raise_for_status()
-                try:
-                    async for line in response.aiter_lines():
-                        if line.startswith("data: "):
-                            data_str = line[6:]
-                            if data_str.strip() == "[DONE]":
-                                # 流结束，检查是否有工具调用需要处理
-                                if tool_calls_buffer:
-                                    yield {"tool_calls": list(tool_calls_buffer.values()), "done": True}
-                                yield {"done": True}
-                                break
-                            try:
-                                data = json.loads(data_str)
-                                choices = data.get("choices", [])
-                                if choices and len(choices) > 0:
-                                    delta = choices[0].get("delta", {})
-                                    content = delta.get("content", "")
-                                    
-                                    # 检查工具调用
-                                    tc_list = delta.get("tool_calls")
-                                    if tc_list:
-                                        for tc in tc_list:
-                                            index = tc.get("index", 0)
-                                            if index not in tool_calls_buffer:
-                                                tool_calls_buffer[index] = tc
-                                            else:
-                                                existing = tool_calls_buffer[index]
-                                                # 合并 function.arguments
-                                                if "function" in tc and "function" in existing:
-                                                    if tc["function"].get("arguments"):
-                                                        existing["function"]["arguments"] = (
-                                                            existing["function"].get("arguments", "") +
-                                                            tc["function"]["arguments"]
-                                                        )
 
-                                    usage = data.get("usage")
-                                    if usage:
-                                        yield {
-                                            "usage": {
-                                                "prompt_tokens": usage.get("prompt_tokens"),
-                                                "completion_tokens": usage.get("completion_tokens"),
-                                                "total_tokens": usage.get("total_tokens"),
+        retry_cfg = self.config.retry
+        max_attempts = max(1, retry_cfg.max_retries)
+        yielded_any = False  # 是否已向调用方输出过内容（输出后不可重试，避免内容重复）
+
+        for attempt in range(1, max_attempts + 1):
+            tool_calls_buffer = {}  # 收集工具调用块
+            completed = False
+            try:
+                async with await self._request_with_retry("POST", "/chat/completions", payload, stream=True) as response:
+                    response.raise_for_status()
+                    try:
+                        async for line in response.aiter_lines():
+                            if line.startswith("data: "):
+                                data_str = line[6:]
+                                if data_str.strip() == "[DONE]":
+                                    # 流结束，检查是否有工具调用需要处理
+                                    if tool_calls_buffer:
+                                        yield {"tool_calls": list(tool_calls_buffer.values()), "done": True}
+                                    yield {"done": True}
+                                    completed = True
+                                    break
+                                try:
+                                    data = json.loads(data_str)
+                                    choices = data.get("choices", [])
+                                    if choices and len(choices) > 0:
+                                        delta = choices[0].get("delta", {})
+                                        content = delta.get("content", "")
+
+                                        # 检查工具调用
+                                        tc_list = delta.get("tool_calls")
+                                        if tc_list:
+                                            for tc in tc_list:
+                                                index = tc.get("index", 0)
+                                                if index not in tool_calls_buffer:
+                                                    tool_calls_buffer[index] = tc
+                                                else:
+                                                    existing = tool_calls_buffer[index]
+                                                    # 合并 function.arguments
+                                                    if "function" in tc and "function" in existing:
+                                                        if tc["function"].get("arguments"):
+                                                            existing["function"]["arguments"] = (
+                                                                existing["function"].get("arguments", "") +
+                                                                tc["function"]["arguments"]
+                                                            )
+
+                                        usage = data.get("usage")
+                                        if usage:
+                                            yielded_any = True
+                                            yield {
+                                                "usage": {
+                                                    "prompt_tokens": usage.get("prompt_tokens"),
+                                                    "completion_tokens": usage.get("completion_tokens"),
+                                                    "total_tokens": usage.get("total_tokens"),
+                                                }
                                             }
-                                        }
-                                    
-                                    if content:
-                                        yield {"content": content}
-                                        
-                            except json.JSONDecodeError:
-                                continue
-                except GeneratorExit:
-                    # 生成器被关闭，这是正常的清理过程
-                    logger.debug("流式响应生成器被关闭(GeneratorExit)")
-                    raise
-                except Exception as iter_error:
-                    logger.error(f"流式响应迭代出错: {str(iter_error)}")
-                    raise
-        except GeneratorExit:
-            # 重新抛出GeneratorExit，让调用方处理
-            raise
-        except Exception as e:
-            logger.error(f"流式请求出错: {str(e)}")
-            raise
+
+                                        if content:
+                                            yielded_any = True
+                                            yield {"content": content}
+
+                                except json.JSONDecodeError:
+                                    continue
+                    except GeneratorExit:
+                        # 生成器被关闭，这是正常的清理过程
+                        logger.debug("流式响应生成器被关闭(GeneratorExit)")
+                        raise
+                    except httpx.TransportError:
+                        # 流式读取中途上游断开（如 incomplete chunked read），交给外层决定重试或报错
+                        raise
+                    except Exception as iter_error:
+                        logger.error(f"流式响应迭代出错: {str(iter_error)}")
+                        raise
+            except GeneratorExit:
+                # 重新抛出GeneratorExit，让调用方处理
+                raise
+            except httpx.TransportError as e:
+                # 上游中途断开：未输出过任何内容时可安全重试；已输出则报错避免内容重复
+                if not yielded_any and attempt < max_attempts:
+                    delay = min(
+                        retry_cfg.base_delay * (retry_cfg.exponential_base ** attempt),
+                        retry_cfg.max_delay,
+                    )
+                    logger.warning(
+                        "⚠️ 流式响应中途断开(未产出内容)，第 %s/%s 次重试，等待 %.1fs: %s",
+                        attempt, max_attempts, delay, str(e) or type(e).__name__,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                logger.error(f"流式请求网络中断: {type(e).__name__}: {str(e)}")
+                raise type(e)(friendly_network_error_message(e)) from e
+            except Exception as e:
+                logger.error(f"流式请求出错: {str(e)}")
+                raise
+
+            if completed:
+                return
+            # 上游未发送 [DONE] 就结束了（部分代理会静默关连接）：未产出内容时可重试
+            if not yielded_any and attempt < max_attempts:
+                logger.warning("⚠️ 流式响应未收到 [DONE] 即结束，第 %s/%s 次重试", attempt, max_attempts)
+                continue
+            logger.warning("流式响应未收到 [DONE] 即结束，按已接收内容处理")
+            if tool_calls_buffer:
+                yield {"tool_calls": list(tool_calls_buffer.values()), "done": True}
+            yield {"done": True}
+            return
