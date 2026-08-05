@@ -18,6 +18,7 @@
 """
 import os
 import re
+import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -120,7 +121,16 @@ def _filter_commits_for_users(
 
 
 def _run_git(args: list[str], cwd: Path) -> Optional[str]:
-    """执行 git 命令，失败返回 None（静默降级）"""
+    """执行 git 命令，失败返回 None（含诊断日志）
+
+    兼容场景：
+    - 容器未安装 git（FileNotFoundError）
+    - 挂载的 .git 属主不一致（safe.directory，通过环境变量解除）
+    - git 命令本身报错（如 HEAD 不存在）
+    """
+    if shutil.which("git") is None:
+        logger.error(f"git 命令不存在（PATH 中未找到 git），cwd={cwd}")
+        return None
     try:
         env = os.environ.copy()
         # 容器内挂载的 .git 目录文件属主可能与运行进程不一致，
@@ -141,9 +151,15 @@ def _run_git(args: list[str], cwd: Path) -> Optional[str]:
             env=env,
         )
         if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            logger.warning(f"git {args} 执行失败 rc={result.returncode} (cwd={cwd}): {stderr[:500]}")
             return None
         return result.stdout.strip()
-    except Exception:
+    except FileNotFoundError:
+        logger.error(f"git 命令不存在（FileNotFoundError），cwd={cwd}")
+        return None
+    except Exception as e:
+        logger.error(f"git 执行异常: {e} (cwd={cwd})")
         return None
 
 
@@ -291,11 +307,43 @@ async def build_git_announcement_draft(
         logger.info("更新公告功能已关闭（AUTO_UPDATE_ANNOUNCEMENT），跳过草稿生成")
         return _draft_result(ok=False, message="更新公告功能已关闭（AUTO_UPDATE_ANNOUNCEMENT）", git_available=False)
 
+    # 逐环节诊断 git 环境，给出精确失败原因
+    env_root = os.getenv("PROJECT_GIT_DIR", "").strip()
     root = _project_root()
+
+    if shutil.which("git") is None:
+        logger.error("容器内未安装 git 命令，无法读取提交记录")
+        return _draft_result(
+            ok=False,
+            message="服务器容器内未安装 git 命令，请在 Dockerfile 中安装 git 后重新构建镜像",
+            git_available=False,
+        )
+
+    if env_root:
+        env_root_path = Path(env_root)
+        if not env_root_path.is_dir():
+            logger.error(f"PROJECT_GIT_DIR 配置的目录不存在: {env_root}")
+            return _draft_result(
+                ok=False,
+                message=f"PROJECT_GIT_DIR 配置的目录不存在: {env_root}，请检查 docker-compose 挂载",
+                git_available=False,
+            )
+        if not (env_root_path / ".git").exists() and not (env_root_path / "HEAD").exists():
+            logger.error(f"PROJECT_GIT_DIR 目录不是 Git 仓库（缺少 .git/HEAD）: {env_root}")
+            return _draft_result(
+                ok=False,
+                message=f"PROJECT_GIT_DIR 目录 {env_root} 未挂载 Git 仓库信息（缺少 .git），请检查 docker-compose volumes",
+                git_available=False,
+            )
+
     hashes = _get_head_hashes(root)
     if not hashes:
-        logger.info(f"非 Git 环境或 git 不可用（检查目录: {root}），无法读取提交")
-        return _draft_result(ok=False, message="非 Git 环境或 git 不可用，无法读取提交记录", git_available=False)
+        logger.info(f"git 不可用或非 Git 仓库（目录: {root}），无法读取提交")
+        return _draft_result(
+            ok=False,
+            message=f"无法读取 Git 提交记录（仓库目录: {root}），请查看服务器日志确认原因",
+            git_available=False,
+        )
     head_short, head_full = hashes
 
     # 尝试从上次自动公告解析 prev hash，实现增量（prev..HEAD）
