@@ -10,10 +10,8 @@ import {
   Space,
   Tag,
   Checkbox,
-  theme,
-  Grid,
 } from 'antd';
-import { PlusOutlined, DeleteOutlined, SaveOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { PlusOutlined, DeleteOutlined, SaveOutlined } from '@ant-design/icons';
 import { shortStoryApi } from '../../services/api';
 import { showErrorToast } from '../../utils/errorHandler';
 import { useShortStoryStore } from '../../store/shortStoryStore';
@@ -25,7 +23,7 @@ import type {
   ShortStoryCharacter,
 } from '../../types';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 const { TextArea } = Input;
 
 const REVERSAL_GRADES = [
@@ -49,9 +47,6 @@ interface KeyPointsProps {
 }
 
 export default function KeyPoints({ story }: KeyPointsProps) {
-  const { token } = theme.useToken();
-  const screens = Grid.useBreakpoint();
-  const isMobile = !screens.md;
   const { updateCurrentStory } = useShortStoryStore();
 
   const [reversalGrade, setReversalGrade] = useState<string>('');
