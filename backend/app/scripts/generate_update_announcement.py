@@ -1,7 +1,7 @@
 """显式生成更新公告（由 auto-update.sh 在 git pull 之后触发）
 
 用法：
-    python scripts/generate_update_announcement.py --prev <old_hash> --new <new_hash> [--force]
+    python /app/app/scripts/generate_update_announcement.py --prev <old_hash> --new <new_hash> [--force]
 
 - --prev: 更新前的 commit hash
 - --new:  更新后的 commit hash
@@ -9,14 +9,21 @@
 
 本脚本通过 docker compose exec 在容器内运行，复用已配置的 DATABASE_URL 与公告库。
 相比"容器启动时隐式生成"，触发时机更明确：只有 git pull 真的拉到新提交时才执行。
+
+位置说明：脚本放在 backend/app/scripts/ 下，复用 ./backend/app:/app/app:ro 实时挂载，
+git pull 后无需重建容器即可生效（避免依赖新增 volumes 挂载必须 up -d 的问题）。
 """
 import argparse
 import asyncio
 import sys
 from pathlib import Path
 
-# 确保能 import app 包（脚本位于 backend/scripts/ 下）
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# 确保能 import app 包。
+# 脚本位于 backend/app/scripts/ 下：
+#   parents[0] = backend/app/scripts
+#   parents[1] = backend/app   （app 包本身）
+#   parents[2] = backend       （import app 需要 backend 在 path）
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
 async def main() -> int:
