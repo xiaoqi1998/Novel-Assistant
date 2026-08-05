@@ -111,20 +111,14 @@ generate_announcement() {
     echo ""
     echo "=============================================="
 
-    # 交互确认是否发布公告（仅手动运行时有效）
-    # 支持 --yes 跳过确认（定时/非交互场景）
-    if [ "$SKIP_ANNOUNCE_CONFIRM" = "1" ]; then
-        log "📢 已设置自动发布（SKIP_ANNOUNCE_CONFIRM=1）"
+    # 是否发布公告由外部（deploy.ps1 本地交互确认后）通过环境变量 ANNOUNCE_CONFIRM 传入
+    # 值可为 yes / 1 / true / auto（auto 表示无人值守时自动发布）
+    if [ "$ANNOUNCE_CONFIRM" = "yes" ] || [ "$ANNOUNCE_CONFIRM" = "1" ] \
+        || [ "$ANNOUNCE_CONFIRM" = "true" ] || [ "$ANNOUNCE_CONFIRM" = "auto" ]; then
+        log "📢 已确认发布公告（ANNOUNCE_CONFIRM=$ANNOUNCE_CONFIRM）"
     else
-        read -r -p "是否发布本次更新公告？[y/N] " publish_answer
-        case "$publish_answer" in
-            [yY]|[yY][eE][sS])
-                ;;
-            *)
-                log "⏭️  已跳过发布更新公告"
-                return 0
-                ;;
-        esac
+        log "⏭️  未确认发布公告（ANNOUNCE_CONFIRM=${ANNOUNCE_CONFIRM:-未设置}），跳过"
+        return 0
     fi
 
     # 容器内执行，复用 DATABASE_URL 与依赖；失败不影响部署
