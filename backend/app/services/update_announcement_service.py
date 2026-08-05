@@ -64,7 +64,22 @@ _PREFIX_STRIP = re.compile(r"^(feat|fix|perf|refactor|docs?|chore|style|test|bui
 
 
 def _project_root() -> Path:
-    """项目根目录（backend/app/services/x.py 向上三级）"""
+    """项目根目录（含 .git 的仓库根）
+
+    优先级：
+    1. 环境变量 PROJECT_GIT_DIR（容器部署时显式指定）
+    2. 从当前文件向上逐级查找 .git 目录（兼容容器内挂载 .git 到 /app 的场景）
+    3. 回退：源码文件向上三级
+    """
+    env_root = os.getenv("PROJECT_GIT_DIR", "").strip()
+    if env_root:
+        candidate = Path(env_root)
+        if candidate.is_dir():
+            return candidate
+    current = Path(__file__).resolve().parent
+    for parent in [current, *current.parents]:
+        if (parent / ".git").exists():
+            return parent
     return Path(__file__).resolve().parents[3]
 
 
@@ -109,6 +124,14 @@ def _filter_commits_for_users(
 def _run_git(args: list[str], cwd: Path) -> Optional[str]:
     """执行 git 命令，失败返回 None（静默降级）"""
     try:
+        env = os.environ.copy()
+        # 容器内挂载的 .git 目录文件属主可能与运行进程不一致，
+        # git 会报 "detected dubious ownership / unsafe repository"，
+        # 通过环境变量解除 safe.directory 限制（仅信任本仓库目录）。
+        if "GIT_CONFIG_COUNT" not in env:
+            env["GIT_CONFIG_COUNT"] = "1"
+            env["GIT_CONFIG_KEY_0"] = "safe.directory"
+            env["GIT_CONFIG_VALUE_0"] = str(cwd)
         result = subprocess.run(
             ["git"] + args,
             cwd=str(cwd),
@@ -117,6 +140,7 @@ def _run_git(args: list[str], cwd: Path) -> Optional[str]:
             timeout=15,
             encoding="utf-8",
             errors="replace",
+            env=env,
         )
         if result.returncode != 0:
             return None
@@ -217,7 +241,7 @@ async def auto_generate_update_announcement() -> None:
     root = _project_root()
     hashes = _get_head_hashes(root)
     if not hashes:
-        logger.info("非 Git 环境或 git 不可用，跳过自动更新公告")
+        logger.info(f"非 Git 环境或 git 不可用（检查目录: {root}），跳过自动更新公告")
         return
     head_short, head_full = hashes
 

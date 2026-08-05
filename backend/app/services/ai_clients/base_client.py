@@ -99,6 +99,31 @@ def _is_sse_response(response: httpx.Response) -> bool:
     return "text/event-stream" in content_type or (response.text or "").lstrip().startswith("data:")
 
 
+def is_network_disconnect(exc: BaseException) -> bool:
+    """判断是否为可重试的网络传输层中断错误。
+
+    覆盖上游代理/中转站在流式传输中途断开连接的典型场景，
+    例如 httpx.RemoteProtocolError: peer closed connection without
+    sending complete message body (incomplete chunked read)。
+    """
+    return isinstance(exc, httpx.TransportError)
+
+
+def friendly_network_error_message(exc: BaseException) -> str:
+    """将 httpx 传输层异常转换为用户可读的中文提示。"""
+    detail = str(exc).strip()
+    if isinstance(exc, httpx.TimeoutException):
+        return f"AI 服务响应超时，请稍后重试（{detail}）" if detail else "AI 服务响应超时，请稍后重试"
+    if isinstance(exc, httpx.RemoteProtocolError):
+        return (
+            "AI 服务连接被上游中断（响应未传输完整，常见于中转站/代理断开或超时），请重试。"
+            f"原始信息: {detail}"
+        )
+    if isinstance(exc, (httpx.ConnectError, httpx.NetworkError)):
+        return f"无法连接 AI 服务，请检查网络或 API 地址后重试（{detail}）"
+    return f"AI 服务网络异常，请重试（{detail or exc.__class__.__name__}）"
+
+
 def _merge_tool_call_delta(tool_calls: Dict[int, Dict[str, Any]], delta: Dict[str, Any]) -> None:
     """合并 OpenAI 流式 tool_call 增量。"""
     index = delta.get("index", len(tool_calls))
@@ -289,118 +314,131 @@ class BaseAIClient(ABC):
 
         semaphore = _get_semaphore(rate_cfg.max_concurrent_requests)
 
-        async with semaphore:
-            await asyncio.sleep(rate_cfg.request_delay)
+        try:
+            async with semaphore:
+                await asyncio.sleep(rate_cfg.request_delay)
 
-            for attempt in range(retry_cfg.max_retries):
-                try:
-                    if attempt > 0:
-                        delay = min(
-                            retry_cfg.base_delay * (retry_cfg.exponential_base ** attempt),
-                            retry_cfg.max_delay,
-                        )
-                        logger.warning(f"⚠️ 重试 {attempt + 1}/{retry_cfg.max_retries}，等待 {delay}s")
-                        await asyncio.sleep(delay)
-
-                    if stream:
-                        # ⚠️ 不能用 `async with self.http_client.stream(...)` 后再 return：
-                        # 退出该上下文会调用 response.aclose() 关闭响应流，导致调用方
-                        # 迭代 aiter_lines() 时抛 "Attempted to read or stream content,
-                        # but the stream has been closed."。
-                        # 改用 build_request + send(stream=True)，让响应保持打开，
-                        # 由 _StreamResponseWrapper 在 __aexit__ 中负责关闭。
-                        request = self.http_client.build_request(method, url, headers=headers, json=payload)
-                        response = await self.http_client.send(request, stream=True)
-                        try:
-                            response.raise_for_status()
-                            return _StreamResponseWrapper(response)
-                        except httpx.HTTPStatusError:
-                            status_code = response.status_code
-                            # httpx 流式响应需先 aread 才能访问 .text（此时 stream 还活着）
-                            body_preview = None
-                            try:
-                                await response.aread()
-                                body_preview = safe_preview(response.text, 1000)
-                            except Exception as read_err:
-                                body_preview = f"<读取响应体失败: {read_err}>"
-                            logger.error(
-                                "AI HTTP 状态错误: method=%s endpoint=%s status=%s headers=%s body_preview=%s",
-                                method,
-                                endpoint,
-                                status_code,
-                                _debug_response_headers(response),
-                                body_preview,
-                            )
-                            # 重试或抛出前关闭响应，避免连接泄漏
-                            await response.aclose()
-                            if status_code in retry_cfg.non_retryable_status_codes:
-                                raise
-                            if attempt == retry_cfg.max_retries - 1:
-                                raise
-                            continue
-
-                    response = await self.http_client.request(method, url, headers=headers, json=payload)
-                    logger.debug(
-                        "AI HTTP 响应: method=%s endpoint=%s status=%s elapsed=%.2fs headers=%s body_bytes=%s body_chars=%s",
-                        method,
-                        endpoint,
-                        response.status_code,
-                        response.elapsed.total_seconds(),
-                        _debug_response_headers(response),
-                        len(response.content or b""),
-                        len(response.text or ""),
-                    )
-                    response.raise_for_status()
-                    if _is_sse_response(response):
-                        return _parse_sse_chat_completion_response(response)
-
+                for attempt in range(retry_cfg.max_retries):
                     try:
-                        return response.json()
-                    except ValueError:
-                        parse_failure_reason = _classify_json_decode_failure(response)
-                        logger.error(
-                            "AI HTTP 响应 JSON 解析失败: method=%s endpoint=%s status=%s reason=%s headers=%s body_preview=%s",
+                        if attempt > 0:
+                            delay = min(
+                                retry_cfg.base_delay * (retry_cfg.exponential_base ** attempt),
+                                retry_cfg.max_delay,
+                            )
+                            logger.warning(f"⚠️ 重试 {attempt + 1}/{retry_cfg.max_retries}，等待 {delay}s")
+                            await asyncio.sleep(delay)
+
+                        if stream:
+                            # ⚠️ 不能用 `async with self.http_client.stream(...)` 后再 return：
+                            # 退出该上下文会调用 response.aclose() 关闭响应流，导致调用方
+                            # 迭代 aiter_lines() 时抛 "Attempted to read or stream content,
+                            # but the stream has been closed."。
+                            # 改用 build_request + send(stream=True)，让响应保持打开，
+                            # 由 _StreamResponseWrapper 在 __aexit__ 中负责关闭。
+                            request = self.http_client.build_request(method, url, headers=headers, json=payload)
+                            response = await self.http_client.send(request, stream=True)
+                            try:
+                                response.raise_for_status()
+                                return _StreamResponseWrapper(response)
+                            except httpx.HTTPStatusError:
+                                status_code = response.status_code
+                                # httpx 流式响应需先 aread 才能访问 .text（此时 stream 还活着）
+                                body_preview = None
+                                try:
+                                    await response.aread()
+                                    body_preview = safe_preview(response.text, 1000)
+                                except Exception as read_err:
+                                    body_preview = f"<读取响应体失败: {read_err}>"
+                                logger.error(
+                                    "AI HTTP 状态错误: method=%s endpoint=%s status=%s headers=%s body_preview=%s",
+                                    method,
+                                    endpoint,
+                                    status_code,
+                                    _debug_response_headers(response),
+                                    body_preview,
+                                )
+                                # 重试或抛出前关闭响应，避免连接泄漏
+                                await response.aclose()
+                                if status_code in retry_cfg.non_retryable_status_codes:
+                                    raise
+                                if attempt == retry_cfg.max_retries - 1:
+                                    raise
+                                continue
+
+                        response = await self.http_client.request(method, url, headers=headers, json=payload)
+                        logger.debug(
+                            "AI HTTP 响应: method=%s endpoint=%s status=%s elapsed=%.2fs headers=%s body_bytes=%s body_chars=%s",
                             method,
                             endpoint,
                             response.status_code,
-                            parse_failure_reason,
+                            response.elapsed.total_seconds(),
                             _debug_response_headers(response),
-                            safe_preview(response.text, 1000),
-                            exc_info=True,
+                            len(response.content or b""),
+                            len(response.text or ""),
                         )
-                        _log_raw_response_body(response, f"json_decode_failed:{parse_failure_reason}")
-                        raise
+                        response.raise_for_status()
+                        if _is_sse_response(response):
+                            return _parse_sse_chat_completion_response(response)
 
-                except httpx.HTTPStatusError as e:
-                    status_code = e.response.status_code if e.response is not None else None
-                    # 流式请求中 httpx 要求先 read 才能访问 .text/.content，
-                    # 否则在 async with stream(...) 上下文里会抛 ResponseNotRead，
-                    # 把真正的 HTTP 错误信息覆盖掉。这里做一次安全的 aread。
-                    body_preview = None
-                    if e.response is not None:
                         try:
-                            if not e.response.is_stream_consumed:
-                                await e.response.aread()
-                            body_preview = safe_preview(e.response.text, 1000)
-                        except Exception as read_err:
-                            body_preview = f"<读取响应体失败: {read_err}>"
-                    logger.error(
-                        "AI HTTP 状态错误: method=%s endpoint=%s status=%s headers=%s body_preview=%s",
-                        method,
-                        endpoint,
-                        status_code,
-                        _debug_response_headers(e.response) if e.response is not None else {},
-                        body_preview,
-                    )
-                    if e.response is not None:
-                        _log_raw_response_body(e.response, "http_status_error")
-                    if status_code in retry_cfg.non_retryable_status_codes:
-                        raise
-                    if attempt == retry_cfg.max_retries - 1:
-                        raise
-                except (httpx.ConnectError, httpx.TimeoutException):
-                    if attempt == retry_cfg.max_retries - 1:
-                        raise
+                            return response.json()
+                        except ValueError:
+                            parse_failure_reason = _classify_json_decode_failure(response)
+                            logger.error(
+                                "AI HTTP 响应 JSON 解析失败: method=%s endpoint=%s status=%s reason=%s headers=%s body_preview=%s",
+                                method,
+                                endpoint,
+                                response.status_code,
+                                parse_failure_reason,
+                                _debug_response_headers(response),
+                                safe_preview(response.text, 1000),
+                                exc_info=True,
+                            )
+                            _log_raw_response_body(response, f"json_decode_failed:{parse_failure_reason}")
+                            raise
+
+                    except httpx.HTTPStatusError as e:
+                        status_code = e.response.status_code if e.response is not None else None
+                        # 流式请求中 httpx 要求先 read 才能访问 .text/.content，
+                        # 否则在 async with stream(...) 上下文里会抛 ResponseNotRead，
+                        # 把真正的 HTTP 错误信息覆盖掉。这里做一次安全的 aread。
+                        body_preview = None
+                        if e.response is not None:
+                            try:
+                                if not e.response.is_stream_consumed:
+                                    await e.response.aread()
+                                body_preview = safe_preview(e.response.text, 1000)
+                            except Exception as read_err:
+                                body_preview = f"<读取响应体失败: {read_err}>"
+                        logger.error(
+                            "AI HTTP 状态错误: method=%s endpoint=%s status=%s headers=%s body_preview=%s",
+                            method,
+                            endpoint,
+                            status_code,
+                            _debug_response_headers(e.response) if e.response is not None else {},
+                            body_preview,
+                        )
+                        if e.response is not None:
+                            _log_raw_response_body(e.response, "http_status_error")
+                        if status_code in retry_cfg.non_retryable_status_codes:
+                            raise
+                        if attempt == retry_cfg.max_retries - 1:
+                            raise
+                    except httpx.TransportError as e:
+                        # 覆盖 ConnectError / TimeoutException / RemoteProtocolError /
+                        # ReadError 等传输层错误（含流式建连阶段对端提前断开）。
+                        logger.warning(
+                            "AI HTTP 传输错误: method=%s endpoint=%s error=%s:%s",
+                            method,
+                            endpoint,
+                            type(e).__name__,
+                            str(e) or "<无详细信息>",
+                        )
+                        if attempt == retry_cfg.max_retries - 1:
+                            raise
+        except httpx.TransportError as e:
+            # 重试耗尽后抛出前，转换为可读的中文提示
+            raise type(e)(friendly_network_error_message(e)) from e
 
     @abstractmethod
     async def chat_completion(

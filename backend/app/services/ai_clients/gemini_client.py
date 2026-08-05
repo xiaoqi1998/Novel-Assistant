@@ -1,7 +1,9 @@
 """Gemini 客户端"""
+import asyncio
 from typing import Any, AsyncGenerator, Dict, List, Optional
 import httpx
 from app.services.ai_config import AIClientConfig, default_config
+from app.services.ai_clients.base_client import friendly_network_error_message
 from app.logger import get_logger
 
 logger = get_logger(__name__)
@@ -148,60 +150,103 @@ class GeminiClient:
         if tools:
             payload["tools"] = self._convert_tools_to_gemini(tools)
 
-        try:
-            async with self.client.stream("POST", url, json=payload) as response:
-                response.raise_for_status()
-                try:
-                    async for line in response.aiter_lines():
-                        if line.startswith("data: "):
-                            import json
-                            try:
-                                data = json.loads(line[6:])
-                                usage = data.get("usageMetadata") or {}
-                                if usage:
-                                    yield {
-                                        "usage": {
-                                            "prompt_tokens": usage.get("promptTokenCount"),
-                                            "completion_tokens": usage.get("candidatesTokenCount"),
-                                            "total_tokens": usage.get("totalTokenCount"),
+        retry_cfg = self.config.retry
+        max_attempts = max(1, retry_cfg.max_retries)
+        yielded_any = False  # 是否已向调用方输出过内容（输出后不可重试，避免内容重复）
+
+        for attempt in range(1, max_attempts + 1):
+            completed = False
+            try:
+                async with self.client.stream("POST", url, json=payload) as response:
+                    response.raise_for_status()
+                    try:
+                        async for line in response.aiter_lines():
+                            if line.startswith("data: "):
+                                data_str = line[6:]
+                                if data_str.strip() == "[DONE]":
+                                    completed = True
+                                    break
+                                import json
+                                try:
+                                    data = json.loads(data_str)
+                                    usage = data.get("usageMetadata") or {}
+                                    if usage:
+                                        yielded_any = True
+                                        yield {
+                                            "usage": {
+                                                "prompt_tokens": usage.get("promptTokenCount"),
+                                                "completion_tokens": usage.get("candidatesTokenCount"),
+                                                "total_tokens": usage.get("totalTokenCount"),
+                                            }
                                         }
-                                    }
-                                candidates = data.get("candidates", [])
-                                if candidates and len(candidates) > 0:
-                                    parts = candidates[0].get("content", {}).get("parts", [])
-                                    if parts and len(parts) > 0:
-                                        text = ""
-                                        function_calls = []
-                                        for part in parts:
-                                            if "text" in part:
-                                                text += part["text"]
-                                            elif "functionCall" in part:
-                                                fc = part["functionCall"]
-                                                function_calls.append({
-                                                    "id": f"call_{fc['name']}",
-                                                    "type": "function",
-                                                    "function": {
-                                                        "name": fc["name"],
-                                                        "arguments": fc.get("args", {})
-                                                    }
-                                                })
-                                        
-                                        if text:
-                                            yield {"content": text}
-                                        if function_calls:
-                                            yield {"tool_calls": function_calls}
-                            except json.JSONDecodeError:
-                                continue
-                except GeneratorExit:
-                    # 生成器被关闭，这是正常的清理过程
-                    logger.debug("Gemini 流式响应生成器被关闭(GeneratorExit)")
-                    raise
-                except Exception as iter_error:
-                    logger.error(f"Gemini 流式响应迭代出错: {str(iter_error)}")
-                    raise
-        except GeneratorExit:
-            # 重新抛出GeneratorExit，让调用方处理
-            raise
-        except Exception as e:
-            logger.error(f"Gemini 流式请求出错: {str(e)}")
-            raise
+                                    candidates = data.get("candidates", [])
+                                    if candidates and len(candidates) > 0:
+                                        finish_reason = candidates[0].get("finishReason")
+                                        parts = candidates[0].get("content", {}).get("parts", [])
+                                        if parts and len(parts) > 0:
+                                            text = ""
+                                            function_calls = []
+                                            for part in parts:
+                                                if "text" in part:
+                                                    text += part["text"]
+                                                elif "functionCall" in part:
+                                                    fc = part["functionCall"]
+                                                    function_calls.append({
+                                                        "id": f"call_{fc['name']}",
+                                                        "type": "function",
+                                                        "function": {
+                                                            "name": fc["name"],
+                                                            "arguments": fc.get("args", {})
+                                                        }
+                                                    })
+
+                                            if text:
+                                                yielded_any = True
+                                                yield {"content": text}
+                                            if function_calls:
+                                                yielded_any = True
+                                                yield {"tool_calls": function_calls}
+                                        if finish_reason == "STOP":
+                                            completed = True
+                                            break
+                                except json.JSONDecodeError:
+                                    continue
+                    except GeneratorExit:
+                        # 生成器被关闭，这是正常的清理过程
+                        logger.debug("Gemini 流式响应生成器被关闭(GeneratorExit)")
+                        raise
+                    except Exception as iter_error:
+                        logger.error(f"Gemini 流式响应迭代出错: {str(iter_error)}")
+                        raise
+            except GeneratorExit:
+                # 重新抛出GeneratorExit，让调用方处理
+                raise
+            except httpx.TransportError as e:
+                # 上游中途断开（如 incomplete chunked read）：未输出内容时可重试，已输出则报错
+                if not yielded_any and attempt < max_attempts:
+                    delay = min(
+                        retry_cfg.base_delay * (retry_cfg.exponential_base ** attempt),
+                        retry_cfg.max_delay,
+                    )
+                    logger.warning(
+                        "⚠️ Gemini 流式响应中途断开(未产出内容)，第 %s/%s 次重试，等待 %.1fs: %s",
+                        attempt, max_attempts, delay, str(e) or type(e).__name__,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                logger.error(f"Gemini 流式请求网络中断: {type(e).__name__}: {str(e)}")
+                raise type(e)(friendly_network_error_message(e)) from e
+            except Exception as e:
+                logger.error(f"Gemini 流式请求出错: {str(e)}")
+                raise
+
+            if completed:
+                yield {"done": True}
+                return
+            # 未收到明确结束信号：未产出内容时可重试，否则按已接收内容处理
+            if not yielded_any and attempt < max_attempts:
+                logger.warning("⚠️ Gemini 流式响应未收到结束信号，第 %s/%s 次重试", attempt, max_attempts)
+                continue
+            logger.warning("Gemini 流式响应未收到结束信号，按已接收内容处理")
+            yield {"done": True}
+            return

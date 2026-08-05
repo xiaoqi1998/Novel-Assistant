@@ -23,9 +23,16 @@ services:
       - ./backend/alembic-postgres.ini:/app/alembic.ini:ro
       # 前端构建产物挂载：修改后用 hot-deploy.sh frontend 更新，无需重构建
       - ./backend/static:/app/static:ro
+      # Git 仓库信息挂载：供启动时自动生成更新公告对比提交记录（只读）
+      - ./.git:/project/.git:ro
+      - ./.changelogignore:/project/.changelogignore:ro
     environment:
       # 时区配置
       - TZ=Asia/Shanghai
+
+      # 自动更新公告：容器内 Git 仓库目录（挂载自宿主机，见 volumes）
+      - PROJECT_GIT_DIR=/project
+      - AUTO_UPDATE_ANNOUNCEMENT=${AUTO_UPDATE_ANNOUNCEMENT:-true}
 
       # 应用配置
       - APP_NAME=${APP_NAME:-墨笔}

@@ -61,7 +61,7 @@ pull_code() {
     if [ -n "$(git status --porcelain)" ]; then
         log "⚠️  检测到未提交的本地修改，自动提交保存..."
         git add -A
-        git commit -m "auto: 保存更新前的本地修改 [$(date '+%Y-%m-%d %H:%M:%S')]"
+        git commit -m "auto: 保存更新前的本地修改 [$(date '+%Y-%m-%d %H:%M:%S')] [内部]"
     fi
 
     local before_commit=$(git rev-parse HEAD)
