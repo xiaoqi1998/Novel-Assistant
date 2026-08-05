@@ -54,6 +54,10 @@ check_health() {
     error_exit "健康检查超时，服务可能未正常启动"
 }
 
+# 记录本次更新前后的 commit（供公告生成使用）
+UPDATE_PREV_COMMIT=""
+UPDATE_NEW_COMMIT=""
+
 # 拉取最新代码
 pull_code() {
     log "📥 检查并拉取最新代码..."
@@ -76,6 +80,33 @@ pull_code() {
         log "ℹ️  已是最新代码，无更新"
     else
         log "✅ 更新到: $(git log -1 --oneline)"
+        UPDATE_PREV_COMMIT="$before_commit"
+        UPDATE_NEW_COMMIT="$after_commit"
+    fi
+}
+
+# 显式生成更新公告：仅在 git pull 真的有新提交时，通过容器内脚本生成
+generate_announcement() {
+    if [ -z "$UPDATE_PREV_COMMIT" ] || [ -z "$UPDATE_NEW_COMMIT" ]; then
+        return 0
+    fi
+
+    # 检查是否开启自动公告（默认开启）
+    if [ "${AUTO_UPDATE_ANNOUNCEMENT:-true}" = "false" ] || [ "${AUTO_UPDATE_ANNOUNCEMENT:-true}" = "0" ]; then
+        log "ℹ️  自动更新公告已关闭（AUTO_UPDATE_ANNOUNCEMENT），跳过"
+        return 0
+    fi
+
+    log "📢 生成更新公告: $UPDATE_PREV_COMMIT → $UPDATE_NEW_COMMIT"
+    if [ -z "$DOCKER_COMPOSE" ]; then
+        log "⚠️  未找到 docker compose，跳过公告生成"
+        return 0
+    fi
+    # 容器内执行，复用 DATABASE_URL 与依赖；失败不影响部署
+    if ! $DOCKER_COMPOSE exec -T novel-assistant \
+        python scripts/generate_update_announcement.py \
+        --prev "$UPDATE_PREV_COMMIT" --new "$UPDATE_NEW_COMMIT" 2>&1 | tee -a "$LOG_FILE"; then
+        log "⚠️  更新公告生成失败（不影响部署）"
     fi
 }
 
@@ -168,6 +199,7 @@ main() {
     pull_code
     fix_migration
     build_frontend
+    generate_announcement
     restart_service
     verify_service
 

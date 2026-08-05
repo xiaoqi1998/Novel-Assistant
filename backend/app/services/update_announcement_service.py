@@ -331,3 +331,88 @@ async def auto_generate_update_announcement() -> None:
         logger.info(
             f"自动更新公告已生成: {prev_short} → {head_short}，共 {len(commits)} 个提交"
         )
+
+
+async def generate_update_announcement_from_range(
+    prev_hash: str,
+    new_hash: str,
+    *,
+    force: bool = False,
+) -> bool:
+    """按给定的提交区间显式生成更新公告（供部署脚本触发，更可靠的时机）。
+
+    与 auto_generate_update_announcement 的区别：
+    1. 由 auto-update.sh 在 git pull 之后显式调用，时机明确（只有真正更新时才触发）。
+    2. 不依赖库里"上次公告基线"，首次部署也能直接生成可见公告。
+    3. 通过 docker compose exec 在容器内执行，复用已配置的 DATABASE_URL。
+
+    Args:
+        prev_hash: 更新前的 commit 完整/短 hash
+        new_hash: 更新后的 commit 完整/短 hash
+        force: True 时即使提交被过滤为空也写一条公告（内容=无面向用户变更）
+
+    Returns:
+        是否成功生成公告
+    """
+    if os.getenv("AUTO_UPDATE_ANNOUNCEMENT", "").lower() in ("false", "0", "off"):
+        logger.info("自动生成更新公告已关闭（AUTO_UPDATE_ANNOUNCEMENT），跳过显式生成")
+        return False
+
+    root = _project_root()
+    if not _run_git(["rev-parse", "--verify", f"{new_hash}^{{commit}}"], root):
+        logger.warning(f"显式生成公告：new_hash 无效或不可达: {new_hash[:12]}")
+        return False
+
+    try:
+        new_full = _run_git(["rev-parse", new_hash], root) or new_hash
+    except Exception:
+        new_full = new_hash
+    new_short = new_full[:7]
+
+    # 读取 prev..new 的提交（新→旧），最多 200 条
+    log_output = _run_git(
+        ["log", f"{prev_hash}..{new_hash}", "--pretty=format:%h%x09%s", "--max-count=200"],
+        root,
+    )
+    commits = []
+    if log_output:
+        for line in log_output.splitlines():
+            parts = line.split("\t", 1)
+            if len(parts) == 2 and parts[1].strip():
+                commits.append((parts[0], parts[1].strip()))
+
+    if not commits and not force:
+        logger.info("显式生成公告：提交区间为空，跳过")
+        return False
+
+    # 过滤不适合展示给用户的提交
+    commits, _ = _filter_commits_for_users(commits, root)
+    if not commits and not force:
+        logger.info("显式生成公告：新提交均为内部提交，不生成公告")
+        return False
+
+    content, summary = _build_announcement_content(commits, new_short)
+    prev_short = prev_hash[:7] if prev_hash else "未知"
+
+    announcement = Announcement(
+        id=str(uuid.uuid4()),
+        title=f"{AUTO_TITLE_PREFIX} {prev_short} → {new_short} ({new_full})",
+        content=content,
+        summary=summary,
+        level="success",
+        status="published",
+        pinned=False,
+        author_name="系统",
+        publish_at=datetime.utcnow(),
+    )
+
+    engine = await get_engine(ANNOUNCEMENT_DB_KEY)
+    await _ensure_announcement_table(engine)
+    session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with session_maker() as session:
+        session.add(announcement)
+        await session.commit()
+    logger.info(
+        f"显式更新公告已生成: {prev_short} → {new_short}，共 {len(commits)} 个提交"
+    )
+    return True
