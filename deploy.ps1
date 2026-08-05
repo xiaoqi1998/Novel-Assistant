@@ -11,6 +11,7 @@
     menu      : 交互菜单（默认）
     hot       : 热更新 = 构建前端 + 重启容器，约10秒
     full      : 完整更新 = 拉代码 + 修迁移 + 构建前端 + 重启，约几分钟
+    rebuild   : 重建镜像 = 拉代码 + 修迁移 + 构建前端 + 重建镜像并重启（Dockerfile 变更后用，如新增 git）
     backend   : 仅重启后端，约3秒（源码已通过 volume 挂载，重启即生效）
     frontend  : 仅构建前端（刷新浏览器即生效）
 
@@ -18,12 +19,13 @@
     .\deploy.ps1                       # 弹出交互菜单
     .\deploy.ps1 -Mode hot             # 热更新
     .\deploy.ps1 -Mode full            # 完整更新（拉代码+迁移+构建+重启）
+    .\deploy.ps1 -Mode rebuild         # 重建镜像+重启（Dockerfile 变更后使用）
     .\deploy.ps1 -Mode backend         # 仅重启后端
     .\deploy.ps1 -Mode frontend        # 仅构建前端
 #>
 
 param(
-    [ValidateSet('menu','hot','full','backend','frontend')]
+    [ValidateSet('menu','hot','full','rebuild','backend','frontend')]
     [string]$Mode = 'menu',
 
     [string]$SshUser    = 'root',
@@ -52,14 +54,16 @@ if ($Mode -eq 'menu') {
     Write-Host "  2. 仅重启后端（约3秒）       改了后端代码用"
     Write-Host "  3. 仅构建前端                改了前端代码用"
     Write-Host "  4. 完整更新（几分钟）        拉代码+迁移+构建+重启"
+    Write-Host "  5. 重建镜像（几分钟）        拉代码+迁移+构建+重建镜像（Dockerfile变更后必选）"
     Write-Host "  0. 退出"
     Write-Host ""
-    $choice = Read-Host "请选择 [1/2/3/4/0]（回车默认1）"
+    $choice = Read-Host "请选择 [1/2/3/4/5/0]（回车默认1）"
     switch ($choice) {
         '0'  { exit 0 }
         '2'  { $Mode = 'backend' }
         '3'  { $Mode = 'frontend' }
         '4'  { $Mode = 'full' }
+        '5'  { $Mode = 'rebuild' }
         default { $Mode = 'hot' }
     }
 }
@@ -70,9 +74,12 @@ if (-not (Get-Command ssh -ErrorAction SilentlyContinue)) {
 }
 
 # 2. 根据模式确定远程命令
+# 注意：rebuild 直接执行 docker compose 命令，不依赖 auto-update.sh 是否支持 --rebuild
+# （auto-update.sh 的 --rebuild 需先提交推送才会在服务器生效，直接命令更可靠）
 switch ($Mode) {
     'hot'      { $remote = 'bash hot-deploy.sh all' }
     'full'     { $remote = 'bash auto-update.sh' }
+    'rebuild'  { $remote = 'git pull --ff-only && docker compose build && docker compose up -d' }
     'backend'  { $remote = 'bash hot-deploy.sh backend' }
     'frontend' { $remote = 'bash hot-deploy.sh frontend' }
 }

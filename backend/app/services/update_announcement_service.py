@@ -312,10 +312,10 @@ async def build_git_announcement_draft(
     root = _project_root()
 
     if shutil.which("git") is None:
-        logger.error("容器内未安装 git 命令，无法读取提交记录")
+        logger.error("容器内未安装 git 命令（当前为旧镜像），无法读取提交记录")
         return _draft_result(
             ok=False,
-            message="服务器容器内未安装 git 命令，请在 Dockerfile 中安装 git 后重新构建镜像",
+            message="服务器容器内未安装 git（当前为旧镜像）。Dockerfile 已包含 git，请在服务器执行：bash auto-update.sh --rebuild 重新构建镜像后重试",
             git_available=False,
         )
 
