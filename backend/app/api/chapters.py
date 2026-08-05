@@ -1961,7 +1961,7 @@ async def generate_chapter_content_stream(
                 # ⚡ Skill 注入：创作类（完整工作流）+ 辅助类（只注入写作约束）
                 # 按用户隔离：使用当前用户的可见 Skill 列表（含个人副本/自建）
                 try:
-                    from app.services.skill_loader import get_all_skills_for_user
+                    from app.services.skill_loader import get_all_skills_for_user, get_deslop_constraints_cached, build_output_purity_block
                     skills = await get_all_skills_for_user(current_user_id, db_session)
                     skill_sections = []
 
@@ -1989,6 +1989,14 @@ async def generate_chapter_content_stream(
                                 logger.warning(f"⚠️ 辅助 Skill '{skill['name']}' 无 writing_constraints 字段，跳过")
                         else:
                             logger.warning(f"⚠️ 未找到辅助 Skill: {aux_key}")
+
+                    # 🔧 默认注入：去AI味约束 + 正文纯净输出规则（未显式选择 story-deslop 时默认启用）
+                    if "SKILL_STORY_DESLOP" not in (auxiliary_skill_keys or []):
+                        _deslop_constraints = get_deslop_constraints_cached()
+                        if _deslop_constraints:
+                            skill_sections.append(f"【🔧 写作约束：去AI味（默认启用）】\n\n{_deslop_constraints}")
+                            logger.info("🔧 默认注入去AI味写作约束（story-deslop）")
+                    skill_sections.append(build_output_purity_block())
 
                     if skill_sections:
                         system_prompt_with_style = "\n\n".join(skill_sections)
@@ -3082,7 +3090,7 @@ async def _run_chapter_generation_bg(
 
     # ⚡ Skill 注入：创作类（完整工作流）+ 辅助类（只注入写作约束）
     try:
-        from app.services.skill_loader import get_all_skills_for_user
+        from app.services.skill_loader import get_all_skills_for_user, get_deslop_constraints_cached, build_output_purity_block
         skills = await get_all_skills_for_user(user_id, db)
         skill_sections = []
 
@@ -3108,6 +3116,14 @@ async def _run_chapter_generation_bg(
                     logger.warning(f"⚠️ 后台生成 - 辅助 Skill '{skill['name']}' 无 writing_constraints 字段，跳过")
             else:
                 logger.warning(f"⚠️ 后台生成 - 未找到辅助 Skill: {aux_key}")
+
+        # 🔧 默认注入：去AI味约束 + 正文纯净输出规则（未显式选择 story-deslop 时默认启用）
+        if "SKILL_STORY_DESLOP" not in (auxiliary_skill_keys or []):
+            _deslop_constraints = get_deslop_constraints_cached()
+            if _deslop_constraints:
+                skill_sections.append(f"【🔧 写作约束：去AI味（默认启用）】\n\n{_deslop_constraints}")
+                logger.info("🔧 后台生成 - 默认注入去AI味写作约束（story-deslop）")
+        skill_sections.append(build_output_purity_block())
 
         if skill_sections:
             system_prompt_with_style = "\n\n".join(skill_sections)
@@ -4721,7 +4737,7 @@ async def generate_single_chapter_for_batch(
 
     # ⚡ Skill 注入：创作类（完整工作流）+ 辅助类（只注入写作约束）
     try:
-        from app.services.skill_loader import get_all_skills_for_user
+        from app.services.skill_loader import get_all_skills_for_user, get_deslop_constraints_cached, build_output_purity_block
         skills = await get_all_skills_for_user(user_id, db_session)
         skill_sections = []
 
@@ -4747,6 +4763,14 @@ async def generate_single_chapter_for_batch(
                     logger.warning(f"⚠️ 批量生成 - 辅助 Skill '{skill['name']}' 无 writing_constraints 字段，跳过")
             else:
                 logger.warning(f"⚠️ 批量生成 - 未找到辅助 Skill: {aux_key}")
+
+        # 🔧 默认注入：去AI味约束 + 正文纯净输出规则（未显式选择 story-deslop 时默认启用）
+        if "SKILL_STORY_DESLOP" not in (auxiliary_skill_keys or []):
+            _deslop_constraints = get_deslop_constraints_cached()
+            if _deslop_constraints:
+                skill_sections.append(f"【🔧 写作约束：去AI味（默认启用）】\n\n{_deslop_constraints}")
+                logger.info("🔧 批量生成 - 默认注入去AI味写作约束（story-deslop）")
+        skill_sections.append(build_output_purity_block())
 
         if skill_sections:
             system_prompt_with_style = "\n\n".join(skill_sections)
@@ -5529,7 +5553,7 @@ async def partial_regenerate_stream(
             
             calculated_max_tokens = max(500, min(int(target_words * 3), 8000))
             
-            # 流式生成
+            # 流式生成（默认注入去AI味约束 + 正文纯净输出规则）
             full_content = ""
             chunk_count = 0
             
@@ -5537,9 +5561,20 @@ async def partial_regenerate_stream(
                 current_chars=0,
                 estimated_total=target_words
             )
+
+            partial_system_prompt = None
+            try:
+                from app.services.skill_loader import get_deslop_constraints_cached, build_output_purity_block
+                partial_system_prompt = (
+                    f"【🔧 去AI味约束（默认启用，必须遵守）】\n\n{get_deslop_constraints_cached()}\n\n"
+                    f"{build_output_purity_block()}"
+                )
+            except Exception as rule_err:
+                logger.warning(f"⚠️ 局部重写 - 注入默认写作规则失败: {rule_err}")
             
             async for chunk in user_ai_service.generate_text_stream(
                 prompt=prompt,
+                system_prompt=partial_system_prompt,
                 max_tokens=calculated_max_tokens
             ):
                 full_content += chunk
