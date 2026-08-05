@@ -95,21 +95,24 @@ Write-Ok "SSH 连接正常"
 # 4. 执行远程部署
 Write-Step "执行远程部署..."
 
-# 完整更新模式：本地交互确认是否发布更新公告（SSH 非交互，故在本地确认后通过环境变量传入）
-$announcePrefix = ""
+# 完整更新模式：本地交互确认是否发布更新公告（SSH 非交互，故在本地确认后通过参数+环境变量传入）
+$announceFlag = ""
 if ($Mode -eq 'full') {
     Write-Host ""
     Write-Host "更新后将自动检测本次新增的提交并生成公告。" -ForegroundColor DarkGray
     $answer = Read-Host "是否发布本次更新公告？[y/N]（回车=不发布）"
     if ($answer -match '^(y|yes)$') {
-        $announcePrefix = "ANNOUNCE_CONFIRM=yes "
+        $announceFlag = "--announce"
         Write-Ok "已确认：部署完成后发布更新公告"
     } else {
         Write-Warn "跳过发布更新公告"
     }
 }
 
-& ssh -p $Port $target "cd `"$ProjectDir`" && $announcePrefix$remote"
+# 通过 SSH 传入环境变量 ANNOUNCE_CONFIRM=yes + 脚本参数 --announce（双保险，避免单一路径失效）
+$announceEnv = if ($announceFlag) { "ANNOUNCE_CONFIRM=yes " } else { "" }
+# $remote 本身形如 "bash auto-update.sh"，在尾部追加 --announce 参数
+& ssh -p $Port $target "cd `"$ProjectDir`" && ${announceEnv}${remote} ${announceFlag}"
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[X]    远程部署执行失败（退出码 $LASTEXITCODE）" -ForegroundColor Red
 
