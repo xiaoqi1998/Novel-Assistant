@@ -32,8 +32,25 @@ update_backend() {
 update_frontend() {
     echo "build frontend..."
     if command -v npm &>/dev/null; then
-        (cd frontend && npm run build)
-        echo "frontend done"
+        LOG_DIR="$PROJECT_DIR/logs"
+        mkdir -p "$LOG_DIR"
+        FE_LOG="$LOG_DIR/frontend-build.log"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ==== frontend build start ====" >> "$FE_LOG"
+        # 限制 Node 内存，低配服务器防 OOM
+        export NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=1024"
+        # 捕获完整输出，避免管道掩盖退出码
+        local build_output
+        if ! build_output=$(cd frontend && npm run build 2>&1); then
+            echo "$build_output" >> "$FE_LOG"
+            echo "❌ 前端构建失败！完整错误已写入: $FE_LOG" >&2
+            echo "---------- 末尾 20 行 ----------" >&2
+            echo "$build_output" | tail -20 >&2
+            echo "--------------------------------" >&2
+            exit 1
+        fi
+        echo "$build_output" >> "$FE_LOG"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ==== frontend build ok ====" >> "$FE_LOG"
+        echo "✅ 前端构建成功，日志: $FE_LOG"
     else
         echo "⚠️ 本地无 npm，跳过前端构建"
         echo "   如需更新前端，请先安装 Node.js，或使用开发模式："
