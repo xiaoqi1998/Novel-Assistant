@@ -184,11 +184,16 @@ def _classify(subject: str) -> str:
 def _extract_prev_hash(title: str) -> Optional[str]:
     """从自动公告标题中解析上一次记录的完整 hash
 
-    标题格式：
-    - "[自动更新] abc1234 → def5678 (def5678...完整hash)"
+    标题格式（优先完整 hash，兼容旧版 short hash）：
+    - "[自动更新] abc1234 → def5678 (def5678...完整hash)"   # 新格式：括号内完整 hash
+    - "[自动更新] abc1234 → def5678"                        # 旧格式：箭头后 short hash
     - "[自动更新] 基线 (完整hash)"
     """
     match = re.search(r"\(([0-9a-f]{7,40})\)$", title)
+    if match:
+        return match.group(1)
+    # 兼容旧格式：解析箭头后的 short hash（def5678），经 rev-parse 校验后仍可作为增量起点
+    match = re.search(r"→\s*([0-9a-f]{7,40})\s*$", title)
     return match.group(1) if match else None
 
 
@@ -312,10 +317,10 @@ async def build_git_announcement_draft(
     root = _project_root()
 
     if shutil.which("git") is None:
-        logger.error("容器内未安装 git 命令，无法读取提交记录")
+        logger.error("容器内未安装 git 命令（当前为旧镜像），无法读取提交记录")
         return _draft_result(
             ok=False,
-            message="服务器容器内未安装 git 命令，请在 Dockerfile 中安装 git 后重新构建镜像",
+            message="服务器容器内未安装 git（当前为旧镜像）。Dockerfile 已包含 git，请在服务器执行：bash auto-update.sh --rebuild 重新构建镜像后重试",
             git_available=False,
         )
 
@@ -402,7 +407,8 @@ async def build_git_announcement_draft(
         )
 
     content, summary = _build_announcement_content(commits, head_short)
-    title = f"{AUTO_TITLE_PREFIX} {range_desc}"
+    # 标题末尾追加完整 hash，供下次生成时作为增量起点（prev..HEAD）
+    title = f"{AUTO_TITLE_PREFIX} {range_desc} ({head_full})"
 
     commit_items = [
         {"short": short, "subject": subject, "category": _classify(subject)}

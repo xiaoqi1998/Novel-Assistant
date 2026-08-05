@@ -147,6 +147,24 @@ restart_service() {
     log "✅ 服务已重启"
 }
 
+# 重新构建镜像并重建容器（--rebuild）
+# 场景：Dockerfile 新增了系统依赖（如 git），旧镜像未包含，需重建后重启
+rebuild_image() {
+    log "🏗️  重新构建镜像（可能耗时几分钟）..."
+    if [ -z "$DOCKER_COMPOSE" ]; then
+        error_exit "未找到 docker compose 命令，请安装 Docker Compose"
+    fi
+    if ! $DOCKER_COMPOSE build 2>&1 | tee -a "$LOG_FILE"; then
+        error_exit "镜像构建失败，请检查 Dockerfile 与网络"
+    fi
+    log "✅ 镜像构建完成"
+    log "🔄 使用新镜像重建容器..."
+    if ! $DOCKER_COMPOSE up -d 2>&1 | tee -a "$LOG_FILE"; then
+        error_exit "容器重建失败"
+    fi
+    log "✅ 容器已使用新镜像重建"
+}
+
 verify_service() {
     log "🔍 验证服务状态..."
     check_health
@@ -162,7 +180,14 @@ main() {
     pull_code
     fix_migration
     build_frontend
-    restart_service
+
+    # --rebuild：重建镜像（Dockerfile 变更后需要，如新增 git）
+    if [ "$1" = "--rebuild" ]; then
+        rebuild_image
+    else
+        restart_service
+    fi
+
     verify_service
 
     log "=========================================="
