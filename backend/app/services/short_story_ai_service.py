@@ -215,6 +215,69 @@ INSPIRATION_GENRE_USER = """一句话梗概：{logline}
 请推荐6个题材标签。"""
 
 
+# ============ Task 38: 价值对等 - AI 生成为主 ============
+
+CLUES_SYSTEM = """你是短故事反转铺垫设计专家。
+根据故事设定，生成5个为后续核心反转埋下的铺垫线索。
+
+线索要求：
+1. 必须表面自然、暗藏深意，读者初读不觉察，反转后才能恍然大悟
+2. 可以是细节物件、人物台词、行为习惯、时间矛盾、环境异常
+3. 每条线索具体可写，避免抽象空泛
+
+返回JSON格式：{"clues": ["线索1", "线索2", ...]}"""
+
+CLUES_USER = """故事标题：{title}
+一句话梗概：{logline}
+题材：{genre}
+
+请生成5个铺垫线索，每条不超过50字。"""
+
+CHARACTERS_SYSTEM = """你是短故事人设设计专家。
+根据故事设定，生成3-5个高度标签化的角色人设。
+
+人设要求：
+1. 人设高度标签化，读者一眼认清阵营（主角/关键人物/反派）
+2. 每个角色的role必须从以下取值中选择：protagonist（主角）、key（关键人物）、antagonist（反派）
+3. desc为人设速写，一句话点明身份+性格+爆点，不超过50字
+4. relationship为该角色与主角的关系
+
+返回JSON格式：
+{{"characters": [
+  {{"name": "角色名", "role": "protagonist", "desc": "人设速写", "relationship": "与主角关系"}},
+  ...
+]}}"""
+
+CHARACTERS_USER = """故事标题：{title}
+一句话梗概：{logline}
+题材：{genre}
+
+请生成3-5个标签化角色人设。"""
+
+AUTO_COMPLETE_SYSTEM = """你是短故事设定策划专家。
+根据最小输入（标题/题材/情绪目标），一键补全完整故事设定。
+
+要求：
+1. logline：一句话梗概，包含主角+困境+反转+情绪落点，不超过100字
+2. twist_type：必须从【身份反转、视角反转、动机反转、时间线反转】中选择，不得输出其他值
+3. twist_content：反转内容描述，出人意料但逻辑自洽
+4. clues：3个铺垫线索，表面自然、暗藏深意
+5. characters：3-5个高度标签化角色，role只能是 protagonist / key / antagonist
+
+返回JSON格式：
+{{"logline": "一句话梗概",
+ "twist_type": "身份反转",
+ "twist_content": "反转内容",
+ "clues": ["线索1", "线索2", "线索3"],
+ "characters": [{{"name": "角色名", "role": "protagonist", "desc": "人设速写", "relationship": "与主角关系"}}]}}"""
+
+AUTO_COMPLETE_USER = """故事标题：{title}
+题材：{genre}
+情绪目标：{emotion_goal}
+
+请一键补全完整故事设定，严格按JSON格式返回。"""
+
+
 def _count_chinese_and_punctuation_local(text: str) -> int:
     """统计中文字符和中文标点的数量（本地版，避免循环导入）"""
     if not text:
@@ -292,6 +355,144 @@ class ShortStoryAIService:
         result = [o for o in options if isinstance(o, dict)][:6]
         logger.debug(f"AI生成反转完成: 返回{len(result)}个选项, 响应长度={len(accumulated)}")
         return result
+
+    @staticmethod
+    async def generate_clues(
+        ai_service: AIService,
+        title: str,
+        logline: str = "",
+        genre: str = "",
+    ) -> list[str]:
+        """生成铺垫线索（Task 38.1）"""
+        user_prompt = CLUES_USER.format(
+            title=title or "未定",
+            logline=logline or "未定",
+            genre=genre or "未定",
+        )
+
+        accumulated = ""
+        async for chunk in ai_service.generate_text_stream(
+            prompt=user_prompt,
+            system_prompt=CLUES_SYSTEM,
+            temperature=0.8,
+            max_tokens=MAX_TOKENS_OPTIONS,
+            auto_mcp=False,
+        ):
+            accumulated += chunk
+
+        data = _parse_ai_json(accumulated, hint="生成线索")
+        clues = data.get("clues", []) if isinstance(data, dict) else []
+        result = [str(c) for c in clues if c][:8]
+        logger.debug(f"AI生成线索完成: 返回{len(result)}条, 响应长度={len(accumulated)}")
+        return result
+
+    @staticmethod
+    def _normalize_characters(raw: list) -> list[dict]:
+        """清洗AI返回的角色列表，确保字段与取值合法"""
+        valid_roles = {"protagonist", "key", "antagonist"}
+        role_alias = {
+            "主角": "protagonist", "主人公": "protagonist",
+            "关键人物": "key", "关键": "key", "配角": "key",
+            "反派": "antagonist", "大反派": "antagonist",
+        }
+        result = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", "")).strip()
+            if not name:
+                continue
+            role = str(item.get("role", "key")).strip().lower()
+            role = role_alias.get(role, role)
+            if role not in valid_roles:
+                role = "key"
+            result.append({
+                "name": name,
+                "role": role,
+                "desc": str(item.get("desc", "")).strip(),
+                "relationship": str(item.get("relationship", "")).strip(),
+            })
+        return result[:5]
+
+    @staticmethod
+    async def generate_characters(
+        ai_service: AIService,
+        title: str,
+        logline: str = "",
+        genre: str = "",
+    ) -> list[dict]:
+        """生成标签化人设（Task 38.2）"""
+        user_prompt = CHARACTERS_USER.format(
+            title=title or "未定",
+            logline=logline or "未定",
+            genre=genre or "未定",
+        )
+
+        accumulated = ""
+        async for chunk in ai_service.generate_text_stream(
+            prompt=user_prompt,
+            system_prompt=CHARACTERS_SYSTEM,
+            temperature=0.8,
+            max_tokens=MAX_TOKENS_OPTIONS,
+            auto_mcp=False,
+        ):
+            accumulated += chunk
+
+        data = _parse_ai_json(accumulated, hint="生成人设")
+        characters = data.get("characters", []) if isinstance(data, dict) else []
+        result = ShortStoryAIService._normalize_characters(characters)
+        logger.debug(f"AI生成人设完成: 返回{len(result)}个角色, 响应长度={len(accumulated)}")
+        return result
+
+    @staticmethod
+    async def auto_complete_setup(
+        ai_service: AIService,
+        title: str,
+        genre: str = "",
+        emotion_goal: str = "",
+    ) -> dict:
+        """一键补全设定（Task 38.3）：基于最小输入生成 logline/twist/clues/characters"""
+        user_prompt = AUTO_COMPLETE_USER.format(
+            title=title or "未定",
+            genre=genre or "未定",
+            emotion_goal=emotion_goal or "未定",
+        )
+
+        accumulated = ""
+        async for chunk in ai_service.generate_text_stream(
+            prompt=user_prompt,
+            system_prompt=AUTO_COMPLETE_SYSTEM,
+            temperature=0.8,
+            max_tokens=MAX_TOKENS_OUTLINE,
+            auto_mcp=False,
+        ):
+            accumulated += chunk
+
+        data = _parse_ai_json(accumulated, hint="一键补全设定")
+        if not isinstance(data, dict):
+            raise ValueError("一键补全设定：AI返回格式不正确")
+
+        valid_twist_types = {"身份反转", "视角反转", "动机反转", "时间线反转"}
+        twist_type = str(data.get("twist_type", "")).strip()
+        if twist_type not in valid_twist_types:
+            twist_type = "身份反转"
+
+        clues = data.get("clues", [])
+        clues = [str(c) for c in clues if c][:8] if isinstance(clues, list) else []
+        characters = ShortStoryAIService._normalize_characters(
+            data.get("characters", []) if isinstance(data.get("characters"), list) else []
+        )
+
+        logger.debug(
+            f"AI一键补全设定完成: clues={len(clues)}, characters={len(characters)}, 响应长度={len(accumulated)}"
+        )
+        return {
+            "logline": str(data.get("logline", "")).strip(),
+            "twist_type": twist_type,
+            "twist_content": str(data.get("twist_content", "")).strip(),
+            "clues": clues,
+            "characters": characters,
+        }
 
     @staticmethod
     async def generate_segment_content(
@@ -738,12 +939,13 @@ class FullStoryGenerator:
         target_platform: str = "知乎盐言",
         emotion_curve: str = "",
         cancel_checker: Optional[Callable[[], Awaitable[bool]]] = None,
+        progress_callback: Optional[Callable[[int, str], Awaitable[None]]] = None,
     ) -> dict:
         """两阶段生成完整短故事（设定+分段正文），解决单次AI调用超时问题
-
+    
         阶段1：生成核心设定+分段大纲（快速，几秒）
         阶段2：按大纲分段生成正文（每段独立调用，避免单次超时）
-
+    
         Args:
             initial_idea: 用户的核心想法
             target_words: 目标字数
@@ -751,6 +953,8 @@ class FullStoryGenerator:
             target_platform: 目标平台
             emotion_curve: 情绪曲线JSON（可选）
             cancel_checker: 可选的异步取消检查回调，返回True时抛出异常终止生成
+            progress_callback: 可选的异步进度回调，签名为 (current_chars: int, message: str)，
+                用于后台任务实时上报已生成字数，避免进度条卡住不动
 
         Returns:
             dict: {title, logline, emotion_goal, twist_type, twist_content,
@@ -827,6 +1031,13 @@ class FullStoryGenerator:
             f"segments={len(segments_outline)}, "
             f"emotion_goal={setup_data.get('emotion_goal')}"
         )
+        
+        # 上报阶段1进度（设定+大纲完成）
+        if progress_callback is not None:
+            try:
+                await progress_callback(0, f"设定与大纲已完成，开始分段生成正文（共{len(segments_outline)}段）...")
+            except Exception as cb_err:
+                logger.warning(f"进度回调失败（已忽略）: {cb_err}")
 
         # ============ 阶段2：分段生成正文 ============
         title = setup_data.get("title", "未命名")
@@ -924,6 +1135,17 @@ class FullStoryGenerator:
                 f"阶段2-分段{idx+1}/{len(segments_outline)}完成: "
                 f"stage={seg_stage}, seg_failed={seg_failed}, actual_chars={len(seg_content)}"
             )
+            
+            # 每段完成后上报进度（按累计字数/目标字数计算，避免进度卡住）
+            if progress_callback is not None:
+                try:
+                    accumulated_chars = sum(len(p) for p in full_content_parts)
+                    await progress_callback(
+                        accumulated_chars,
+                        f"已生成第{idx+1}/{len(segments_outline)}段（{seg_label}），累计{accumulated_chars}字...",
+                    )
+                except Exception as cb_err:
+                    logger.warning(f"进度回调失败（已忽略）: {cb_err}")
 
         # 合并所有分段
         full_content = "\n\n".join(p for p in full_content_parts if p)

@@ -38,6 +38,8 @@ import Login from './pages/Login';
 import AuthCallback from './pages/AuthCallback';
 import ProtectedRoute from './components/ProtectedRoute';
 import RootLayout from './components/RootLayout';
+import FeedbackButton from './components/FeedbackButton';
+import FeedbackAdmin from './pages/FeedbackAdmin';
 import NotFound from './components/NotFound';
 import './App.css';
 
@@ -62,6 +64,7 @@ function App() {
             <Route path="/settings" element={<Settings />} />
             <Route path="/account" element={<AccountCenter />} />
             <Route path="/system-settings" element={<SystemSettings />} />
+            <Route path="/feedback-admin" element={<FeedbackAdmin />} />
             <Route path="/mcp-plugins" element={<MCPPlugins />} />
             <Route path="/prompt-templates" element={<PromptTemplates />} />
             <Route path="/book-import" element={<BookImport />} />
@@ -99,6 +102,8 @@ function App() {
           </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>
+        {/* 全局浮动意见反馈按钮（未登录自动隐藏） */}
+        <FeedbackButton />
       </BrowserRouter>
     </>
   );

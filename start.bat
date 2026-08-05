@@ -96,7 +96,7 @@ if not exist "%BACKEND%\.env" (
     REM 写入 .env 配置
     (
         echo APP_NAME=墨笔
-        echo APP_VERSION=1.5.2
+        echo APP_VERSION=2.0.0
         echo APP_HOST=0.0.0.0
         echo APP_PORT=8000
         echo DEBUG=false

@@ -153,7 +153,9 @@ export default function Tianming() {
   }
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    // 不锁定视口高度、不裁剪溢出，跟随 ProjectDetail 内容区自然滚动，
+    // 避免列表被 overflow:hidden 截断后无法下滑
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
       <Alert
         message={
           <Space>
@@ -201,7 +203,6 @@ export default function Tianming() {
             children: <TianmingTimelineView projectId={projectId} />,
           },
         ]}
-        style={{ flex: 1, minHeight: 0 }}
       />
     </div>
   );
