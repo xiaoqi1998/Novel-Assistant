@@ -338,6 +338,62 @@ def refresh_skills_cache():
     return _skills_cache
 
 
+# ============ 去AI味约束（story-deslop）默认注入 ============
+# 用户要求"去AI味默认调用"：所有正文生成场景（小说/短故事/重新生成/局部重写）
+# 即使未显式选择去AI味辅助 Skill，也默认注入本约束。
+_deslop_constraint_cache: Optional[str] = None
+_DEFAULT_DESLOP_CONSTRAINT = (
+    "去AI味写作约束（创作时遵循）：\n"
+    "1. 段落长度以1-3句为主，长短交错，禁止整齐均匀的长段落；\n"
+    "2. 情绪用动作/环境展示（如手在抖），禁止直接告诉（如很紧张）；\n"
+    "3. 对白60%以上不加标签，用动作替代「说道/问道」；\n"
+    "4. 禁AI套路句式：「眼中闪过一丝」「深吸一口气」「嘴角勾起一抹」「仿佛/犹如/宛若」「缓缓开口」；\n"
+    "5. 禁过度对称排比与总结性长句；\n"
+    "6. 长短句比例3:2，长句≤40字，连续3个同长度句子必须打断；\n"
+    "7. 标点预算：破折号/分隔线全文≤3处且严禁连续装饰线，冒号每千字≤5处，感叹号每千字≤6个，严禁在正文使用括号/【】标注；\n"
+    "8. 写完后自查：无模板化过渡词（然而/与此同时/值得注意的是）、无升华式收尾、无「说道」标签滥用、无情绪均匀无起伏；\n"
+    "9. 结尾用动作/对话收尾，禁止总结、升华、点题。"
+)
+
+
+def get_deslop_constraints_cached() -> str:
+    """获取 story-deslop 去AI味写作约束（带缓存），加载失败回退内置默认。"""
+    global _deslop_constraint_cache
+    if _deslop_constraint_cache is not None:
+        return _deslop_constraint_cache
+    try:
+        for s in get_all_skills_cached():
+            if s.get("template_key") == "SKILL_STORY_DESLOP":
+                constraint = (s.get("writing_constraints") or "").strip()
+                if constraint:
+                    _deslop_constraint_cache = constraint
+                    logger.info(f"已加载 story-deslop 去AI味约束（{len(constraint)}字符）")
+                    return _deslop_constraint_cache
+        logger.warning("未找到 story-deslop skill，使用内置去AI味默认约束")
+    except Exception as e:
+        logger.warning(f"加载 story-deslop 约束失败，使用内置默认: {e}")
+    _deslop_constraint_cache = _DEFAULT_DESLOP_CONSTRAINT
+    return _deslop_constraint_cache
+
+
+def build_output_purity_block() -> str:
+    """正文纯净输出约束块：严禁【】、————等装饰符号及一切非正文内容。
+
+    小说/短故事所有正文生成场景都应追加，确保 AI 只输出可直接发布的纯正文。
+    """
+    return (
+        "\n\n【输出纯净性（最高优先级，必须严格遵守）】\n"
+        "以上方法论仅作为你创作时的内部思考原则，严禁将方法论内容写入输出正文。\n"
+        "你的输出必须是纯净的小说正文，直接可发布，必须满足：\n"
+        "1. 严禁在正文中出现任何装饰性符号：禁止【】『』「」等括号包裹的标注、禁止——————/——/---/***/~~~等分隔线或装饰线（破折号全篇≤3处）；\n"
+        "2. 严禁出现任何解释、说明、总结、创作心得、前后缀、标题、Markdown标记、JSON或代码块；\n"
+        "3. 严禁以『本段/本章/这一部分/以上方法论』等元叙述开头；\n"
+        "4. 正文第一句即故事内容本身，最后一句即故事结尾，不得追加任何收尾语；\n"
+        "5. 长短句交错（比例约3:2），长句≤40字，连续3个同长度句子必须打断；\n"
+        "6. 严禁模板化过渡词（然而/与此同时/值得注意的是/不出所料）与升华式收尾。"
+    )
+
+
 def get_skill_detail(skill_key: str) -> Optional[Dict]:
     """根据 template_key 获取 Skill 完整详情（包括原始 SKILL.md 内容和独立 references）"""
     skills = get_all_skills_cached()

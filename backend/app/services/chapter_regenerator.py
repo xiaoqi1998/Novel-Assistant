@@ -71,7 +71,7 @@ class ChapterRegenerator:
             logger.info(f"🎯 提示词构建完成，开始AI生成")
             yield {'type': 'progress', 'progress': 15, 'message': '开始AI生成内容...'}
             
-            # 3. 构建系统提示词（注入写作风格）
+            # 3. 构建系统提示词（注入写作风格 + 默认去AI味约束 + 正文纯净输出规则）
             system_prompt_with_style = None
             if style_content:
                 system_prompt_with_style = f"""【🎨 写作风格要求 - 最高优先级】
@@ -81,6 +81,23 @@ class ChapterRegenerator:
 ⚠️ 请严格遵循上述写作风格要求进行重写，这是最重要的指令！
 确保在整个章节重写过程中始终保持风格的一致性。"""
                 logger.info(f"✅ 已将写作风格注入系统提示词（{len(style_content)}字符）")
+
+            # 🔧 默认注入：去AI味约束 + 正文纯净输出规则（重新生成默认启用）
+            try:
+                from app.services.skill_loader import get_deslop_constraints_cached, build_output_purity_block
+                _deslop_constraints = get_deslop_constraints_cached()
+                _default_rules = f"""【🔧 去AI味约束（默认启用，必须遵守）】
+
+{_deslop_constraints}
+"""
+                _default_rules += build_output_purity_block()
+                system_prompt_with_style = (
+                    (system_prompt_with_style + "\n\n" + _default_rules)
+                    if system_prompt_with_style
+                    else _default_rules
+                )
+            except Exception as rule_err:
+                logger.warning(f"⚠️ 重新生成 - 注入默认写作规则失败: {rule_err}")
             
             # 4. 流式生成新内容，同时跟踪进度
             target_word_count = regenerate_request.target_word_count
