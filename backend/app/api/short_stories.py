@@ -621,7 +621,26 @@ async def auto_complete_setup(
             genre=req.genre or story.genre or "",
             emotion_goal=req.emotion_goal or story.emotion_goal or "",
         )
-        logger.info(f"AI一键补全设定成功: story_id={story_id}")
+
+        # 一键补全后直接落库关键设定与爆款关键点
+        story.logline = data.get("logline") or story.logline
+        story.twist_type = data.get("twist_type") or story.twist_type
+        story.twist_content = data.get("twist_content") or story.twist_content
+        story.twist_clues = json.dumps(data.get("clues", []), ensure_ascii=False) if data.get("clues") else story.twist_clues
+        story.characters = json.dumps(data.get("characters", []), ensure_ascii=False) if data.get("characters") else story.characters
+        if data.get("reversal_grade"):
+            story.reversal_grade = data["reversal_grade"]
+        if data.get("beat_design"):
+            story.beat_design = data["beat_design"]
+        if data.get("emotional_payoff"):
+            story.emotional_payoff = data["emotional_payoff"]
+        if data.get("dual_line"):
+            story.dual_line = data["dual_line"]
+        if data.get("character_profile"):
+            story.character_profile = data["character_profile"]
+        await db.commit()
+        await db.refresh(story)
+        logger.info(f"AI一键补全设定成功并落库: story_id={story_id}")
         return data
     except HTTPException:
         raise

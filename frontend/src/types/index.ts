@@ -250,6 +250,11 @@ export interface ShortStory {
   twist_type?: string;
   twist_content?: string;
   twist_clues?: string;
+  reversal_grade?: string; // 反转等级 S/A/B/C
+  beat_design?: string; // 爆点设计JSON
+  emotional_payoff?: string; // 情绪收益点JSON数组
+  dual_line?: string; // 双线叙事JSON
+  character_profile?: string; // 人物四要素JSON
   emotion_curve?: string;
   characters?: string;
   content?: string;
@@ -298,6 +303,11 @@ export interface ShortStoryCreate {
   twist_type?: string;
   twist_content?: string;
   twist_clues?: string;
+  reversal_grade?: string;
+  beat_design?: string;
+  emotional_payoff?: string;
+  dual_line?: string;
+  character_profile?: string;
   emotion_curve?: string;
   characters?: string;
   content?: string;
@@ -317,6 +327,11 @@ export interface ShortStoryUpdate {
   twist_type?: string;
   twist_content?: string;
   twist_clues?: string;
+  reversal_grade?: string;
+  beat_design?: string;
+  emotional_payoff?: string;
+  dual_line?: string;
+  character_profile?: string;
   emotion_curve?: string;
   characters?: string;
   content?: string;
@@ -338,6 +353,33 @@ export interface ShortStoryCharacter {
   role: 'protagonist' | 'key' | 'antagonist';
   desc: string;
   relationship?: string;
+}
+
+// 爆款关键点：爆点设计（story-short-write 方法论）
+export interface BeatDesign {
+  max_thrill_point?: string; // 最大爽点
+  max_tearjerker_point?: string; // 最大虐点
+  max_shock_point?: string; // 最大震撼点
+  max_viral_line?: string; // 最大传播句
+}
+
+// 爆款关键点：双线叙事（表线 vs 里线）
+export interface DualLine {
+  surface_line?: string; // 表线（读者以为的故事）
+  inner_line?: string; // 里线（真实故事）
+  junction_nodes?: string[]; // 交汇节点（埋伏笔处）
+  reveal_point?: string; // 反转揭晓点
+}
+
+// 爆款关键点：人物四要素
+export interface CharacterProfile {
+  name?: string;
+  surface_goal?: string; // 表面目标
+  inner_need?: string; // 内心需求
+  fear?: string; // 最大恐惧
+  secret?: string; // 最不愿承认的秘密
+  motive?: string; // 反派合理动机
+  self_justification?: string; // 反派认为自己正确处
 }
 
 export interface StorySegment {

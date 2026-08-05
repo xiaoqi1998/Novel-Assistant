@@ -28,6 +28,7 @@ import {
   clearStorySetupDraft,
 } from '../../utils/shortStoryDraft';
 import EmotionCurveEditor from './EmotionCurve';
+import KeyPoints from './KeyPoints';
 import type { ShortStory, ShortStoryCharacter } from '../../types';
 
 const { Title, Text } = Typography;
@@ -680,6 +681,8 @@ export default function Setup() {
       >
         <EmotionCurveEditor story={story} embedded />
       </Card>
+
+      <KeyPoints story={story} />
 
       <Modal
         title="AI生成梗概选项"

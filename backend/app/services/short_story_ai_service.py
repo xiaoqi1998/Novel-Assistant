@@ -9,6 +9,55 @@ from app.logger import get_logger
 
 logger = get_logger(__name__)
 
+# ============ Skill 方法论注入（短故事向导使用 story-short-write） ============
+# 从 story-short-write skill 的 writing_constraints 加载精简爆款方法论，
+# 注入到向导的设定/正文/精修/评分/自查各阶段 Prompt，让主流入口复用 skill 方法论。
+SHORT_WRITE_SKILL_KEY = "SKILL_STORY_SHORT_WRITE"
+_SHORT_SKILL_CONSTRAINT_CACHE: Optional[str] = None
+# 兜底默认约束：当 skill 未加载或缺少 writing_constraints 时使用，保证功能始终可用
+_DEFAULT_SHORT_SKILL_CONSTRAINT = (
+    "短篇写的是情绪，不是故事。短篇爆款 = 情绪优先 + 双线反转 + 开头钩子 + 去AI味 + 精修删减 + 爽点出口。\n"
+    "反转用「表线 vs 里线」设计：表线=读者以为的故事，里线=真实故事，交汇节点=埋伏笔处（≥3个）。"
+    "反转先定等级（S认知反转＞A身份/关系反转＞B事件真相反转＞C单纯信息揭露），优先S/A级，"
+    "不是所有故事都必须靠反转结束，只改信息不改情感判断的C级宁可放弃、改靠情绪或爽点收尾。\n"
+    "每篇锚定最大爽点/最大虐点/最大震撼点/最大传播句，给读者可兑现的收益（翻盘/恶人代价/真相曝光/遗憾），"
+    "前3000字'这么惨'→中间'何时反击'→结尾'爽到了/哭到了'。\n"
+    "人物要有欲望：主角（表面目标/内心需求/最大恐惧/秘密），反派（表面恶/合理动机/他认为自己正确处），"
+    "删除只服务剧情没有诉求的工具人。\n"
+    "去AI味（实时）：禁情绪直描词与AI套路句式，禁对称排比与总结长句，一段不超过3句，"
+    "Show Don't Tell，对白像真人（允许废话/停顿/犹豫），区分各角色语气。\n"
+    "开头：标题+黄金前三句联动=[反常身份/关系]+[突发极限事件]+[冷酷/出人意料的反应]，"
+    "前三句凑齐1个异常事件+1个具体物件+1个未解释的问题，首句兑现标题冲突。\n"
+    "每1000字自查读者此刻最想知道什么（会怎么办/真相/谁撒谎/代价/失去什么），无明确问题=流水账，"
+    "冲突升级管情绪强度，悬念推进管阅读动力。\n"
+    "结尾留下传播理由：一句话截图金句/一个反差讨论/一个遗憾评论/一个反转回看。"
+)
+
+
+def get_short_write_skill_constraint() -> str:
+    """获取短篇写作 Skill 的精简方法论约束（用于注入向导各阶段 Prompt）。
+
+    优先从 story-short-write skill 的 writing_constraints 加载（缓存），
+    加载失败时回退到内置默认约束，保证功能始终可用。
+    """
+    global _SHORT_SKILL_CONSTRAINT_CACHE
+    if _SHORT_SKILL_CONSTRAINT_CACHE is not None:
+        return _SHORT_SKILL_CONSTRAINT_CACHE
+    try:
+        from app.services.skill_loader import get_all_skills_cached
+        for s in get_all_skills_cached():
+            if s.get("template_key") == SHORT_WRITE_SKILL_KEY:
+                constraint = (s.get("writing_constraints") or "").strip()
+                _SHORT_SKILL_CONSTRAINT_CACHE = constraint or _DEFAULT_SHORT_SKILL_CONSTRAINT
+                logger.info(f"已加载 story-short-write 方法论约束注入向导（{len(_SHORT_SKILL_CONSTRAINT_CACHE)}字符）")
+                return _SHORT_SKILL_CONSTRAINT_CACHE
+        logger.warning("未找到 story-short-write skill，使用内置默认约束")
+    except Exception as e:
+        logger.warning(f"加载 story-short-write skill 约束失败，使用内置默认: {e}")
+    _SHORT_SKILL_CONSTRAINT_CACHE = _DEFAULT_SHORT_SKILL_CONSTRAINT
+    return _SHORT_SKILL_CONSTRAINT_CACHE
+
+
 # ============ 模块级常量（可配置） ============
 # 段落衔接上下文长度（从已有正文末尾取多少字给AI作衔接参考）
 SEGMENT_CONTEXT_CHARS = 1500
@@ -18,6 +67,11 @@ MAX_TOKENS_STORY_CONTENT = 12000   # 正文生成 / 精修 / 改进（8000-16000
 MAX_TOKENS_OUTLINE = 8000          # 设定+大纲（结构化JSON，需要适中）
 MAX_TOKENS_OPTIONS = 2000          # 梗概 / 反转 / 灵感选项（1000-2000 区间）
 MAX_TOKENS_SCORE = 4000            # 评分 / 自查清单（结构化JSON）
+
+
+def _skill_constraint_block() -> str:
+    """生成注入到 system_prompt 的爆款方法论约束块"""
+    return f"\n\n【爆款方法论约束（必须遵守）】\n{get_short_write_skill_constraint()}\n"
 
 
 def _parse_ai_json(text: str, *, hint: str = "AI响应") -> Any:
@@ -264,18 +318,30 @@ AUTO_COMPLETE_SYSTEM = """你是短故事设定策划专家。
 4. clues：3个铺垫线索，表面自然、暗藏深意
 5. characters：3-5个高度标签化角色，role只能是 protagonist / key / antagonist
 
+同时按爆款方法论输出以下关键点：
+6. reversal_grade：反转等级，只能是 S（认知反转，改变情感判断）/ A（身份/关系反转）/ B（事件真相反转）/ C（单纯信息揭露），优先S/A，若反转较弱选C
+7. beat_design：爆点设计对象 {max_thrill_point(最大爽点), max_tearjerker_point(最大虐点), max_shock_point(最大震撼点), max_viral_line(最大传播句)}
+8. emotional_payoff：情绪收益点数组，从【翻盘、恶人付出代价、误会解除、真相曝光、遗憾无法挽回】中勾选2-4个，保证"虐"后有"爆"
+9. dual_line：双线叙事对象 {surface_line(表线，读者以为的故事), inner_line(里线，真实故事), junction_nodes(交汇节点数组，3个埋伏笔处), reveal_point(反转揭晓点)}
+10. character_profile：人物四要素对象，为每位关键角色补充 {name, surface_goal(表面目标), inner_need(内心需求), fear(最大恐惧), secret(最不愿承认的秘密)}，反派含 {motive(合理动机), self_justification(他认为自己正确处)}
+
 返回JSON格式：
 {{"logline": "一句话梗概",
  "twist_type": "身份反转",
  "twist_content": "反转内容",
  "clues": ["线索1", "线索2", "线索3"],
- "characters": [{{"name": "角色名", "role": "protagonist", "desc": "人设速写", "relationship": "与主角关系"}}]}}"""
+ "characters": [{{"name": "角色名", "role": "protagonist", "desc": "人设速写", "relationship": "与主角关系"}}],
+ "reversal_grade": "S",
+ "beat_design": {{"max_thrill_point": "", "max_tearjerker_point": "", "max_shock_point": "", "max_viral_line": ""}},
+ "emotional_payoff": ["真相曝光", "遗憾无法挽回"],
+ "dual_line": {{"surface_line": "", "inner_line": "", "junction_nodes": ["", "", ""], "reveal_point": ""}},
+ "character_profile": [{{"name": "角色名", "surface_goal": "", "inner_need": "", "fear": "", "secret": "", "motive": "", "self_justification": ""}}]}}"""
 
 AUTO_COMPLETE_USER = """故事标题：{title}
 题材：{genre}
 情绪目标：{emotion_goal}
 
-请一键补全完整故事设定，严格按JSON格式返回。"""
+请一键补全完整故事设定（含爆款关键点），严格按JSON格式返回。"""
 
 
 def _count_chinese_and_punctuation_local(text: str) -> int:
@@ -301,7 +367,7 @@ class ShortStoryAIService:
         user_idea: str = "",
     ) -> list[str]:
         """生成一句话梗概选项"""
-        system_prompt = LOGLINE_SYSTEM
+        system_prompt = LOGLINE_SYSTEM + _skill_constraint_block()
         user_prompt = LOGLINE_USER.format(
             title=title or "未定",
             emotion_goal=emotion_goal or "未定",
@@ -333,7 +399,7 @@ class ShortStoryAIService:
         emotion_goal: str = "",
     ) -> list[dict]:
         """生成核心反转设计选项"""
-        system_prompt = TWIST_SYSTEM
+        system_prompt = TWIST_SYSTEM + _skill_constraint_block()
         user_prompt = TWIST_USER.format(
             title=title or "未定",
             logline=logline or "未定",
@@ -373,7 +439,7 @@ class ShortStoryAIService:
         accumulated = ""
         async for chunk in ai_service.generate_text_stream(
             prompt=user_prompt,
-            system_prompt=CLUES_SYSTEM,
+            system_prompt=CLUES_SYSTEM + _skill_constraint_block(),
             temperature=0.8,
             max_tokens=MAX_TOKENS_OPTIONS,
             auto_mcp=False,
@@ -431,7 +497,7 @@ class ShortStoryAIService:
         accumulated = ""
         async for chunk in ai_service.generate_text_stream(
             prompt=user_prompt,
-            system_prompt=CHARACTERS_SYSTEM,
+            system_prompt=CHARACTERS_SYSTEM + _skill_constraint_block(),
             temperature=0.8,
             max_tokens=MAX_TOKENS_OPTIONS,
             auto_mcp=False,
@@ -461,7 +527,7 @@ class ShortStoryAIService:
         accumulated = ""
         async for chunk in ai_service.generate_text_stream(
             prompt=user_prompt,
-            system_prompt=AUTO_COMPLETE_SYSTEM,
+            system_prompt=AUTO_COMPLETE_SYSTEM + _skill_constraint_block(),
             temperature=0.8,
             max_tokens=MAX_TOKENS_OUTLINE,
             auto_mcp=False,
@@ -483,8 +549,50 @@ class ShortStoryAIService:
             data.get("characters", []) if isinstance(data.get("characters"), list) else []
         )
 
+        # 解析爆款关键点（反转等级/爆点设计/情绪收益/双线叙事/人物四要素）
+        reversal_grade = str(data.get("reversal_grade", "")).strip().upper()
+        if reversal_grade not in {"S", "A", "B", "C"}:
+            reversal_grade = "A"
+
+        beat_design_raw = data.get("beat_design")
+        beat_design = (
+            json.dumps(beat_design_raw, ensure_ascii=False)
+            if isinstance(beat_design_raw, dict)
+            else "{}"
+        )
+
+        payoff_raw = data.get("emotional_payoff")
+        emotional_payoff = (
+            json.dumps([str(p) for p in payoff_raw if p], ensure_ascii=False)
+            if isinstance(payoff_raw, list)
+            else "[]"
+        )
+
+        dual_line_raw = data.get("dual_line")
+        if isinstance(dual_line_raw, dict):
+            junction = dual_line_raw.get("junction_nodes") or []
+            dual_line = json.dumps(
+                {
+                    "surface_line": str(dual_line_raw.get("surface_line", "")).strip(),
+                    "inner_line": str(dual_line_raw.get("inner_line", "")).strip(),
+                    "junction_nodes": [str(j) for j in junction if j][:5],
+                    "reveal_point": str(dual_line_raw.get("reveal_point", "")).strip(),
+                },
+                ensure_ascii=False,
+            )
+        else:
+            dual_line = "{}"
+
+        profile_raw = data.get("character_profile")
+        character_profile = (
+            json.dumps(profile_raw, ensure_ascii=False)
+            if isinstance(profile_raw, list)
+            else "[]"
+        )
+
         logger.debug(
-            f"AI一键补全设定完成: clues={len(clues)}, characters={len(characters)}, 响应长度={len(accumulated)}"
+            f"AI一键补全设定完成: clues={len(clues)}, characters={len(characters)}, "
+            f"reversal_grade={reversal_grade}, 响应长度={len(accumulated)}"
         )
         return {
             "logline": str(data.get("logline", "")).strip(),
@@ -492,6 +600,11 @@ class ShortStoryAIService:
             "twist_content": str(data.get("twist_content", "")).strip(),
             "clues": clues,
             "characters": characters,
+            "reversal_grade": reversal_grade,
+            "beat_design": beat_design,
+            "emotional_payoff": emotional_payoff,
+            "dual_line": dual_line,
+            "character_profile": character_profile,
         }
 
     @staticmethod
@@ -549,7 +662,7 @@ class ShortStoryAIService:
         result = ""
         async for chunk in ai_service.generate_text_stream(
             prompt=user_prompt,
-            system_prompt=SEGMENT_SYSTEM,
+            system_prompt=SEGMENT_SYSTEM + _skill_constraint_block(),
             temperature=0.7,
             max_tokens=MAX_TOKENS_STORY_CONTENT,
             auto_mcp=False,
@@ -584,7 +697,7 @@ class ShortStoryAIService:
         result = ""
         async for chunk in ai_service.generate_text_stream(
             prompt=user_prompt,
-            system_prompt=POLISH_SYSTEM,
+            system_prompt=POLISH_SYSTEM + _skill_constraint_block(),
             temperature=0.5,
             max_tokens=MAX_TOKENS_STORY_CONTENT,
             auto_mcp=False,
@@ -659,7 +772,7 @@ class ShortStoryAIService:
             result = ""
             async for chunk in ai_service.generate_text_stream(
                 prompt=user_prompt,
-                system_prompt=SEGMENT_SYSTEM,
+                system_prompt=SEGMENT_SYSTEM + _skill_constraint_block(),
                 temperature=0.7,
                 max_tokens=MAX_TOKENS_STORY_CONTENT,
                 auto_mcp=False,
@@ -704,7 +817,7 @@ class ShortStoryAIService:
             async for chunk in wrap_stream_with_heartbeat(
                 ai_service.generate_text_stream(
                     prompt=user_prompt,
-                    system_prompt=POLISH_SYSTEM,
+                    system_prompt=POLISH_SYSTEM + _skill_constraint_block(),
                     temperature=0.5,
                     max_tokens=MAX_TOKENS_STORY_CONTENT,
                     auto_mcp=False,
@@ -749,7 +862,7 @@ class ShortStoryAIService:
             "twist_content": context.get("twist_content", ""),
         }
 
-        system_prompt = system_template.format(**format_params)
+        system_prompt = system_template.format(**format_params) + _skill_constraint_block()
         user_prompt = user_template.format(**format_params)
 
         accumulated = ""
@@ -983,7 +1096,7 @@ class FullStoryGenerator:
         # 短故事生成不需要 MCP 工具，禁用以避免工具调用路径导致空响应
         async for chunk in ai_service.generate_text_stream(
             prompt=stage1_prompt,
-            system_prompt=STAGE1_SETUP_SYSTEM,
+            system_prompt=STAGE1_SETUP_SYSTEM + _skill_constraint_block(),
             temperature=0.75,
             max_tokens=MAX_TOKENS_OUTLINE,
             auto_mcp=False,
@@ -995,7 +1108,7 @@ class FullStoryGenerator:
             logger.warning("阶段1(非流式) AI返回空响应，重试一次")
             async for chunk in ai_service.generate_text_stream(
                 prompt=stage1_prompt,
-                system_prompt=STAGE1_SETUP_SYSTEM,
+                system_prompt=STAGE1_SETUP_SYSTEM + _skill_constraint_block(),
                 temperature=0.85,
                 max_tokens=MAX_TOKENS_OUTLINE,
                 auto_mcp=False,
@@ -1098,7 +1211,7 @@ class FullStoryGenerator:
             try:
                 async for chunk in ai_service.generate_text_stream(
                     prompt=seg_prompt,
-                    system_prompt=STAGE2_SEGMENT_SYSTEM,
+                    system_prompt=STAGE2_SEGMENT_SYSTEM + _skill_constraint_block(),
                     temperature=0.7,
                     max_tokens=MAX_TOKENS_STORY_CONTENT,
                     auto_mcp=False,
@@ -1209,7 +1322,7 @@ class FullStoryGenerator:
             async for chunk in wrap_stream_with_heartbeat(
                 ai_service.generate_text_stream(
                     prompt=stage1_prompt,
-                    system_prompt=STAGE1_SETUP_SYSTEM,
+                    system_prompt=STAGE1_SETUP_SYSTEM + _skill_constraint_block(),
                     temperature=0.75,
                     max_tokens=MAX_TOKENS_OUTLINE,
                     auto_mcp=False,
@@ -1231,7 +1344,7 @@ class FullStoryGenerator:
                 async for chunk in wrap_stream_with_heartbeat(
                     ai_service.generate_text_stream(
                         prompt=stage1_prompt,
-                        system_prompt=STAGE1_SETUP_SYSTEM,
+                        system_prompt=STAGE1_SETUP_SYSTEM + _skill_constraint_block(),
                         temperature=0.85,
                         max_tokens=MAX_TOKENS_OUTLINE,
                         auto_mcp=False,
@@ -1342,7 +1455,7 @@ class FullStoryGenerator:
                     async for chunk in wrap_stream_with_heartbeat(
                         ai_service.generate_text_stream(
                             prompt=seg_prompt,
-                            system_prompt=STAGE2_SEGMENT_SYSTEM,
+                            system_prompt=STAGE2_SEGMENT_SYSTEM + _skill_constraint_block(),
                             temperature=0.7,
                             max_tokens=MAX_TOKENS_STORY_CONTENT,
                             auto_mcp=False,
@@ -1540,7 +1653,7 @@ class StoryScorer:
         accumulated = ""
         async for chunk in ai_service.generate_text_stream(
             prompt=user_prompt,
-            system_prompt=SCORE_SYSTEM,
+            system_prompt=SCORE_SYSTEM + _skill_constraint_block(),
             temperature=0.3,  # 评分需要稳定
             max_tokens=MAX_TOKENS_SCORE,
             auto_mcp=False,
@@ -1787,7 +1900,7 @@ class StoryImprover:
         result = ""
         async for chunk in ai_service.generate_text_stream(
             prompt=user_prompt,
-            system_prompt=FILL_UP_SYSTEM,
+            system_prompt=FILL_UP_SYSTEM + _skill_constraint_block(),
             temperature=0.6,
             max_tokens=MAX_TOKENS_STORY_CONTENT,
             auto_mcp=False,
@@ -1863,7 +1976,7 @@ class StoryImprover:
         result = ""
         async for chunk in ai_service.generate_text_stream(
             prompt=user_prompt,
-            system_prompt=IMPROVE_SYSTEM,
+            system_prompt=IMPROVE_SYSTEM + _skill_constraint_block(),
             temperature=0.55,
             max_tokens=MAX_TOKENS_STORY_CONTENT,
             auto_mcp=False,
@@ -1975,7 +2088,7 @@ class StoryImprover:
             async for chunk in wrap_stream_with_heartbeat(
                 ai_service.generate_text_stream(
                     prompt=user_prompt,
-                    system_prompt=IMPROVE_SYSTEM,
+                    system_prompt=IMPROVE_SYSTEM + _skill_constraint_block(),
                     temperature=0.55,
                     max_tokens=MAX_TOKENS_STORY_CONTENT,
                     auto_mcp=False,
@@ -2097,7 +2210,7 @@ class ChecklistChecker:
         accumulated = ""
         async for chunk in ai_service.generate_text_stream(
             prompt=user_prompt,
-            system_prompt=CHECKLIST_SYSTEM,
+            system_prompt=CHECKLIST_SYSTEM + _skill_constraint_block(),
             temperature=0.2,  # 检查需要精确稳定
             max_tokens=MAX_TOKENS_SCORE,
             auto_mcp=False,
