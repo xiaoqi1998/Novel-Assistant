@@ -754,11 +754,22 @@ class SnapshotService:
                 })
         snapshot["location_states"] = location_states
 
+        # 组织名称来自关联的 Character（Organization 本身无 name 字段）
+        org_char_ids = [org.character_id for org in organizations if org.character_id]
+        org_name_map = {}
+        if org_char_ids:
+            org_chars_result = await db.execute(
+                select(Character.id, Character.name).where(
+                    Character.id.in_(org_char_ids)
+                )
+            )
+            org_name_map = {cid: name for cid, name in org_chars_result.all()}
+
         # 8. 势力状态
         snapshot["faction_states"] = [
             {
                 "organization_id": org.id,
-                "name": org.name,
+                "name": org_name_map.get(org.character_id, "未知组织"),
                 "power_level": org.power_level,
                 "member_count": org.member_count,
                 "status": "active",
