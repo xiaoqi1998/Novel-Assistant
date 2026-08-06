@@ -99,6 +99,35 @@ class OpenAIClient(BaseAIClient):
         tool_choice: Optional[str] = None,
         stream: bool = False,
     ) -> Dict[str, Any]:
+        # Claude 系列（含经 OpenAI 兼容网关转发的 claude-*）消息兼容处理：
+        # 网关/上游对 messages 数组中的 role=system 消息校验严格（如
+        # "role 'system' must precede an 'assistant' message or end the array"），
+        # 将 system 内容合并到第一条 user 消息，彻底规避 system 角色消息。
+        _is_claude = model.lower().startswith("claude")
+        if _is_claude:
+            _system_parts = [
+                m.get("content")
+                for m in messages
+                if isinstance(m, dict) and m.get("role") == "system" and m.get("content")
+            ]
+            if _system_parts:
+                _merged_system = "\n\n".join(_system_parts)
+                _merged_messages = []
+                _system_merged = False
+                for _m in messages:
+                    if isinstance(_m, dict) and _m.get("role") == "system":
+                        continue
+                    _nm = dict(_m)
+                    if _nm.get("role") == "user" and not _system_merged:
+                        _nm["content"] = f"{_merged_system}\n\n{_nm.get('content', '')}"
+                        _system_merged = True
+                    _merged_messages.append(_nm)
+                messages = _merged_messages
+                logger.info(
+                    "🔄 模型 %s 兼容处理：system 消息已合并到首条 user 消息（%d 字符）",
+                    model, len(_merged_system),
+                )
+
         payload = {
             "model": model,
             "messages": messages,
@@ -108,7 +137,6 @@ class OpenAIClient(BaseAIClient):
         # 1. Claude 系列（含经 OpenAI 兼容网关转发的 claude-*）不接受非默认 temperature，
         #    传 0.7 等值会被网关 400 拒绝，必须省略（使用模型默认值 1）。
         # 2. temperature 为 None 或 == 1.0 时省略，等价于模型默认值，减少不必要参数。
-        _is_claude = model.lower().startswith("claude")
         if temperature is not None and temperature != 1.0 and not _is_claude:
             payload["temperature"] = temperature
         elif _is_claude and temperature is not None and temperature != 1.0:
