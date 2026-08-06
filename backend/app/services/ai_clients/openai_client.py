@@ -102,9 +102,17 @@ class OpenAIClient(BaseAIClient):
         payload = {
             "model": model,
             "messages": messages,
-            "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        # temperature 兼容处理：
+        # 1. Claude 系列（含经 OpenAI 兼容网关转发的 claude-*）不接受非默认 temperature，
+        #    传 0.7 等值会被网关 400 拒绝，必须省略（使用模型默认值 1）。
+        # 2. temperature 为 None 或 == 1.0 时省略，等价于模型默认值，减少不必要参数。
+        _is_claude = model.lower().startswith("claude")
+        if temperature is not None and temperature != 1.0 and not _is_claude:
+            payload["temperature"] = temperature
+        elif _is_claude and temperature is not None and temperature != 1.0:
+            logger.info("🔄 模型 %s 不支持非默认 temperature，已省略该参数（使用模型默认值 1）", model)
         if stream:
             payload["stream"] = True
         if tools:

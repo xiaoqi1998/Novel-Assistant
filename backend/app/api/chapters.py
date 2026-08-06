@@ -2264,6 +2264,11 @@ async def generate_chapter_content_background(
     if not analysis_ready:
         raise HTTPException(status_code=409, detail=analysis_msg)
 
+    # 兼容旧版 skill_key/skill_keys：统一为 writing_skill_key + auxiliary_skill_keys
+    _skill_key = generate_request.skill_key if hasattr(generate_request, 'skill_key') else None
+    _auxiliary_skill_keys = list(generate_request.auxiliary_skill_keys) if hasattr(generate_request, 'auxiliary_skill_keys') and generate_request.auxiliary_skill_keys else []
+    _writing_skill_key = _skill_key  # 创作类 Skill（单选）
+
     # 创建后台任务
     from app.services.background_task_service import background_task_service, TaskProgressTracker
     task = await background_task_service.create_task(
@@ -2277,9 +2282,9 @@ async def generate_chapter_content_background(
             "enable_mcp": generate_request.enable_mcp,
             "model": generate_request.model,
             "narrative_perspective": generate_request.narrative_perspective,
-            "skill_key": generate_request.skill_key,
-            "writing_skill_key": writing_skill_key,
-            "auxiliary_skill_keys": auxiliary_skill_keys,
+            "skill_key": _skill_key,
+            "writing_skill_key": _writing_skill_key,
+            "auxiliary_skill_keys": _auxiliary_skill_keys,
         },
         db=db
     )
@@ -2309,7 +2314,9 @@ async def generate_chapter_content_background(
                         "enable_mcp": generate_request.enable_mcp,
                         "model": generate_request.model,
                         "narrative_perspective": generate_request.narrative_perspective,
-                        "skill_key": generate_request.skill_key,
+                        "skill_key": _skill_key,
+                        "writing_skill_key": _writing_skill_key,
+                        "auxiliary_skill_keys": _auxiliary_skill_keys,
                     },
                     db=bg_db,
                     ai_service=bg_ai_service,
