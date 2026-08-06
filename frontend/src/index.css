@@ -290,6 +290,11 @@ body {
   }
 }
 
+/* 移动端底部导航安全区域 */
+.mobile-bottom-nav {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
 .ant-tabs-dropdown {
   z-index: 2000 !important;
 }

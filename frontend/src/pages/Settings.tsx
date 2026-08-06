@@ -1,20 +1,19 @@
 import { useState, useEffect } from 'react';
-import { Card, Form, Input, Button, Select, Slider, InputNumber, message, Space, Typography, Spin, Modal, Alert, Grid, Tabs, Tag, Row, Col, theme, List, Popconfirm, Empty } from 'antd';
+import { Card, Form, Input, Button, Select, Slider, InputNumber, message, Space, Typography, Spin, Modal, Alert, Tabs, Tag, Row, Col, theme, List, Popconfirm, Empty } from 'antd';
 import { SaveOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, ThunderboltOutlined, EditOutlined, WarningOutlined, PictureOutlined, CopyOutlined } from '@ant-design/icons';
 import { settingsApi, mcpPluginApi, newApi } from '../services/api';
 import type { SettingsUpdate, APIKeyPreset, APIKeyPresetConfig } from '../types';
 import { useNavigate } from 'react-router-dom';
 import { usageListForFrontend, AI_USAGES } from '../constants/aiUsages';
+import useIsMobile from '../utils/useIsMobile';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
-const { useBreakpoint } = Grid;
 const { TextArea } = Input;
 
 export default function SettingsPage() {
   const { token } = theme.useToken();
-  const screens = useBreakpoint();
-  const isMobile = !screens.md; // md断点是768px
+  const isMobile = useIsMobile();
   const navigate = useNavigate();
   const [form] = Form.useForm();
   const [modal, contextHolder] = Modal.useModal();
@@ -855,61 +854,62 @@ export default function SettingsPage() {
             dataSource={presets}
             renderItem={(preset) => {
               const isActive = preset.id === activePresetId;
+              const presetActions = [
+                !isActive && (
+                  <Button
+                    key="activate"
+                    type="link"
+                    onClick={() => handlePresetActivate(preset.id, preset.name)}
+                  >
+                    激活
+                  </Button>
+                ),
+                <Button
+                  key="test"
+                  type="link"
+                  icon={<ThunderboltOutlined />}
+                  loading={testingPresetId === preset.id}
+                  onClick={() => handlePresetTest(preset.id)}
+                >
+                  测试
+                </Button>,
+                <Button
+                  key="edit"
+                  type="link"
+                  icon={<EditOutlined />}
+                  onClick={() => showPresetModal(preset)}
+                >
+                  编辑
+                </Button>,
+                <Popconfirm
+                  key="delete"
+                  title="确定删除此预设吗？"
+                  onConfirm={() => handlePresetDelete(preset.id)}
+                  disabled={isActive}
+                  okText="确定"
+                  cancelText="取消"
+                >
+                  <Button
+                    type="link"
+                    danger
+                    icon={<DeleteOutlined />}
+                    disabled={isActive}
+                  >
+                    删除
+                  </Button>
+                </Popconfirm>,
+              ].filter(Boolean);
               return (
                 <List.Item
                   key={preset.id}
                   style={{
                     background: isActive ? token.colorInfoBg : 'transparent',
-                    padding: '16px',
+                    padding: isMobile ? '12px' : '16px',
                     marginBottom: '8px',
                     border: isActive ? `2px solid ${token.colorPrimary}` : `1px solid ${token.colorBorderSecondary}`,
                     borderRadius: '8px',
                   }}
-                  actions={[
-                    !isActive && (
-                      <Button
-                        key="activate"
-                        type="link"
-                        onClick={() => handlePresetActivate(preset.id, preset.name)}
-                      >
-                        激活
-                      </Button>
-                    ),
-                    <Button
-                      key="test"
-                      type="link"
-                      icon={<ThunderboltOutlined />}
-                      loading={testingPresetId === preset.id}
-                      onClick={() => handlePresetTest(preset.id)}
-                    >
-                      测试
-                    </Button>,
-                    <Button
-                      key="edit"
-                      type="link"
-                      icon={<EditOutlined />}
-                      onClick={() => showPresetModal(preset)}
-                    >
-                      编辑
-                    </Button>,
-                    <Popconfirm
-                      key="delete"
-                      title="确定删除此预设吗？"
-                      onConfirm={() => handlePresetDelete(preset.id)}
-                      disabled={isActive}
-                      okText="确定"
-                      cancelText="取消"
-                    >
-                      <Button
-                        type="link"
-                        danger
-                        icon={<DeleteOutlined />}
-                        disabled={isActive}
-                      >
-                        删除
-                      </Button>
-                    </Popconfirm>,
-                  ].filter(Boolean)}
+                  actions={isMobile ? undefined : presetActions}
                 >
                   <List.Item.Meta
                     avatar={
@@ -950,6 +950,11 @@ export default function SettingsPage() {
                         <div style={{ fontSize: '12px', color: token.colorTextTertiary }}>
                           创建于: {new Date(preset.created_at).toLocaleString()}
                         </div>
+                        {isMobile && (
+                          <Space wrap style={{ marginTop: 4 }}>
+                            {presetActions}
+                          </Space>
+                        )}
                       </Space>
                     }
                   />

@@ -1,17 +1,16 @@
-import { Typography, Grid, theme } from 'antd';
+import { Typography, theme } from 'antd';
 import { VERSION_INFO, getVersionWithHash } from '../config/version';
 import { alphaColor } from '../utils/color';
+import useIsMobile from '../utils/useIsMobile';
 
 const { Text } = Typography;
-const { useBreakpoint } = Grid;
 
 interface AppFooterProps {
   sidebarWidth?: number;
 }
 
 export default function AppFooter({ sidebarWidth = 0 }: AppFooterProps) {
-  const screens = useBreakpoint();
-  const isMobile = !screens.md;
+  const isMobile = useIsMobile();
   const { token } = theme.useToken();
 
   // 计算左边距：桌面端有侧边栏时需要偏移

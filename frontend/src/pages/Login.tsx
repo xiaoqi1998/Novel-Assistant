@@ -4,7 +4,6 @@ import {
   Button,
   Divider,
   Form,
-  Grid,
   Input,
   Layout,
   Modal,
@@ -25,6 +24,7 @@ import ThemeSwitch from '../components/ThemeSwitch';
 import FullScreenLoading from '../components/FullScreenLoading';
 import BrandLogo from '../components/BrandLogo';
 import { alphaColor } from '../utils/color';
+import useIsMobile from '../utils/useIsMobile';
 
 const { Title, Paragraph } = Typography;
 
@@ -67,8 +67,7 @@ export default function Login() {
   const [newApiLoginForm] = Form.useForm<NewApiLoginValues>();
   const [newApiRegisterForm] = Form.useForm<NewApiRegisterValues>();
   const { token } = theme.useToken();
-  const screens = Grid.useBreakpoint();
-  const isMobile = !screens.md;
+  const isMobile = useIsMobile();
   const primaryButtonShadow = `0 8px 20px ${alphaColor(token.colorPrimary, 0.28)}`;
 
   const newapiAuthEnabled = authConfig.newapi_auth_enabled;

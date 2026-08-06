@@ -90,6 +90,7 @@ export default function RootLayout() {
   const [collapsed, setCollapsed] = useState<boolean>(() => getStoredSidebarCollapsed());
   const [drawerVisible, setDrawerVisible] = useState(false);
   const mobile = useIsMobile();
+  const isTablet = useIsMobile(1024);
 
   // 切回桌面端时自动关闭抽屉
   useEffect(() => {
@@ -341,7 +342,7 @@ export default function RootLayout() {
           placement="left"
           onClose={() => setDrawerVisible(false)}
           open={drawerVisible}
-          width={280}
+          width={isTablet && !mobile ? 320 : 280}
           styles={{ body: { padding: 0, display: 'flex', flexDirection: 'column' } }}
         >
           <SidebarContent
@@ -350,7 +351,7 @@ export default function RootLayout() {
             onToggleCollapsed={() => {}}
             selectedKeys={[selectedKey]}
             onMenuClick={handleMenuClick}
-            showCollapsedThemeButton={false}
+            showCollapsedThemeButton={true}
           />
         </Drawer>
       )}

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, Tooltip, Skeleton, theme, Dropdown } from 'antd';
+import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, Tooltip, Skeleton, theme, Dropdown, Drawer } from 'antd';
 import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined, BulbOutlined, DownOutlined, FileMarkdownOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { eventBus } from '../store/eventBus';
@@ -2402,7 +2402,7 @@ export default function Chapters() {
                     title={<Skeleton active paragraph={false} title={{ width: '40%' }} />}
                     description={<Skeleton active paragraph={{ rows: 2, width: ['90%', '70%'] }} title={false} />}
                   />
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+                  <div style={{ display: 'flex', justifyContent: isMobile ? 'flex-start' : 'flex-end', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
                     <Skeleton.Button active size="small" style={{ width: 56 }} />
                     <Skeleton.Button active size="small" style={{ width: 56 }} />
                     <Skeleton.Button active size="small" style={{ width: 56 }} />
@@ -2890,7 +2890,7 @@ export default function Chapters() {
         title={
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingRight: 40 }}>
             <span>编辑章节内容</span>
-            {!isMobile && editingId && (
+            {editingId && (
               <Button
                 type="text"
                 size="small"
@@ -2978,6 +2978,18 @@ export default function Chapters() {
           </Form.Item>
 
 
+          {/* 移动端配置区折叠面板 */}
+          {isMobile ? (
+            <Collapse
+              ghost
+              size="small"
+              style={{ marginBottom: 16 }}
+              items={[
+                {
+                  key: 'config',
+                  label: <span style={{ fontSize: 13, fontWeight: 500 }}>AI 创作配置</span>,
+                  children: (
+                    <>
           {/* 第一行：写作风格 + 叙事角度 */}
           <div style={{
             display: isMobile ? 'block' : 'flex',
@@ -3139,6 +3151,176 @@ export default function Chapters() {
               </Select>
             </Form.Item>
           </div>
+                    </>
+                  )
+                }
+              ]}
+            />
+          ) : (
+            <>
+          {/* 第一行：写作风格 + 叙事角度 */}
+          <div style={{
+            display: isMobile ? 'block' : 'flex',
+            gap: isMobile ? 0 : 16,
+            marginBottom: isMobile ? 0 : 12
+          }}>
+            <Form.Item
+              label="写作风格"
+              tooltip="选择AI创作时使用的写作风格"
+              required
+              style={{ flex: 1, marginBottom: isMobile ? 16 : 0 }}
+            >
+              <Select
+                placeholder="请选择写作风格"
+                value={selectedStyleId}
+                onChange={setSelectedStyleId}
+                disabled={isGenerating}
+                status={!selectedStyleId ? 'error' : undefined}
+              >
+                {writingStyles.map(style => (
+                  <Select.Option key={style.id} value={style.id}>
+                    {style.name}{style.is_default && ' (默认)'}
+                  </Select.Option>
+                ))}
+              </Select>
+              {!selectedStyleId && (
+                <div style={{ color: token.colorError, fontSize: 12, marginTop: 4 }}>请选择写作风格</div>
+              )}
+            </Form.Item>
+
+            <Form.Item
+              label="叙事角度"
+              tooltip="第一人称(我)代入感强；第三人称(他/她)更客观；全知视角洞悉一切"
+              style={{ flex: 1, marginBottom: isMobile ? 16 : 0 }}
+            >
+              <Select
+                placeholder={`项目默认: ${getNarrativePerspectiveText(currentProject?.narrative_perspective)}`}
+                value={temporaryNarrativePerspective}
+                onChange={setTemporaryNarrativePerspective}
+                allowClear
+                disabled={isGenerating}
+              >
+                <Select.Option value="第一人称">第一人称(我)</Select.Option>
+                <Select.Option value="第三人称">第三人称(他/她)</Select.Option>
+                <Select.Option value="全知视角">全知视角</Select.Option>
+              </Select>
+              {temporaryNarrativePerspective && (
+                <div style={{ color: token.colorSuccess, fontSize: 12, marginTop: 4 }}>
+                  ✓ {getNarrativePerspectiveText(temporaryNarrativePerspective)}
+                </div>
+              )}
+            </Form.Item>
+          </div>
+
+          {/* 第二行：目标字数 + AI模型 + Skill */}
+          <div style={{
+            display: 'flex',
+            gap: 16,
+            marginBottom: 12
+          }}>
+            <Form.Item
+              label="创作 Skill"
+              tooltip="选择一个创作工作流指导 AI 写作，不选则默认启用「长篇网文写作」"
+              style={{ flex: 1, marginBottom: 0 }}
+            >
+              <Select
+                placeholder="默认启用「长篇网文写作」"
+                value={selectedWritingSkillKey}
+                onChange={setSelectedWritingSkillKey}
+                allowClear
+                disabled={isGenerating}
+                showSearch
+                optionFilterProp="label"
+              >
+                {availableSkills.filter(s => s.skill_type === 'writing').map(skill => (
+                  <Select.Option key={skill.template_key} value={skill.template_key} label={skill.template_name}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span>{skill.template_name}</span>
+                      <Tag style={{ fontSize: 11, lineHeight: '18px', padding: '0 4px' }}>{skill.category}</Tag>
+                    </div>
+                  </Select.Option>
+                ))}
+              </Select>
+            </Form.Item>
+
+            <Form.Item
+              label="辅助 Skill"
+              tooltip="可多选，将对应的写作约束（如去AI味）注入创作过程，不会干扰创作工作流。文风模仿请通过上方「写作风格」下拉框选择已提取的文风档案"
+              style={{ flex: 1, marginBottom: 0 }}
+            >
+              <Select
+                mode="multiple"
+                placeholder="不使用辅助约束"
+                value={selectedAuxiliarySkillKeys}
+                onChange={setSelectedAuxiliarySkillKeys}
+                allowClear
+                disabled={isGenerating}
+                showSearch
+                optionFilterProp="label"
+                maxTagCount={2}
+              >
+                {availableSkills.filter(s => s.skill_type === 'auxiliary').map(skill => (
+                  <Select.Option key={skill.template_key} value={skill.template_key} label={skill.template_name}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span>{skill.template_name}</span>
+                      <Tag style={{ fontSize: 11, lineHeight: '18px', padding: '0 4px' }}>{skill.category}</Tag>
+                    </div>
+                  </Select.Option>
+                ))}
+              </Select>
+              {selectedAuxiliarySkillKeys.length > 0 && (
+                <div style={{ color: token.colorSuccess, fontSize: 12, marginTop: 4 }}>
+                  ✓ 已选 {selectedAuxiliarySkillKeys.length} 个辅助约束
+                </div>
+              )}
+            </Form.Item>
+
+            <Form.Item
+              label="目标字数"
+              tooltip="AI生成章节时的目标字数，实际可能略有偏差（修改后会自动记住）"
+              style={{ flex: 1, marginBottom: 0 }}
+            >
+              <InputNumber
+                min={500}
+                max={10000}
+                step={100}
+                value={targetWordCount}
+                onChange={(value) => {
+                  const newValue = value || DEFAULT_WORD_COUNT;
+                  setTargetWordCount(newValue);
+                  setCachedWordCount(newValue);
+                }}
+                disabled={isGenerating}
+                style={{ width: '100%' }}
+                formatter={(value) => `${value} 字`}
+                parser={(value) => parseInt(value?.replace(' 字', '') || '0', 10) as unknown as 500}
+              />
+            </Form.Item>
+
+            <Form.Item
+              label="AI模型"
+              tooltip="选择用于生成章节内容的AI模型，不选择则使用默认模型"
+              style={{ flex: 1, marginBottom: 0 }}
+            >
+              <Select
+                placeholder={selectedModel ? `默认: ${availableModels.find(m => m.value === selectedModel)?.label || selectedModel}` : "使用默认模型"}
+                value={selectedModel}
+                onChange={setSelectedModel}
+                allowClear
+                disabled={isGenerating}
+                showSearch
+                optionFilterProp="label"
+              >
+                {availableModels.map(model => (
+                  <Select.Option key={model.value} value={model.value} label={model.label}>
+                    {model.label}
+                  </Select.Option>
+                ))}
+              </Select>
+            </Form.Item>
+          </div>
+            </>
+          )}
 
           {/* E5：卡壳灵感浮动按钮（编辑器打开且非生成中时显示） */}
           {isEditorOpen && !isGenerating && (
@@ -3199,7 +3381,7 @@ export default function Chapters() {
               </div>
             </div>
 
-            {/* 右侧：写作助手侧边栏（仅桌面端且可见时显示） */}
+            {/* 右侧：写作助手侧边栏（桌面端且可见时显示） */}
             {!isMobile && assistantVisible && editingId && (
               <div style={{
                 width: 280,
@@ -3211,6 +3393,20 @@ export default function Chapters() {
               }}>
                 <WritingAssistantPanel chapterId={editingId} />
               </div>
+            )}
+
+            {/* 移动端：写作助手底部 Drawer */}
+            {isMobile && editingId && (
+              <Drawer
+                title="写作助手"
+                placement="bottom"
+                height="65vh"
+                onClose={() => setAssistantVisible(false)}
+                open={assistantVisible}
+                styles={{ body: { padding: 0 } }}
+              >
+                <WritingAssistantPanel chapterId={editingId} />
+              </Drawer>
             )}
 
             {/* 局部重写浮动工具栏 */}
@@ -3358,7 +3554,7 @@ export default function Chapters() {
                 rules={[{ required: true, message: '请选择' }]}
                 style={{ marginBottom: 12 }}
               >
-                <Radio.Group buttonStyle="solid" size={isMobile ? 'small' : 'middle'}>
+                <Radio.Group buttonStyle="solid" size={isMobile ? 'small' : 'middle'} style={{ flexWrap: 'wrap', rowGap: 8 }}>
                   <Radio.Button value={5}>5章</Radio.Button>
                   <Radio.Button value={10}>10章</Radio.Button>
                   <Radio.Button value={15}>15章</Radio.Button>

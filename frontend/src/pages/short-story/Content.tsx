@@ -13,7 +13,6 @@ import {
   Alert,
   Tooltip,
   theme,
-  Grid,
   Modal,
   Drawer,
   Empty,
@@ -24,6 +23,7 @@ import { shortStoryApi } from '../../services/api';
 import { showErrorToast } from '../../utils/errorHandler';
 import { useShortStoryStore } from '../../store/shortStoryStore';
 import { formatWordCount } from '../../utils/format';
+import useIsMobile from '../../utils/useIsMobile';
 import RevisionPreviewModal from '../../components/RevisionPreviewModal';
 import { SSELoadingOverlay } from '../../components/SSELoadingOverlay';
 import { SSEPostClient } from '../../utils/sseClient';
@@ -39,7 +39,6 @@ import type { ShortStory, StorySegment, RevisionPreview } from '../../types';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
-const { useBreakpoint } = Grid;
 
 const STATUS_CONFIG: Record<string, { color: string; text: string; icon: React.ReactNode }> = {
   pending: { color: 'default', text: '待写', icon: <ClockCircleOutlined /> },
@@ -62,8 +61,7 @@ function countWords(text: string): number {
 
 export default function Content() {
   const { story, reload } = useOutletContext<ContextType>();
-  const screens = useBreakpoint();
-  const isMobile = !screens.md;
+  const isMobile = useIsMobile();
   const { token } = theme.useToken();
   const { updateCurrentStory } = useShortStoryStore();
   const [content, setContent] = useState(story.content || '');

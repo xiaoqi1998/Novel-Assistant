@@ -15,13 +15,13 @@ import {
   Modal,
   Tooltip,
   theme,
-  Grid,
   Collapse,
 } from 'antd';
 import { SaveOutlined, PlusOutlined, DeleteOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { shortStoryApi } from '../../services/api';
 import { showErrorToast } from '../../utils/errorHandler';
 import { useShortStoryStore } from '../../store/shortStoryStore';
+import useIsMobile from '../../utils/useIsMobile';
 import {
   loadStorySetupDraft,
   saveStorySetupDraft,
@@ -75,8 +75,7 @@ export default function Setup() {
   const [twistOptions, setTwistOptions] = useState<Array<{ twist_type: string; twist_content: string; clues: string[] }>>([]);
   const [twistModalOpen, setTwistModalOpen] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
-  const screens = Grid.useBreakpoint();
-  const isMobile = !screens.md;
+  const isMobile = useIsMobile();
 
   // 比较表单字段与服务器版本是否一致
   const isFormSameAsServer = (fields: Record<string, any>): boolean => {

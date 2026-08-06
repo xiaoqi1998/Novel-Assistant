@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Button, List, Modal, Form, Input, message, Empty, Space, Popconfirm, Card, Select, Radio, Tag, InputNumber, Tabs, Pagination, theme } from 'antd';
+import { Button, List, Modal, Form, Input, message, Empty, Space, Popconfirm, Card, Select, Radio, Tag, InputNumber, Tabs, Pagination, theme, Popover } from 'antd';
 import { EditOutlined, DeleteOutlined, ThunderboltOutlined, BranchesOutlined, AppstoreAddOutlined, CheckCircleOutlined, ExclamationCircleOutlined, PlusOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { eventBus } from '../store/eventBus';
@@ -9,6 +9,7 @@ import { generateOutlineBackground } from '../services/backgroundTaskService';
 import { outlineApi, chapterApi, projectApi, characterApi } from '../services/api';
 import { showErrorToast } from '../utils/errorHandler';
 import { alphaColor } from '../utils/color';
+import useIsMobile from '../utils/useIsMobile';
 import type { ApiError, Character } from '../types';
 
 // 大纲生成请求数据类型
@@ -116,10 +117,35 @@ export default function Outline() {
   const [modalApi, contextHolder] = Modal.useModal();
   const [batchExpansionForm] = Form.useForm();
   const [manualCreateForm] = Form.useForm();
-  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  const isMobile = useIsMobile();
   const [isExpanding, setIsExpanding] = useState(false);
   const [projectCharacters, setProjectCharacters] = useState<Array<{ label: string; value: string }>>([]);
   const { token } = theme.useToken();
+
+  // 移动端截断文本：单行省略，点击 Popover 查看完整内容；桌面端直接省略
+  const renderTruncate = (text: React.ReactNode, style?: React.CSSProperties) => {
+    const baseStyle: React.CSSProperties = {
+      flex: 1,
+      lineHeight: '1.6',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+      ...style
+    };
+    if (!isMobile) {
+      return <span style={baseStyle}>{text}</span>;
+    }
+    return (
+      <Popover
+        content={<div style={{ maxWidth: 260, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{text}</div>}
+        title="完整内容"
+        trigger="click"
+        styles={{ body: { padding: 12 } }}
+      >
+        <span style={{ ...baseStyle, cursor: 'pointer' }}>{text}</span>
+      </Popover>
+    );
+  };
 
   // ✅ 新增：记录大纲卡片内容的展开/折叠状态（默认折叠）
   const [outlineContentExpandStatus, setOutlineContentExpandStatus] = useState<Record<string, boolean>>({});
@@ -127,21 +153,6 @@ export default function Outline() {
   // ✅ 新增：记录场景区域的展开/折叠状态
   const [scenesExpandStatus, setScenesExpandStatus] = useState<Record<string, boolean>>({});
 
-  useEffect(() => {
-    let timeoutId: number | undefined;
-    const handleResize = () => {
-      if (timeoutId) window.clearTimeout(timeoutId);
-      timeoutId = window.setTimeout(() => {
-        setIsMobile(window.innerWidth <= 768);
-      }, 150);
-    };
-
-    window.addEventListener('resize', handleResize);
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      if (timeoutId) window.clearTimeout(timeoutId);
-    };
-  }, []);
 
   // 大纲查询与分页状态
   const [outlineSearchKeyword, setOutlineSearchKeyword] = useState('');
@@ -2027,13 +2038,7 @@ export default function Outline() {
                                                         >
                                                           {idx + 1}
                                                         </Tag>
-                                                        <span style={{
-                                                          flex: 1,
-                                                          lineHeight: '1.6',
-                                                          overflow: 'hidden',
-                                                          textOverflow: 'ellipsis',
-                                                          whiteSpace: 'nowrap'
-                                                        }}>{scene}</span>
+                                                        {renderTruncate(scene)}
                                                       </div>
                                                     );
                                                   } else {
@@ -2083,30 +2088,20 @@ export default function Outline() {
                                                           >
                                                             场景{idx + 1}
                                                           </Tag>
-                                                          <span style={{
-                                                            fontWeight: 600,
-                                                            color: token.colorText,
-                                                            fontSize: isMobile ? 12 : 13,
-                                                            flex: 1,
-                                                            overflow: 'hidden',
-                                                            textOverflow: 'ellipsis',
-                                                            whiteSpace: 'nowrap'
-                                                          }}>
-                                                            📍 {scene.location}
-                                                          </span>
+                                                          {renderTruncate(
+                                                            <>📍 {scene.location}</>,
+                                                            { fontWeight: 600, color: token.colorText, fontSize: isMobile ? 12 : 13 }
+                                                          )}
                                                         </div>
                                                         {scene.characters && scene.characters.length > 0 && (
                                                           <div style={{
                                                             fontSize: isMobile ? 10 : 11,
                                                             color: token.colorTextSecondary,
                                                             marginBottom: 4,
-                                                            paddingLeft: isMobile ? 2 : 4,
-                                                            overflow: 'hidden',
-                                                            textOverflow: 'ellipsis',
-                                                            whiteSpace: 'nowrap'
+                                                            paddingLeft: isMobile ? 2 : 4
                                                           }}>
                                                             <span style={{ fontWeight: 500 }}>👤 角色：</span>
-                                                            {scene.characters.join(' · ')}
+                                                            {renderTruncate(scene.characters.join(' · '), { display: 'inline', flex: 'none' })}
                                                           </div>
                                                         )}
                                                         {scene.purpose && (
@@ -2114,13 +2109,10 @@ export default function Outline() {
                                                             fontSize: isMobile ? 10 : 11,
                                                             color: token.colorTextSecondary,
                                                             paddingLeft: isMobile ? 2 : 4,
-                                                            lineHeight: '1.5',
-                                                            overflow: 'hidden',
-                                                            textOverflow: 'ellipsis',
-                                                            whiteSpace: 'nowrap'
+                                                            lineHeight: '1.5'
                                                           }}>
                                                             <span style={{ fontWeight: 500 }}>🎯 目的：</span>
-                                                            {scene.purpose}
+                                                            {renderTruncate(scene.purpose, { display: 'inline', flex: 'none' })}
                                                           </div>
                                                         )}
                                                       </div>
@@ -2205,13 +2197,7 @@ export default function Outline() {
                                                     >
                                                       {idx + 1}
                                                     </Tag>
-                                                    <span style={{
-                                                      flex: 1,
-                                                      lineHeight: '1.6',
-                                                      overflow: 'hidden',
-                                                      textOverflow: 'ellipsis',
-                                                      whiteSpace: 'nowrap'
-                                                    }}>{event}</span>
+                                                    {renderTruncate(event)}
                                                   </div>
                                                 ))}
                                               </Space>
@@ -2306,13 +2292,7 @@ export default function Outline() {
                                                     >
                                                       {idx + 1}
                                                     </Tag>
-                                                    <span style={{
-                                                      flex: 1,
-                                                      lineHeight: '1.6',
-                                                      overflow: 'hidden',
-                                                      textOverflow: 'ellipsis',
-                                                      whiteSpace: 'nowrap'
-                                                    }}>{point}</span>
+                                                    {renderTruncate(point)}
                                                   </div>
                                                 ))}
                                               </div>

@@ -27,6 +27,7 @@ import AppTopBar from '../components/AppTopBar';
 import AppFooter from '../components/AppFooter';
 import { getStoredSidebarCollapsed, setStoredSidebarCollapsed } from '../utils/sidebarState';
 import FloatingTaskPanel from '../components/FloatingTaskPanel';
+import MobileBottomNav from '../components/MobileBottomNav';
 import { alphaColor } from '../utils/color';
 import { useIsMobile } from '../utils/useIsMobile';
 
@@ -39,6 +40,7 @@ export default function ProjectDetail() {
   const [collapsed, setCollapsed] = useState<boolean>(() => getStoredSidebarCollapsed());
   const [drawerVisible, setDrawerVisible] = useState(false);
   const mobile = useIsMobile();
+  const isTablet = useIsMobile(1024);
   const [loadError, setLoadError] = useState<string | null>(null);
   const { token } = theme.useToken();
 
@@ -196,7 +198,36 @@ export default function ProjectDetail() {
   }
 
   // 4 个统计卡片（瘦身版）
-  const statsActions = !mobile && (
+  const statsActions = mobile ? (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 5,
+        fontSize: 12,
+        color: token.colorTextSecondary,
+        fontFamily: 'Monaco, monospace',
+        whiteSpace: 'nowrap',
+        lineHeight: 1,
+      }}
+    >
+      <span style={{ fontWeight: 600, color: token.colorPrimary }}>{outlines.length}</span>
+      <span>大纲</span>
+      <span style={{ color: token.colorTextQuaternary }}>·</span>
+      <span style={{ fontWeight: 600, color: token.colorPrimary }}>{characters.length}</span>
+      <span>角色</span>
+      <span style={{ color: token.colorTextQuaternary }}>·</span>
+      <span style={{ fontWeight: 600, color: token.colorPrimary }}>{chapters.length}</span>
+      <span>章</span>
+      <span style={{ color: token.colorTextQuaternary }}>·</span>
+      <span style={{ fontWeight: 600, color: token.colorPrimary }}>
+        {currentProject.current_words > 10000
+          ? (currentProject.current_words / 10000).toFixed(1) + 'w'
+          : currentProject.current_words}
+      </span>
+      <span>字</span>
+    </div>
+  ) : (
     <div style={{ display: 'flex', gap: 10 }}>
       {[
         { label: '大纲', value: outlines.length, unit: '条' },
@@ -328,7 +359,7 @@ export default function ProjectDetail() {
             placement="left"
             onClose={() => setDrawerVisible(false)}
             open={drawerVisible}
-            width={280}
+            width={isTablet && !mobile ? 320 : 280}
             styles={{ body: { padding: 0, display: 'flex', flexDirection: 'column' } }}
           >
             <SidebarContent
@@ -338,7 +369,7 @@ export default function ProjectDetail() {
               selectedKeys={[selectedKey]}
               onMenuClick={() => mobile && setDrawerVisible(false)}
               footerExtra={footerExtra}
-              showCollapsedThemeButton={false}
+              showCollapsedThemeButton={true}
             />
           </Drawer>
         ) : (
@@ -362,7 +393,7 @@ export default function ProjectDetail() {
             style={{
               background: 'transparent',
               padding: mobile ? 12 : 24,
-              paddingBottom: mobile ? 56 : 64,
+              paddingBottom: mobile ? 56 + 56 : 64,
               height: mobile ? `calc(100vh - ${headerHeight}px)` : `calc(100vh - ${headerHeight}px)`,
               overflowY: 'auto',
               overflowX: 'hidden',
@@ -374,6 +405,9 @@ export default function ProjectDetail() {
           </Content>
         </Layout>
       </Layout>
+
+      {/* 移动端底部导航 */}
+      {mobile && projectId && <MobileBottomNav projectId={projectId} />}
 
       {/* 底部版本条 */}
       <AppFooter sidebarWidth={mobile ? 0 : desktopSiderWidth} />

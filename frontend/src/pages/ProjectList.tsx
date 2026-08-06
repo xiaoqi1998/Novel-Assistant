@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Button, Modal, message, Spin, Space, Tag, Typography, Upload, Checkbox, Tooltip, Grid, theme, notification, Tabs } from 'antd';
+import { Card, Button, Modal, message, Spin, Space, Tag, Typography, Upload, Checkbox, Tooltip, theme, notification, Tabs } from 'antd';
 import { UploadOutlined, BookOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { projectApi } from '../services/api';
 import { showErrorToast } from '../utils/errorHandler';
@@ -12,9 +12,9 @@ import type { Project } from '../types';
 import BookshelfPage from './BookshelfPage';
 import ShortStoryBookshelf from './ShortStoryBookshelf';
 import { formatWordCount } from '../utils/format';
+import useIsMobile from '../utils/useIsMobile';
 
 const { Text } = Typography;
-const { useBreakpoint } = Grid;
 
 /**
  * 书架页（项目列表）。壳（侧边栏 / 顶栏 / 底部版本条）由 RootLayout 提供，
@@ -22,8 +22,7 @@ const { useBreakpoint } = Grid;
  */
 export default function ProjectList() {
   const navigate = useNavigate();
-  const screens = useBreakpoint();
-  const isMobile = !screens.md;
+  const isMobile = useIsMobile();
   const { projects, loading } = useStore();
   const [modal, contextHolder] = Modal.useModal();
   const [activeTab, setActiveTab] = useState<'long' | 'short'>('long');
