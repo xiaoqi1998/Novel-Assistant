@@ -861,8 +861,8 @@ class SnapshotService:
         relationships = rels_result.scalars().all()
         snapshot["relationship_states"] = [
             {
-                "char_a_id": r.character_a_id,
-                "char_b_id": r.character_b_id,
+                "char_a_id": r.character_from_id,
+                "char_b_id": r.character_to_id,
                 "intimacy_level": r.intimacy_level,
                 "status": r.status,
             }

@@ -2177,7 +2177,7 @@ class PromptService:
 ✅ 每条建议必须直接输出完整文本，不能包裹为对象字段
 
 【AI味分析约束 - 严格执行】
-✅ ai_style_analysis 必填，禁止省略；AI味太轻也需返回 {ai_score: 0-0.2, level: 低, signs: [], strengths: [...], suggestions: []}
+✅ ai_style_analysis 必填，禁止省略；AI味太轻也需返回 {{ai_score: 0-0.2, level: 低, signs: [], strengths: [...], suggestions: []}}
 ✅ ai_score 为 0.0-1.0 的小数，必须基于原文证据判断，禁止给所有章节统一打0.5
 ✅ signs 中每条必须有 quote 字段，且 quote 必须从原文逐字复制8-30字
 ✅ signs 为空时返回 []，不要返回 null
