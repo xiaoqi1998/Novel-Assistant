@@ -552,7 +552,7 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
                         <Card title={`典型AI痕迹 (${ai.signs.length})`} style={{ marginBottom: 16 }} size={isMobile ? 'small' : 'default'}>
                           <List
                             dataSource={ai.signs}
-                            renderItem={(sign, index) => (
+                            renderItem={(sign) => (
                               <List.Item>
                                 <List.Item.Meta
                                   title={<Tag color="volcano">{sign.type}</Tag>}
@@ -582,7 +582,7 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
                         <Card title="人味亮点" style={{ marginBottom: 16 }} size={isMobile ? 'small' : 'default'}>
                           <List
                             dataSource={ai.strengths}
-                            renderItem={(item, index) => (
+                            renderItem={(item) => (
                               <List.Item>
                                 <CheckCircleOutlined style={{ color: 'var(--color-success)', marginRight: 8 }} />
                                 {item}
