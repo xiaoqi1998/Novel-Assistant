@@ -194,6 +194,7 @@ class PlotAnalysisExportData(BaseModel):
     coherence_score: Optional[float] = None
     analysis_report: Optional[str] = None
     suggestions: Optional[List[str]] = None
+    ai_style_analysis: Optional[Dict[str, Any]] = None
     word_count: Optional[int] = None
     dialogue_ratio: Optional[float] = None
     description_ratio: Optional[float] = None

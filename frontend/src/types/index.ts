@@ -1013,9 +1013,24 @@ export interface AnalysisData {
   coherence_score: number;
   analysis_report: string;
   suggestions: string[];
+  ai_style_analysis?: AiStyleAnalysis | null;
   dialogue_ratio: number;
   description_ratio: number;
   created_at: string;
+}
+
+// 分析结果 - AI味分析
+export interface AiStyleAnalysis {
+  ai_score: number;
+  level: string;
+  overall: string;
+  signs: Array<{
+    type: string;
+    quote: string;
+    explanation: string;
+  }>;
+  strengths: string[];
+  suggestions: string[];
 }
 
 // 记忆片段

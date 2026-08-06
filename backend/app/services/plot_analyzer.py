@@ -577,6 +577,21 @@ class PlotAnalyzer:
                 lines.append(f"  强度: {conflict.get('level', 0)}/10")
                 lines.append(f"  进度: {int(conflict.get('resolution_progress', 0) * 100)}%\n")
             
+            # AI味分析
+            ai_style = analysis.get('ai_style_analysis') or {}
+            if ai_style:
+                lines.append(f"【AI味分析】")
+                lines.append(f"  AI味程度: {ai_style.get('ai_score', 0) * 100:.0f}% ({ai_style.get('level', '未知')})")
+                if ai_style.get('overall'):
+                    lines.append(f"  判断: {ai_style['overall']}")
+                signs = ai_style.get('signs', [])
+                if signs:
+                    lines.append(f"  典型AI痕迹({len(signs)}处):")
+                    for sign in signs[:5]:
+                        quote = (sign.get('quote') or '')[:40]
+                        lines.append(f"    • [{sign.get('type', '')}]「{quote}...」")
+                lines.append("")
+            
             # 改进建议
             suggestions = analysis.get('suggestions', [])
             if suggestions:

@@ -1297,6 +1297,7 @@ async def analyze_chapter_background(
                 existing_analysis.coherence_score = analysis_result.get('scores', {}).get('coherence', 0)
                 existing_analysis.analysis_report = analyzer.generate_analysis_summary(analysis_result)
                 existing_analysis.suggestions = analysis_result.get('suggestions', [])
+                existing_analysis.ai_style_analysis = analysis_result.get('ai_style_analysis')
                 existing_analysis.dialogue_ratio = analysis_result.get('dialogue_ratio', 0)
                 existing_analysis.description_ratio = analysis_result.get('description_ratio', 0)
             else:
@@ -1326,6 +1327,7 @@ async def analyze_chapter_background(
                     coherence_score=analysis_result.get('scores', {}).get('coherence', 0),
                     analysis_report=analyzer.generate_analysis_summary(analysis_result),
                     suggestions=analysis_result.get('suggestions', []),
+                    ai_style_analysis=analysis_result.get('ai_style_analysis'),
                     dialogue_ratio=analysis_result.get('dialogue_ratio', 0),
                     description_ratio=analysis_result.get('description_ratio', 0)
                 )

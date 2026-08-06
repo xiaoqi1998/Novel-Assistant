@@ -11,7 +11,8 @@ import {
   ClockCircleOutlined,
   CloseCircleOutlined,
   ReloadOutlined,
-  EditOutlined
+  EditOutlined,
+  RobotOutlined
 } from '@ant-design/icons';
 import type { AnalysisTask, ChapterAnalysisResponse } from '../types';
 import ChapterRegenerationModal from './ChapterRegenerationModal';
@@ -499,6 +500,119 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
                       )}
                     />
                   </Card>
+                )}
+              </div>
+            )
+          },
+          {
+            key: 'ai-style',
+            label: 'AI味分析',
+            icon: <RobotOutlined />,
+            children: (
+              <div style={{ height: isMobile ? 'calc(80vh - 180px)' : 'calc(90vh - 220px)', overflowY: 'auto', paddingRight: '8px' }}>
+                {analysis_data.ai_style_analysis ? (() => {
+                  const ai = analysis_data.ai_style_analysis;
+                  const scorePct = Math.round((ai.ai_score || 0) * 100);
+                  const levelColor = scorePct <= 20 ? 'green' : scorePct <= 40 ? 'lime' : scorePct <= 60 ? 'gold' : scorePct <= 80 ? 'orange' : 'red';
+                  return (
+                    <>
+                      <Card title="AI味程度" style={{ marginBottom: 16 }} size={isMobile ? 'small' : 'default'}>
+                        <Row gutter={isMobile ? 8 : 16} align="middle">
+                          <Col span={isMobile ? 12 : 8}>
+                            <Statistic
+                              title="AI味指数"
+                              value={scorePct}
+                              suffix="%"
+                              valueStyle={{ color: scorePct <= 40 ? 'var(--color-success)' : scorePct <= 70 ? 'var(--color-warning)' : 'var(--color-error)' }}
+                            />
+                          </Col>
+                          <Col span={isMobile ? 12 : 8}>
+                            <div style={{ marginTop: isMobile ? 8 : 12 }}>
+                              <strong style={{ marginRight: 8 }}>等级</strong>
+                              <Tag color={levelColor} style={{ fontSize: 14, padding: '2px 12px' }}>
+                                {ai.level || '未知'}
+                              </Tag>
+                            </div>
+                          </Col>
+                          <Col span={24}>
+                            <div style={{ marginTop: 8, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+                              <strong>说明：</strong>0% = 完全人写，100% = 典型AI文风。分数越高，AI生成痕迹越明显。
+                            </div>
+                          </Col>
+                        </Row>
+                      </Card>
+
+                      {ai.overall && (
+                        <Card title="总体判断" style={{ marginBottom: 16 }} size={isMobile ? 'small' : 'default'}>
+                          <p style={{ fontSize: isMobile ? 13 : 14, marginBottom: 0 }}>{ai.overall}</p>
+                        </Card>
+                      )}
+
+                      {ai.signs && ai.signs.length > 0 && (
+                        <Card title={`典型AI痕迹 (${ai.signs.length})`} style={{ marginBottom: 16 }} size={isMobile ? 'small' : 'default'}>
+                          <List
+                            dataSource={ai.signs}
+                            renderItem={(sign, index) => (
+                              <List.Item>
+                                <List.Item.Meta
+                                  title={<Tag color="volcano">{sign.type}</Tag>}
+                                  description={
+                                    <div>
+                                      <blockquote style={{
+                                        margin: '4px 0 8px',
+                                        padding: '8px 12px',
+                                        background: token.colorBgLayout,
+                                        borderLeft: '3px solid #fa8c16',
+                                        borderRadius: token.borderRadius,
+                                        fontStyle: 'italic'
+                                      }}>
+                                        {sign.quote}
+                                      </blockquote>
+                                      <span style={{ fontSize: 13 }}>{sign.explanation}</span>
+                                    </div>
+                                  }
+                                />
+                              </List.Item>
+                            )}
+                          />
+                        </Card>
+                      )}
+
+                      {ai.strengths && ai.strengths.length > 0 && (
+                        <Card title="人味亮点" style={{ marginBottom: 16 }} size={isMobile ? 'small' : 'default'}>
+                          <List
+                            dataSource={ai.strengths}
+                            renderItem={(item, index) => (
+                              <List.Item>
+                                <CheckCircleOutlined style={{ color: 'var(--color-success)', marginRight: 8 }} />
+                                {item}
+                              </List.Item>
+                            )}
+                          />
+                        </Card>
+                      )}
+
+                      {ai.suggestions && ai.suggestions.length > 0 && (
+                        <Card title="去AI味建议" size={isMobile ? 'small' : 'default'}>
+                          <List
+                            dataSource={ai.suggestions}
+                            renderItem={(item, index) => (
+                              <List.Item>
+                                <span>{index + 1}. {item}</span>
+                              </List.Item>
+                            )}
+                          />
+                        </Card>
+                      )}
+                    </>
+                  );
+                })() : (
+                  <Alert
+                    type="info"
+                    showIcon
+                    message="尚未进行AI味分析"
+                    description="当前分析结果为历史数据，未包含AI味检测。点击弹窗右下角「重新分析」按钮即可获取本章的AI味分析。"
+                  />
                 )}
               </div>
             )

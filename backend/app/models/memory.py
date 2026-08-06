@@ -158,6 +158,16 @@ class PlotAnalysis(Base):
     analysis_report = Column(Text, comment="完整的文字分析报告")
     suggestions = Column(JSON, comment="改进建议列表: ['建议1', '建议2']")
     
+    # AI味分析 (AI Style Analysis)
+    ai_style_analysis = Column(JSON, nullable=True, comment="""AI味分析结果: {
+        ai_score: 0.0-1.0 AI味程度,
+        level: 低/中低/中等/中高/高,
+        overall: 总体判断,
+        signs: [{type, quote, explanation}] 典型AI痕迹,
+        strengths: [正面亮点],
+        suggestions: [去AI味建议]
+    }""")
+    
     # 统计信息
     word_count = Column(Integer, comment="章节字数")
     dialogue_ratio = Column(Float, comment="对话占比 0.0-1.0")
@@ -194,6 +204,7 @@ class PlotAnalysis(Base):
             "coherence_score": self.coherence_score or 0.0,
             "analysis_report": self.analysis_report,
             "suggestions": self.suggestions or [],
+            "ai_style_analysis": self.ai_style_analysis,
             "dialogue_ratio": self.dialogue_ratio or 0.0,
             "description_ratio": self.description_ratio or 0.0,
             "created_at": self.created_at.isoformat() if self.created_at else None

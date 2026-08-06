@@ -738,10 +738,7 @@ class SnapshotService:
         # 7. 地点状态（从 Organization.location 提取，简化版）
         orgs_result = await db.execute(
             select(Organization).where(
-                and_(
-                    Organization.project_id == project_id,
-                    Organization.is_organization == True
-                )
+                Organization.project_id == project_id
             )
         )
         organizations = orgs_result.scalars().all()

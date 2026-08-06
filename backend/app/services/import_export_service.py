@@ -596,6 +596,7 @@ class ImportExportService:
                 coherence_score=analysis.coherence_score,
                 analysis_report=analysis.analysis_report,
                 suggestions=analysis.suggestions,
+                ai_style_analysis=analysis.ai_style_analysis,
                 word_count=analysis.word_count,
                 dialogue_ratio=analysis.dialogue_ratio,
                 description_ratio=analysis.description_ratio,
@@ -1304,6 +1305,7 @@ class ImportExportService:
                 coherence_score=analysis_data.get("coherence_score"),
                 analysis_report=analysis_data.get("analysis_report"),
                 suggestions=analysis_data.get("suggestions"),
+                ai_style_analysis=analysis_data.get("ai_style_analysis"),
                 word_count=analysis_data.get("word_count"),
                 dialogue_ratio=analysis_data.get("dialogue_ratio"),
                 description_ratio=analysis_data.get("description_ratio")
